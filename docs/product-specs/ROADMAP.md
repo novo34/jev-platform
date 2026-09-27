@@ -1,478 +1,542 @@
 # JEV Development Platform — ROADMAP
 
-**Versión:** 1.0  
-**Estado:** Roadmap canónico  
+**Versión:** 2.0  
+**Estado:** Canonical Development Roadmap  
 **Rama:** `jev-foundation`  
 **Fecha:** 2026-09-27
 
-## Principio de ejecución
+---
 
-El desarrollo se realizará por capas completas y verificables.
+## 1. Reglas del roadmap
 
-No se avanzará a automatización agresiva mientras no existan estado determinista, permisos, trazabilidad, límites, pruebas y auditoría.
+Este roadmap implementa los contratos Foundation en `jev-platform`.
 
-Cada fase tendrá criterios de salida obligatorios.
+Ninguna fase se considera terminada por existir un contrato Foundation. Cada fase Platform requiere runtime/integración real y exit criteria verificable.
 
-# Fase 0 — Fundación de gobernanza
+La trazabilidad objetivo es:
 
-**Estado:** en progreso avanzado.
+```
+PRD capability
+→ SPEC REQ
+→ ROADMAP phase
+→ PLT backlog task
+→ future Task/Test/Evidence
+```
 
-## Objetivo
+No iniciar PLT-002 hasta aceptación manual de PLT-001.
 
-Convertir `base-skills_klever` de documentación en contratos consumibles por JEV.
+---
 
-## Alcance
+# Fase 1 — Document Freeze
 
-- manifest de skills;
-- 43 skills registradas;
-- Agent Registry inicial;
-- schemas;
-- risk R0-R4;
-- task planner;
-- model router policy;
-- run guard;
-- locks;
-- GitHub guard;
-- workspace contract;
-- requirement traceability;
-- state machine;
-- CI.
-
-## Criterio de salida
-
-- todas las skills registradas;
-- CI verde;
-- tests del planificador;
-- tests de riesgo;
-- tests de locks;
-- tests de permisos GitHub;
-- state machine sin bypass.
-
-# Fase 1 — JEV Core
+**Backlog:** PLT-001  
+**Dependencia:** FND-032 DONE
 
 ## Objetivo
+Congelar PRD/SPEC/ROADMAP alineados con Foundation final.
 
-Crear el backend que mantiene estado real.
+## Incluye
+- Foundation/Platform boundary;
+- lifecycle final;
+- permanent staging;
+- human approval;
+- selective promotion;
+- multi-repo;
+- multimodal/channels;
+- contract drift.
 
-## Entregables
+## Exit criteria
+- PRD/SPEC/ROADMAP misma versión;
+- IDs SPEC únicos;
+- no contradicciones críticas;
+- PLT backlog compatible;
+- revisión manual aceptada.
 
-- proyecto backend;
-- configuración;
-- PostgreSQL;
-- migrations;
+---
+
+# Fase 2 — Platform Skeleton
+
+**Backlog:** PLT-002  
+**Depende de:** PLT-001
+
+## Objetivo
+Crear estructura de Web, API, workers y packages compartidos.
+
+## Exit criteria
+- local development inicia;
+- servicios separados;
 - health checks;
-- entidades Organization, User, Client, Project, Repository, Order, Requirement, Task, TaskRun, Approval, AuditEvent y CostEvent;
-- API inicial de proyectos, clientes, órdenes, tareas, estados y auditoría;
-- runtime persistente del orquestador.
+- CI base verde.
 
-## Criterio de salida
+---
 
-Crear una orden vía API y obtener una tarea persistida con riesgo, agentes, skills, modelo sugerido, gates e historial.
+# Fase 3 — PostgreSQL Canonical Persistence
 
-# Fase 2 — GitHub Engine
-
-## Objetivo
-
-Permitir que JEV opere de forma segura sobre repositorios reales.
-
-## Entregables
-
-- GitHub App;
-- instalación por organización/repositorio;
-- tokens temporales;
-- listado de repositorios;
-- lectura de árbol;
-- lectura/escritura de archivos;
-- crear branch;
-- commits;
-- PR;
-- checks;
-- Actions;
-- comentarios/reviews;
-- merge guard.
-
-## Criterio de salida
-
-Desde una tarea JEV debe poder:
-
-```
-crear branch
-→ hacer un cambio controlado
-→ commit
-→ push
-→ PR
-→ leer CI
-```
-
-sin tocar main.
-
-# Fase 3 — Workspace Engine
+**Backlog:** PLT-003  
+**Depende de:** PLT-002
 
 ## Objetivo
+Crear estado empresarial persistente.
 
-Permitir que los agentes ejecuten y prueben código realmente.
+## Exit criteria
+Persisten y migran entidades canónicas, incluyendo Organization, User, Client, Project, Repository, Environment, Order, Requirement, Task, TaskRun, Approval, Promotion, AuditEvent, CostEvent y Notification.
 
-## Entregables
+---
 
-- Docker worker;
-- clonación de repo;
-- checkout de branch;
-- instalación de dependencias;
-- comandos permitidos;
-- timeout;
-- límite de CPU/RAM;
-- red restringida;
-- secrets scope;
-- cleanup;
-- logs.
+# Fase 4 — Authentication + RBAC
 
-## Criterio de salida
+**Backlog:** PLT-004  
+**Depende de:** PLT-003
 
-```
-crear workspace
-→ clonar
-→ instalar
-→ modificar
-→ build
-→ test
-→ obtener diff
-→ destruir workspace
-```
+## Exit criteria
+- login real;
+- roles server-side;
+- project/client scope;
+- pruebas de autorización.
 
-# Fase 4 — Model Gateway
+---
+
+# Fase 5 — Control Plane + Audit Base
+
+**Backlog principal:** PLT-005 + base temprana de PLT-030  
+**Depende de:** PLT-003, PLT-004
 
 ## Objetivo
+Centralizar commands, authz y audit desde el principio.
 
-Conectar modelos sin acoplar el sistema a un proveedor.
+## Exit criteria
+- API → Control Layer;
+- ninguna mutation bypassa authorization;
+- errores estables;
+- mutations emiten audit append-only.
 
-## Adapters iniciales
+---
 
-- DeepSeek
-- GLM
-- Qwen
-- OpenAI/Codex
+# Fase 6 — Queue / Workers
 
-## Funciones
+**Backlog:** PLT-006  
+**Depende de:** PLT-003
 
-- chat;
-- tool calling;
-- structured outputs cuando estén disponibles;
-- uso/tokens;
-- coste;
-- timeout;
-- retry;
-- fallback;
-- circuit breaker.
+## Exit criteria
+- long jobs fuera del request thread;
+- retry/idempotency;
+- persistent worker state;
+- correlation IDs.
 
-## Criterio de salida
+---
 
-El mismo Developer Agent deberá poder ejecutar una tarea equivalente usando al menos dos proveedores distintos sin cambiar su contrato.
+# Fase 7 — Project Registry / Multi-Repo / Environments
 
-# Fase 5 — Developer Agent Runtime
+**Backlog:** PLT-007  
+**Depende de:** PLT-003, FND-024/FND-025
 
-## Objetivo
+## Exit criteria
+- proyectos persistentes;
+- múltiples repos;
+- roles frontend/backend/infra/other;
+- environments por project/repository.
 
-Implementar el primer agente que modifica software end-to-end.
+---
 
-## Flujo
+# Fase 8 — Work Orders / Tasks Persistence
 
-```
-Task
-→ context
-→ skills
-→ workspace
-→ model
-→ edit
-→ test
-→ self-check
-→ commit
-→ PR
-```
+**Backlog:** PLT-008  
+**Depende de:** PLT-003
 
-## Criterio de salida
+## Exit criteria
+- Work Orders/Tasks persistentes;
+- lifecycle completo;
+- acceptance criteria/REQ IDs;
+- history;
+- illegal transition rejection.
 
-Developer deberá resolver una tarea R0/R1 real en un repositorio de prueba y crear un PR válido.
+---
 
-# Fase 6 — Verification Agent
+# Fase 9 — Secrets Management
 
-## Objetivo
+**Backlog:** PLT-032  
+**Depende de:** PLT-002
 
-Evitar falsos "terminado".
+## Exit criteria
+- provider/GitHub/hosting secrets fuera del repo;
+- scoped injection;
+- production secrets excluidos de development workspaces.
 
-## Entregables
+---
 
-- lectura de criterios de aceptación;
-- requirement trace;
-- diff inspection;
-- CI inspection;
-- test execution;
-- E2E;
-- backend/frontend integration checks;
-- resultado VERIFIED / FAILED / BLOCKED;
-- evidence bundle.
+# Fase 10 — Real Model Gateway
 
-## Criterio de salida
-
-El Verifier deberá detectar automáticamente una implementación deliberadamente incompleta aunque el código compile.
-
-# Fase 7 — Orquestación multiagente
+**Backlog:** PLT-009 + PLT-017 para budget integration  
+**Depende de:** skeleton + Foundation provider profiles
 
 ## Objetivo
+Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
-Coordinar tareas que necesitan varios roles.
+## Exit criteria
+- DeepSeek y OpenAI/Codex end-to-end;
+- Qwen/GLM habilitables sin cambiar agent contracts;
+- timeout/retry/typed errors/fallback/circuit breaker;
+- usage/cost;
+- budget guard antes de paid calls.
 
-## Entregables
+---
 
-- Architect runtime;
-- Integrator runtime;
+# Fase 11 — GitHub App
+
+**Backlog:** PLT-010  
+**Depende de:** PLT-002, secrets
+
+## Exit criteria
+- install flow;
+- installation tokens temporales;
+- branch/commit/PR/check/merge reales;
+- direct main/master impossible;
+- audit.
+
+---
+
+# Fase 12 — Workspace Engine
+
+**Backlog:** PLT-011  
+**Depende de:** PLT-006, PLT-010, secrets
+
+## Exit criteria
+- container por writable Task;
+- repo/branch asignados;
+- install/test;
+- CPU/RAM/network/timeout;
+- scoped secrets;
+- cleanup.
+
+---
+
+# Fase 13 — Architect + Developer Runtime
+
+**Backlog:** PLT-014 + Architect Platform runtime requerido por SPEC  
+**Depende de:** Model Gateway, GitHub App, Workspace Engine
+
+## Exit criteria
+- plan estructurado;
+- context/skills;
+- Developer modifica proyecto real de prueba;
+- tests;
+- commit + PR;
+- cost/audit/traceability.
+
+---
+
+# Fase 14 — Real Verification Engine
+
+**Backlog:** PLT-015  
+**Depende de:** workspace + staging prerequisites
+
+## Exit criteria
+- Verifier independiente read-only;
+- collectors reales CI/unit/integration/API/DB/browser/E2E;
+- evidence bundle;
+- incomplete implementation rejected aunque build pase.
+
+---
+
+# Fase 15 — Permanent Staging
+
+**Backlog:** PLT-012  
+**Depende de:** Project Registry, GitHub App, staging Foundation contracts
+
+## Exit criteria
+- staging permanente por proyecto;
+- staging branch;
+- URL online;
+- backend staging;
+- staging DB separada;
+- migrations/seeds;
+- health checks;
+- online E2E;
+- readiness evidence.
+
+---
+
+# Fase 16 — Human Review / Approval
+
+**Backlog:** PLT-021  
+**Depende de:** PLT-012, Dashboard base
+
+## Exit criteria
+- exact staging URL/evidence/revision visible;
+- APPROVED / CHANGES_REQUESTED / REJECTED;
+- stale approval invalidation;
+- no production bypass.
+
+---
+
+# Fase 17 — Selective Promotion / Production
+
+**Backlog:** PLT-013  
+**Depende de:** staging + approval + FND-028
+
+## Exit criteria
+- Promotion ligada a Task/source PR/approved commit/migrations/approval;
+- production PR task-specific;
+- no whole-staging promotion;
+- PROMOTED_TO_MAIN requerido para DONE;
+- rollback path.
+
+---
+
+# Fase 18 — Budget / Costs
+
+**Backlog:** PLT-017 + PLT-023  
+**Depende de:** PostgreSQL + Model Gateway
+
+## Exit criteria
+- budgets persistentes;
+- hard stop real;
+- warnings/audit;
+- costes por project/order/task/provider/model/period.
+
+---
+
+# Fase 19 — Notifications / Attention Center
+
+**Backlog:** PLT-018  
+**Depende de:** PostgreSQL + audit/control events
+
+## Exit criteria
+- notifications automáticas;
+- approvals/failures/budgets/stale evidence;
+- links al contexto correcto.
+
+---
+
+# Fase 20 — Multiagent / Conflicts
+
+**Backlog:** PLT-016  
+**Depende de:** Developer + Verifier
+
+## Exit criteria
+- Architect/Developer/Verifier/Integrator reales;
+- DAG;
+- locks;
 - handoffs;
-- shared state;
-- file locks;
-- dependency graph;
-- parallel execution;
-- conflict handling;
-- consensus R3/R4.
+- parallel work;
+- conflict resolution.
 
-## Criterio de salida
+---
 
-Una orden compleja deberá dividirse en varias tareas y ejecutarse sin que dos agentes se pisen recursos bloqueados.
+# Fase 21 — Dashboard
 
-# Fase 8 — Dashboard empresarial MVP
+**Backlog:** PLT-019  
+**Depende de:** Control Plane, Project Registry, Tasks, Notifications
 
-## Navegación
+## Exit criteria
+Dashboard muestra Projects, Orders, running/blocked Tasks, approvals, staging, costs y Attention Center desde read models/API canónicos.
 
-- Dashboard
-- Projects
-- Orders
-- Agents
-- Approvals
-- Quality
-- GitHub
-- Costs
-- Reports
-- Clients
-- Settings
+---
 
-## Criterio de salida
+# Fase 22 — Project Control Center
 
-El usuario podrá dirigir un proyecto sin entrar a GitHub para operaciones normales.
+**Backlog:** PLT-020  
+**Depende de:** Dashboard
 
-# Fase 9 — Project Control Center
+## Exit criteria
+Overview, Orders, Requirements, Tasks, GitHub, Agents, Staging, Quality, Costs, Activity y Settings por proyecto.
 
-## Secciones
+---
 
-- Overview
-- Orders
-- Requirements
-- Tasks
-- GitHub
-- Agents
-- Quality
-- Costs
-- Activity
-- Settings
+# Fase 23 — Quality Center
 
-## Criterio de salida
+**Backlog:** PLT-022  
+**Depende de:** Verification + Dashboard
 
-Espacore y Nuvurent deberán poder gestionarse como proyectos independientes dentro de una única instancia JEV.
+## Exit criteria
+- Requirement→code→test→verification visible;
+- missing/unverified/failed filterable;
+- staging/promotion state visible.
 
-# Fase 10 — Aprobaciones y supervisión humana
+---
 
-## Entregables
+# Fase 24 — Reports
 
-- approval inbox;
-- diff/impact summary;
-- approve;
-- reject;
-- request changes;
-- audit trail;
-- R4 enforcement.
+**Backlog:** PLT-023  
+**Depende de:** canonical data + Dashboard
 
-## Criterio de salida
+## Exit criteria
+Project report reproducible desde datos canónicos con calidad, progreso, costes y promotion status.
 
-Una operación R4 no podrá completarse desde API, agente ni UI sin aprobación registrada.
+---
 
-# Fase 11 — Cost Control
+# Fase 25 — Command Center
 
-## Entregables
+**Backlog:** PLT-024  
+**Depende de:** Control Plane + Foundation command contracts
 
-- coste por request;
-- coste por run;
-- coste por task;
-- coste por project;
-- coste por client;
-- coste por provider/model;
-- budget alerts;
-- hard stop;
-- cost forecast.
+## Exit criteria
+natural language → structured intent → validation → authorization → Control Layer execution; ambiguous/sensitive confirmation; audit completo.
 
-## Criterio de salida
+---
 
-El administrador podrá fijar un presupuesto de proyecto y JEV deberá detener automáticamente trabajo adicional al alcanzar el hard stop.
+# Fase 26 — Multimodal Intake
 
-# Fase 12 — Quality Center
+**Backlog:** PLT-025  
+**Depende de:** Control Plane + Foundation multimodal contracts
 
-## Entregables
+## Exit criteria
+Text/image/screenshot/file/link; attachment roles; visual work types; Work Orders estructurados.
 
-- requirement coverage;
-- CI status;
-- failed tests;
-- regression history;
-- verification coverage;
-- unresolved defects;
-- PR quality;
-- technical debt signals.
+---
 
-## Criterio de salida
+# Fase 27 — Image Workflows
 
-JEV deberá poder responder objetivamente qué parte del PRD/SPEC todavía no está verificada.
+**Backlog:** PLT-028, PLT-029  
+**Depende de:** Multimodal Intake
 
-# Fase 13 — Reporting
+## Exit criteria
+- generation/edit provider real;
+- original/target/reference preservados;
+- target component definido;
+- assets linked;
+- staging review obligatorio.
 
-## Reportes
+---
 
-- project status;
-- monthly development;
-- costs;
-- quality;
-- requirements;
-- incidents;
-- agent performance.
+# Fase 28 — Telegram / WhatsApp
 
-## Criterio de salida
+**Backlog:** PLT-026, PLT-027  
+**Depende de:** Multimodal Intake
 
-Generar un reporte mensual de proyecto sin recopilar manualmente información de GitHub, agentes y costes.
+## Exit criteria
+- adapters reales;
+- input/output solamente;
+- no bypass de auth/control/audit;
+- staging review links soportados.
 
-# Fase 14 — Command Center
+---
 
-## Ejemplos
+# Fase 29 — Observability + Security Hardening
 
-- "Pausa Nuvurent."
-- "Prioriza Espacore."
-- "Audita las tareas fallidas."
-- "No gastes más de CHF 20 hoy."
-- "Manda TASK-423 a Codex."
-- "Muéstrame todos los requisitos no verificados."
+**Backlog:** PLT-031, PLT-033  
+**Depende de:** skeleton/workers/auth/GitHub/workspace/secrets
 
-## Criterio de salida
+## Exit criteria
+- structured logs;
+- correlation IDs;
+- latency/error/job/cost metrics;
+- authz/tenant/secrets/command injection tests;
+- critical findings block release.
 
-Cada orden deberá convertirse en acciones explícitas, auditables y sujetas a permisos.
+---
 
-# Fase 15 — Nuevos proyectos desde cero
+# Fase 30 — Backups / Rollback
 
-## Flujo
+**Backlog:** PLT-034  
+**Depende de:** PostgreSQL, staging, promotion
+
+## Exit criteria
+- backup/restore probado;
+- failed deployment rollback;
+- audited rollback.
+
+---
+
+# Fase 31 — Controlled Pilot Repo
+
+**Backlog:** PLT-035  
+**Depende de:** core end-to-end stack
+
+## Exit criteria
 
 ```
-Idea
-→ Product brief
-→ PRD
-→ SPEC
-→ ROADMAP
-→ arquitectura
-→ repository
-→ project
-→ backlog
-→ desarrollo
+Order
+→ Task
+→ real workspace
+→ real provider
+→ implementation
+→ tests
+→ PR
+→ independent verification
+→ permanent staging
+→ readiness evidence
+→ human review
+→ selective production promotion
+→ PROMOTED_TO_MAIN
+→ DONE
+→ costs/audit/traceability
 ```
 
-## Criterio de salida
+---
 
-Desde una descripción de producto, JEV podrá preparar un proyecto listo para iniciar implementación.
+# Fase 32 — Espacore
 
-# Fase 16 — Empresa multiusuario
+**Backlog:** PLT-036  
+**Depende de:** controlled pilot
 
-## Entregables
+## Exit criteria
+- Espacore staging/test data;
+- una Task real low/medium-risk end-to-end;
+- production human-gated.
 
-- equipos;
-- roles;
-- responsables;
-- clientes;
-- acceso cliente;
-- actividad por usuario;
-- delegación;
-- ownership;
-- SLA internos;
-- métricas operativas.
+---
 
-## Criterio de salida
+# Fase 33 — Nuvurent
 
-Más de una persona podrá gestionar proyectos concurrentes sin acceso indebido entre clientes.
+**Backlog:** PLT-037  
+**Depende de:** Espacore
 
-# Prioridad de construcción
+## Exit criteria
+- staging DB/test users;
+- workflow real con persistencia;
+- end-to-end evidence.
 
-```
-0  Fundación
-1  JEV Core
-2  GitHub Engine
-3  Workspace Engine
-4  Model Gateway
-5  Developer Agent
-6  Verification Agent
-7  Multiagent
-8  Dashboard MVP
-9  Project Control Center
-10 Approvals
-11 Costs
-12 Quality
-13 Reports
-14 Command Center
-15 New Project Factory
-16 Multiuser Company
-```
+---
 
-# MVP real
+# Fase 34 — JEV Self-Development Safety Mode
 
-El MVP no es una simple interfaz. Debe cerrar este circuito:
+**Backlog:** PLT-038  
+**Depende de:** Nuvurent + security + backup/rollback
 
-```
-Usuario crea orden
-      ↓
-JEV genera task
-      ↓
-clasifica riesgo
-      ↓
-resuelve skills
-      ↓
-elige agente/modelo
-      ↓
-crea branch/workspace
-      ↓
-agente implementa
-      ↓
-tests
-      ↓
-PR
-      ↓
-Verifier
-      ↓
-PASS / FAIL
-      ↓
-aprobación si aplica
-      ↓
-DONE
-      ↓
-dashboard + coste + trazabilidad
-```
+## Exit criteria
+- highest-risk policy;
+- independent Verifier;
+- mandatory human approval;
+- proven rollback;
+- JEV no puede debilitar sus propios gates unilateralmente.
 
-# Piloto recomendado
+---
 
-1. repositorio de prueba controlado;
-2. Espacore para tareas de riesgo bajo/medio;
-3. Nuvurent para flujos más complejos;
-4. JEV sobre sí mismo solo después de demostrar controles de aislamiento, verificación y rollback.
+# Fase 35 — MVP Release Readiness
 
-# Definition of Done global
+**Backlog:** PLT-039  
+**Depende de:** P0 gates del master backlog
 
-Una funcionalidad de JEV solo se considera terminada cuando:
+## Exit criteria
+- end-to-end MVP demostrado;
+- P0 release gates verdes;
+- contract drift checks verdes;
+- limitaciones conocidas documentadas.
 
-- requisitos asociados identificados;
-- código implementado;
-- tests correctos;
-- CI verde;
-- seguridad revisada cuando aplique;
-- UI/backend conectados cuando aplique;
-- trazabilidad actualizada;
-- auditoría registrada;
-- documentación mínima actualizada;
-- Verifier aprobado;
-- aprobación humana completada cuando aplique.
+---
+
+## Definition of Done global
+
+Una capability Platform solo se considerará terminada cuando:
+
+- SPEC REQs asociados identificados;
+- implementación real;
+- tests;
+- CI;
+- evidence;
+- security review cuando aplique;
+- audit;
+- docs actualizados;
+- staging/human review/promotion cuando el cambio afecte producción.
+
+---
+
+## Estado después de PLT-001
+
+Después de aceptar manualmente esta actualización documental:
+
+- Foundation: release-ready;
+- Platform docs: frozen v2.0;
+- PLT-001: elegible para cerrar;
+- PLT-002: siguiente tarea, **pero no debe iniciarse automáticamente**.
