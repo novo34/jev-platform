@@ -1,352 +1,647 @@
 # JEV Development Platform — PRD
 
-**Versión:** 1.0  
-**Estado:** Draft canónico de producto  
+**Versión:** 2.0  
+**Estado:** Canonical Product Requirements  
 **Rama:** `jev-foundation`  
-**Fecha:** 2026-09-27
+**Fecha:** 2026-09-27  
+**Fuente Foundation:** `novo34/base-skills_klever@jev-v7-foundation`
+
+---
 
 ## 1. Visión
 
-JEV será una plataforma para dirigir una empresa de desarrollo de software asistida por IA.
+JEV será la plataforma de control de una empresa de desarrollo de software asistida por IA.
 
-El usuario no tendrá que coordinar manualmente modelos, agentes, ramas, pruebas o revisiones. JEV recibirá órdenes de trabajo, decidirá cómo ejecutarlas, controlará riesgos y costes, coordinará agentes especializados, trabajará sobre repositorios GitHub y mantendrá trazabilidad completa desde el requisito hasta la verificación final.
+El usuario dará órdenes, administrará proyectos, revisará excepciones y aprobará cambios sensibles. JEV coordinará repositorios, agentes, modelos, workspaces, verificación, staging, promoción a producción, costes, auditoría y reportes.
 
 **Principio central:** los modelos no gobiernan JEV. JEV gobierna los modelos.
 
-Los proveedores de IA son trabajadores reemplazables. El control de estado, permisos, costes, calidad, decisiones, aprobaciones y trazabilidad pertenece a JEV.
+Los modelos son trabajadores reemplazables. El estado empresarial, los permisos, el lifecycle, las aprobaciones, los budgets, la evidencia y las decisiones pertenecen al Control Layer de JEV.
 
-## 2. Problema que resuelve
+---
 
-Los principales problemas que JEV debe resolver son:
+## 2. Límite Foundation / Platform
 
-- una IA puede afirmar que una tarea está terminada sin comprobar frontend, backend, API o base de datos;
-- varios agentes pueden modificar el mismo código y generar conflictos;
-- no existe una visión empresarial consolidada de proyectos, estados, costes y entregas;
-- los cambios pueden perder la relación con PRD/SPEC;
-- es difícil saber qué modelo trabajó, cuánto costó y por qué se eligió;
-- los agentes pueden exceder presupuestos o realizar acciones sensibles sin control suficiente;
-- GitHub registra código, pero no necesariamente la intención de negocio ni el estado operativo completo;
-- el dueño del producto termina actuando como coordinador manual de agentes.
+`base-skills_klever` define **qué debe permitir, prohibir, registrar y verificar JEV** mediante contratos, schemas, policies y reference behavior.
 
-## 3. Objetivos del producto
+`jev-platform` implementará **cómo funciona realmente** mediante PostgreSQL, APIs, workers, GitHub App, Docker/VM, proveedores de IA, staging online, UI y servicios externos.
+
+La existencia de un contrato o reference runtime en Foundation **no significa** que exista integración real en Platform.
+
+Estados de implementación Platform:
+
+- **NOT_IMPLEMENTED**
+- **PARTIAL**
+- **IMPLEMENTED**
+- **VERIFIED**
+
+Una capacidad solo podrá considerarse VERIFIED cuando exista implementación real y evidencia correspondiente.
+
+---
+
+## 3. Problema que resuelve
+
+JEV debe evitar que el desarrollo con IA dependa de conversaciones aisladas o de afirmaciones no verificadas.
+
+Debe resolver, entre otros:
+
+- falsos “terminado”;
+- cambios sin trazabilidad;
+- colisiones entre agentes;
+- falta de staging permanente;
+- aprobaciones sin evidencia;
+- promoción accidental de cambios no aprobados;
+- gasto de IA sin control;
+- acoplamiento a un proveedor;
+- ausencia de visión empresarial;
+- falta de separación entre decisión humana, verificación técnica y despliegue real.
+
+---
+
+## 4. Objetivos del producto
 
 JEV deberá permitir:
 
-1. administrar múltiples clientes y proyectos;
-2. conectar cada proyecto a uno o varios repositorios GitHub;
-3. crear órdenes de trabajo en lenguaje natural;
-4. convertir cada orden en tareas trazables;
-5. clasificar automáticamente el riesgo de cada tarea;
-6. seleccionar las skills aplicables;
-7. seleccionar agentes adecuados;
-8. seleccionar el modelo de IA apropiado según coste, capacidad y riesgo;
-9. ejecutar cambios en ramas y workspaces aislados;
-10. ejecutar pruebas automáticas;
-11. verificar independientemente el resultado;
-12. bloquear integración cuando no se cumplan los requisitos;
-13. requerir aprobación humana en operaciones críticas;
-14. mostrar todo el proceso en un dashboard empresarial;
-15. registrar costes, actividad, estados, fallos y decisiones;
-16. generar reportes operativos y ejecutivos;
-17. permitir crear proyectos nuevos y trabajar sobre repositorios existentes;
-18. mantener una historia auditable de quién hizo qué, cuándo y por qué.
+1. administrar organizaciones, usuarios, clientes y proyectos;
+2. registrar proyectos con uno o varios repositorios;
+3. asignar roles de repositorio: frontend, backend, infra u other;
+4. mantener environments por proyecto/repositorio;
+5. recibir órdenes en lenguaje natural y multimodal;
+6. persistir Work Orders, Tasks, Requirements y estados;
+7. clasificar riesgo R0-R4;
+8. resolver skills Foundation;
+9. seleccionar agentes;
+10. seleccionar proveedores/modelos;
+11. aplicar budgets antes de acciones pagadas;
+12. operar GitHub mediante GitHub App real;
+13. ejecutar trabajo en workspaces Docker/VM reales;
+14. verificar independientemente;
+15. integrar la Task verificada en staging permanente;
+16. generar evidencia de readiness de staging;
+17. solicitar revisión humana;
+18. promocionar selectivamente solo el cambio aprobado;
+19. confirmar promoción real a producción antes de DONE;
+20. registrar auditoría append-only;
+21. mostrar Attention Center, Quality Center, costes y reportes;
+22. aceptar órdenes desde Web y preparar adapters para Telegram/WhatsApp;
+23. soportar workflows visuales e imágenes;
+24. operar pilotos controlados antes del self-development.
 
-## 4. Usuarios
+---
 
-### Administrador / Propietario
-Puede crear clientes y proyectos, conectar repositorios, crear órdenes, definir presupuestos, aprobar operaciones críticas, detener agentes, cambiar prioridades, ver costes, generar reportes y acceder a auditoría completa.
+## 5. Usuarios y control humano
 
-### Project Manager
-Puede gestionar backlog, crear y priorizar órdenes, revisar bloqueos, gestionar entregas, consultar calidad y progreso y solicitar reintentos o auditorías.
+Roles iniciales:
 
-### Developer humano
-Puede recibir tareas, trabajar junto a agentes, consultar contexto, crear ramas y PR, ver fallos de CI y responder a revisiones.
+- Admin / Owner
+- Project Manager
+- Developer humano
+- Auditor / QA
+- Client
 
-### Auditor / QA
-Puede revisar requisitos, consultar cambios, ejecutar o revisar pruebas, aprobar o rechazar verificación y registrar hallazgos.
+Las autorizaciones deberán comprobarse server-side.
 
-### Cliente
-Opcionalmente podrá ver progreso autorizado, revisar entregas, aprobar hitos, descargar reportes y dejar comentarios.
+Los agentes nunca heredarán automáticamente todos los permisos del humano que emitió una orden.
 
-## 5. Estructura empresarial
+Toda promoción a producción requerirá aprobación humana vigente y ligada a la evidencia exacta que fue revisada.
+
+---
+
+## 6. Modelo empresarial
 
 ```
-Organización
- ├── Clientes
- │    └── Proyectos
- │         ├── Repositorios
- │         ├── Órdenes
- │         ├── Requisitos
- │         ├── Tareas
- │         ├── Agentes
- │         ├── Costes
- │         ├── Entregas
- │         └── Reportes
- └── Configuración global
+Organization
+ ├── Users
+ ├── Clients
+ │    └── Projects
+ │         ├── Repositories
+ │         │    └── Environments
+ │         ├── Work Orders
+ │         ├── Requirements
+ │         ├── Tasks / Runs
+ │         ├── Staging
+ │         ├── Approvals
+ │         ├── Promotions
+ │         ├── Quality
+ │         ├── Costs
+ │         └── Reports
+ └── Global Settings
 ```
 
-Un proyecto puede existir sin cliente cuando se trate de un producto interno.
+Un proyecto puede ser interno.
 
-## 6. Dashboard principal
+---
 
-El dashboard deberá mostrar, como mínimo:
+## 7. Project Registry y multi-repo
 
-- proyectos activos;
-- órdenes abiertas;
-- tareas en ejecución;
-- tareas bloqueadas;
-- tareas pendientes de aprobación;
-- tareas fallidas;
-- tareas completadas;
-- coste de IA del periodo;
-- presupuesto consumido;
-- PR pendientes;
-- incidentes críticos;
-- actividad reciente.
+Cada proyecto deberá persistir en PostgreSQL.
 
-El dashboard deberá priorizar excepciones y decisiones necesarias, no solamente métricas.
+Un proyecto podrá contener múltiples repositorios con roles explícitos:
 
-## 7. Proyectos
+- frontend
+- backend
+- infra
+- other
 
-Cada proyecto deberá incluir nombre, cliente, estado, prioridad, responsables, repositorios conectados, stack, entornos, PRD, SPEC, roadmap, presupuesto, configuración de modelos, reglas específicas, actividad reciente y métricas de calidad.
+Cada repositorio podrá definir de forma independiente:
 
-Ejemplos: Espacore Web, Nuvurent, Cleaning Planner y JEV.
+- default branch;
+- staging branch;
+- production URL;
+- staging URL;
+- deployment provider;
+- environment metadata;
+- required checks;
+- migration behavior.
 
-## 8. Órdenes de trabajo
+JEV deberá resolver explícitamente qué repositorio afecta cada Task. No deberá asumir que todo proyecto es monorepo.
 
-El usuario podrá crear órdenes en lenguaje natural.
+---
 
-Ejemplo:
+## 8. Work Orders y Tasks
 
-> Revisa el formulario de contacto de Espacore. Nombre, email, teléfono y PLZ deben ser obligatorios y quiero comprobar que los datos llegan correctamente al backend.
+Una orden podrá originarse desde Web, Command Center o un Channel Adapter.
 
-JEV deberá transformar la orden en una estructura controlada con objetivo, proyecto, alcance, prioridad, criterios de aceptación, restricciones, riesgos, requisitos relacionados y tareas derivadas.
+La orden deberá convertirse en un Work Order estructurado con:
 
-## 9. Ciclo de una tarea
+- proyecto;
+- objetivo;
+- alcance;
+- restricciones;
+- prioridad;
+- criterios de aceptación;
+- attachments;
+- requirements;
+- tipo de trabajo.
+
+El Work Order podrá generar una o varias Tasks persistentes.
+
+---
+
+## 9. Lifecycle canónico
+
+Lifecycle principal:
 
 ```
 PLANNED
-  ↓
-READY
-  ↓
-RUNNING
-  ↓
-VERIFYING
-  ↓
-VERIFIED
-  ↓
-DONE
+→ READY
+→ RUNNING
+→ VERIFYING
+→ VERIFIED
+→ STAGING
+→ AWAITING_HUMAN
+→ APPROVED
+→ DONE
 ```
 
-Estados adicionales: BLOCKED y FAILED.
+Estados alternativos:
 
-No se permitirá marcar una tarea como DONE sin cumplir sus gates.
-
-## 10. Riesgo
-
-JEV usará cinco niveles:
-
-- **R0:** cambio local, simple y reversible.
-- **R1:** cambio normal con verificación independiente.
-- **R2:** cambio con impacto entre capas.
-- **R3:** cambio sensible, como auth, permisos o multi-tenant.
-- **R4:** cambio crítico, como producción, eliminación de datos, migración destructiva o acción irreversible.
-
-R4 requerirá aprobación humana.
-
-## 11. Skills Engine
-
-JEV utilizará `base-skills_klever` como constitución operativa.
-
-Cada tarea deberá cargar únicamente las skills pertinentes más las obligatorias. El sistema deberá resolver prioridades, detectar conflictos, cargar dependencias y registrar qué skills gobernaron cada ejecución.
-
-## 12. Agentes
-
-Agentes iniciales:
-
-- Architect
-- Developer
-- Verifier
-- Integrator
-
-Agentes futuros:
-
-- Frontend
-- Backend
-- Database
-- Security
-- QA
-- UX
-- Documentation
-- DevOps
-- Product Analyst
-
-El rol del agente deberá estar separado del modelo de IA utilizado.
-
-## 13. Model Router
-
-JEV deberá decidir qué modelo usar según riesgo, tipo de tarea, capacidades, contexto requerido, coste, presupuesto restante, disponibilidad y rendimiento histórico.
-
-Un agente no estará permanentemente vinculado a un proveedor.
-
-## 14. GitHub
-
-GitHub será la fuente de verdad del código.
-
-JEV deberá poder leer repositorios, crear repositorios, crear ramas, leer/escribir archivos, crear commits, crear PR, consultar checks, solicitar revisiones, leer resultados de Actions e integrar cambios autorizados.
+- BLOCKED
+- FAILED
+- CHANGES_REQUESTED
+- REJECTED
 
 Reglas:
 
-- ningún agente escribe directamente a `main`;
-- cada tarea usa una rama;
-- el trabajo se integra mediante PR;
-- un agente no puede aprobar su propio trabajo crítico;
-- R4 requiere aprobación humana.
+- VERIFIED significa que la verificación técnica pasó; no significa aprobación humana.
+- APPROVED significa que el humano aprobó la revisión ligada a una revisión/evidencia concreta; no significa producción completada.
+- DONE exige una Promotion real de ESA MISMA Task con estado `PROMOTED_TO_MAIN`.
+- Un booleano manual como `production_promoted=true` no constituye evidencia suficiente.
+- Ninguna transición puede saltarse el state machine.
 
-## 15. Workspaces
+---
 
-Cada ejecución deberá usar un entorno aislado para evitar contaminación entre tareas, ejecutar el proyecto, instalar dependencias, ejecutar pruebas, detectar errores reales y destruir el entorno al finalizar.
+## 10. Temporary Workspace vs Permanent Staging
 
-## 16. Verificación
+Son conceptos distintos.
 
-La verificación es una función independiente del desarrollo.
+### Temporary Workspace
 
-El Verifier deberá comprobar, según aplique:
+Entorno aislado y efímero para implementar y probar una Task.
 
-- requisito PRD/SPEC;
-- backend;
-- frontend;
-- API;
-- base de datos;
-- seguridad;
-- tests unitarios;
-- integración;
-- E2E;
+Puede destruirse después de la ejecución.
+
+### Permanent Staging Environment
+
+Entorno online persistente por proyecto, utilizado para validar cambios reales antes de producción.
+
+Deberá incluir, cuando aplique:
+
+- staging branch;
+- staging URL;
+- backend staging;
+- staging database separada;
+- migrations;
+- test data;
+- health checks;
+- browser/API/E2E;
+- readiness evidence.
+
+Producción nunca se usará como base de datos de pruebas.
+
+---
+
+## 11. Human staging review
+
+Después de VERIFIED, la Task deberá integrarse en staging y producir evidencia actual.
+
+El revisor humano deberá ver como mínimo:
+
+- Task;
+- PR/revision;
+- staging URL;
+- verification report;
+- staging readiness evidence;
+- cambios relevantes.
+
+Decisiones:
+
+- APPROVED
+- CHANGES_REQUESTED
+- REJECTED
+
+Si cambia el commit, PR relevante, staging revision o evidencia después de aprobar, la aprobación anterior queda invalidada.
+
+---
+
+## 12. Selective Promotion
+
+JEV nunca promocionará el staging completo a `main` por aprobar una sola Task.
+
+Cada Promotion deberá ligar:
+
+- Task;
+- source PR;
+- approved commit;
+- migration IDs;
+- approval;
+- production PR;
+- resultado de promoción.
+
+Solo después de `PROMOTED_TO_MAIN` la Task podrá alcanzar DONE.
+
+---
+
+## 13. Model Gateway
+
+La Platform implementará adapters reales iniciales para:
+
+- DeepSeek
+- OpenAI/Codex
+- Qwen
+- GLM
+
+El gateway deberá normalizar:
+
+- request/response;
+- usage;
+- coste;
+- typed errors;
+- timeout;
+- retry;
+- fallback;
+- circuit breaker;
+- health.
+
+Las credenciales se gestionarán fuera del repositorio.
+
+---
+
+## 14. Budgets y costes
+
+Todo proveedor pagado deberá pasar un budget guard antes de la llamada.
+
+JEV deberá soportar límites por:
+
+- Task;
+- Work Order;
+- Project;
+- periodo;
+- proveedor/modelo.
+
+El hard stop deberá impedir la siguiente acción pagada cuando se supere el límite.
+
+Los costes deberán ser trazables y reportables.
+
+---
+
+## 15. Agentes
+
+Roles iniciales:
+
+### Architect
+Planifica arquitectura y dependencias.
+
+### Developer
+Implementa en el workspace asignado.
+
+### Verifier
+Revisa independientemente y será read-only respecto al código que verifica.
+
+### Integrator
+Coordina integración, conflictos y promoción autorizada.
+
+La identidad del agente y el proveedor/modelo utilizado serán conceptos separados.
+
+---
+
+## 16. Verificación real
+
+El Verifier deberá recopilar evidencia real según aplique:
+
+- CI/checks;
+- unit tests;
+- integration tests;
+- backend/API;
+- database;
+- browser/E2E;
 - build;
-- comportamiento visual.
+- visual result.
 
-Una tarea no deberá considerarse terminada simplemente porque el código compile.
+La verificación no podrá depender solo del texto generado por el Developer.
 
-## 17. Trazabilidad
+Un build correcto no equivale a implementación completa.
+
+---
+
+## 17. Multiagent
+
+Para trabajo complejo JEV soportará:
+
+- DAG de dependencias;
+- handoffs;
+- shared state;
+- locks;
+- parallel work;
+- conflict detection;
+- conflict resolution;
+- Architect/Developer/Verifier/Integrator.
+
+Los agentes no podrán sobrescribir recursos con locks incompatibles.
+
+---
+
+## 18. Audit y Attention Center
+
+La auditoría será append-only.
+
+Registrar, como mínimo:
+
+- actor;
+- acción;
+- target;
+- project/task;
+- timestamp;
+- result;
+- risk;
+- provider/model;
+- cost;
+- approval;
+- evidence references.
+
+Attention Center deberá reunir aquello que requiere intervención:
+
+- approvals;
+- bloqueos;
+- fallos;
+- budget alerts;
+- stale evidence;
+- conflictos;
+- incidentes.
+
+---
+
+## 19. Dashboard y Project Control Center
+
+Navegación mínima:
+
+- Dashboard
+- Projects
+- Orders
+- Agents
+- Approvals
+- Quality
+- GitHub
+- Costs
+- Reports
+- Clients
+- Settings
+
+Cada Project Control Center deberá exponer:
+
+- Overview
+- Orders
+- Requirements
+- Tasks
+- GitHub
+- Agents
+- Staging
+- Quality
+- Costs
+- Activity
+- Settings
+
+---
+
+## 20. Quality Center
+
+Quality Center deberá basarse en evidencia real y trazabilidad.
+
+Deberá mostrar:
+
+- Requirement → code → test → verification;
+- missing;
+- failed;
+- unverified;
+- CI status;
+- staging readiness;
+- defects/regressions;
+- production promotion status.
+
+---
+
+## 21. Command Center y Control Layer
+
+Command Center acepta lenguaje natural, pero no ejecuta directamente.
+
+Flujo:
 
 ```
-REQ
- ↓
-ORDER
- ↓
-TASK
- ↓
-BRANCH
- ↓
-COMMIT
- ↓
-PR
- ↓
-TEST
- ↓
-VERIFICATION
- ↓
-DELIVERY
+Natural language
+→ structured intent
+→ validation
+→ authorization
+→ Control Layer command
+→ execution
 ```
 
-El usuario deberá poder abrir cualquier requisito y saber dónde está implementado, qué PR lo modificó, qué pruebas lo cubren, si está verificado, qué agente trabajó, qué modelo se utilizó y cuánto costó.
+Command Center es un subconjunto seguro del Control Layer y no tiene que exponer todas las acciones internas.
 
-## 18. Aprobaciones
+Toda acción sensible podrá requerir confirmación adicional.
 
-JEV deberá tener una bandeja de aprobaciones para merge crítico, despliegue, migración destructiva, cambio de permisos, aumento de presupuesto, promoción de memoria y excepciones de seguridad.
+---
 
-Acciones: aprobar, rechazar, pedir cambios o delegar.
+## 22. Multimodal Intake
 
-## 19. Costes y presupuestos
+JEV deberá aceptar:
 
-El sistema deberá registrar costes por cliente, proyecto, orden, tarea, agente, modelo, proveedor y periodo.
+- text;
+- image;
+- screenshot;
+- file;
+- link.
 
-El administrador podrá configurar presupuesto diario, mensual, por proyecto, por tarea, alertas y hard stop.
+Attachment roles:
 
-## 20. Reportes
+- CURRENT_BASE
+- EDIT_TARGET
+- STYLE_REFERENCE
+- DESIRED_RESULT
+- REQUIREMENT_DOCUMENT
 
-Reportes mínimos:
+Work types:
 
-- proyecto;
-- cliente;
-- operaciones;
-- calidad;
-- costes.
+- GENERAL
+- IMAGE_REPLACEMENT
+- IMAGE_GENERATION
+- IMAGE_EDIT
+- UI_REFERENCE_REDESIGN
 
-Exportaciones futuras: PDF, Excel y CSV.
+JEV deberá conservar inequívocamente qué asset es original, cuál es target y cuál es referencia.
 
-## 21. Centro de mando
+Todo cambio visual deberá llegar a staging y revisión humana antes de producción.
 
-El usuario podrá enviar órdenes de alto nivel como:
+---
 
-- detener Nuvurent;
-- priorizar Espacore;
-- auditar todas las tareas fallidas;
-- no gastar más de X;
-- cambiar una tarea a un modelo premium;
-- reintentar un trabajo;
-- pausar un proyecto.
+## 23. Channels
 
-JEV deberá traducir estas órdenes en acciones controladas y auditables.
+Canales previstos:
 
-## 22. Auditoría
+- Web
+- Telegram
+- WhatsApp
 
-Toda acción sensible deberá registrar actor, tipo de actor, acción, proyecto, tarea, timestamp, resultado, riesgo, modelo, coste, aprobación y evidencia relevante.
+Los Channel Adapters solo transportan entrada/salida.
 
-## 23. Seguridad
+```
+Channel
+→ Multimodal Intake
+→ Work Order / Command
+→ Control Layer
+→ JEV
+```
 
-Requisitos base:
+Ningún Channel Adapter ejecutará directamente GitHub, agentes, Docker, provider calls o deploy.
 
-- menor privilegio;
-- credenciales temporales;
-- secretos fuera del repositorio;
-- separación de tenants;
-- workspaces aislados;
-- auditoría;
-- aprobación humana para R4;
-- restricciones de comandos;
-- protección contra escritura directa a ramas principales;
-- protección frente a escalada de permisos.
+Telegram y WhatsApp reales son responsabilidades Platform, no Foundation.
 
-## 24. Fuera de alcance inicial
+---
+
+## 24. Secrets, observability, security y recovery
+
+Platform deberá implementar:
+
+- secrets management;
+- credenciales scoped;
+- structured logs;
+- correlation IDs;
+- metrics;
+- security review;
+- authz/tenant/command-injection tests;
+- backups;
+- restore;
+- deployment rollback;
+- audited rollback.
+
+---
+
+## 25. Contract Drift Prevention
+
+JEV deberá comprobar automáticamente coherencia entre runtime, schemas, policies y documentación.
+
+Como mínimo:
+
+- lifecycle;
+- risk levels;
+- Control Actions;
+- Command Center actions;
+- Work Order states/types;
+- Notification categories;
+- approval rules.
+
+El drift crítico deberá bloquear release.
+
+---
+
+## 26. Pilotos
+
+Orden:
+
+1. controlled pilot repository;
+2. Espacore;
+3. Nuvurent;
+4. JEV self-development.
+
+JEV solo podrá trabajar sobre su propio repositorio posteriormente y bajo la política de mayor riesgo, con Verifier independiente, aprobación humana y rollback probado.
+
+---
+
+## 27. MVP real
+
+El MVP deberá demostrar:
+
+```
+Order
+→ Task
+→ real workspace
+→ real AI provider
+→ implementation
+→ tests
+→ PR
+→ independent verification
+→ permanent staging
+→ staging evidence
+→ human review
+→ selective promotion
+→ production
+→ DONE
+→ costs/audit
+```
+
+No se considerará MVP un agente que solamente escribe código.
+
+---
+
+## 28. Métricas de éxito
+
+- tareas completadas end-to-end;
+- % con trazabilidad completa;
+- verificación independiente;
+- CI first-pass;
+- coste por Task/Project;
+- budget stops correctos;
+- defectos detectados antes de producción;
+- stale approvals bloqueadas;
+- promociones selectivas correctas;
+- tiempo Order → DONE;
+- incidentes y rollback.
+
+---
+
+## 29. Fuera de alcance inicial
 
 No forma parte del MVP:
 
-- facturación completa;
-- contabilidad;
-- nóminas;
+- contabilidad completa;
+- payroll;
 - marketplace de agentes;
-- IDE completo en navegador;
+- IDE completo;
 - reemplazo de GitHub;
-- infraestructura multi-región compleja;
-- entrenamiento propio de modelos.
+- entrenamiento propio de modelos;
+- autonomía irrestricta de JEV sobre sí mismo.
 
-## 25. Métricas de éxito
+---
 
-- % de tareas verificadas sin intervención manual;
-- % de tareas que pasan CI al primer intento;
-- coste medio por tarea;
-- tiempo medio desde orden hasta verificación;
-- nº de regresiones;
-- nº de bloqueos detectados antes de merge;
-- % de requisitos con trazabilidad completa;
-- gasto por modelo;
-- ahorro frente a uso indiscriminado de modelos premium.
+## 30. Criterio de éxito del producto
 
-## 26. Criterio de éxito del producto
-
-JEV se considerará funcional cuando un usuario pueda:
-
-1. seleccionar un proyecto conectado a GitHub;
-2. crear una orden;
-3. dejar que JEV genere la tarea;
-4. clasificar su riesgo;
-5. seleccionar skills, agente y modelo;
-6. crear una rama/workspace;
-7. implementar el cambio;
-8. ejecutar pruebas;
-9. crear un PR;
-10. verificarlo independientemente;
-11. bloquearlo si falla;
-12. solicitar aprobación cuando corresponda;
-13. reflejar todo el proceso en dashboard, trazabilidad y costes.
+JEV será operacional cuando pueda completar el circuito MVP con integraciones reales, mostrar evidencia y costes, impedir bypass de aprobación/promoción y administrar al menos un proyecto multi-repo desde el dashboard.
