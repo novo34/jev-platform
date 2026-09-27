@@ -1,55 +1,41 @@
 # JEV Development Platform — SPEC
 
-**Versión:** 1.0  
-**Estado:** Especificación canónica  
+**Versión:** 2.0  
+**Estado:** Canonical System Specification  
 **Rama:** `jev-foundation`  
 **Fecha:** 2026-09-27
 
-## 1. Convenciones
+---
 
-Los requisitos usan identificadores estables:
+## 1. Convenciones y boundary
 
-- REQ-ORG: organización y usuarios
-- REQ-CLI: clientes
-- REQ-PRJ: proyectos
-- REQ-ORD: órdenes
-- REQ-TSK: tareas
-- REQ-RSK: riesgo
-- REQ-SKL: skills
-- REQ-AGT: agentes
-- REQ-MDL: modelos
-- REQ-GIT: GitHub
-- REQ-WSP: workspaces
-- REQ-VER: verificación
-- REQ-TRC: trazabilidad
-- REQ-APR: aprobaciones
-- REQ-CST: costes
-- REQ-RPT: reportes
-- REQ-AUD: auditoría
-- REQ-SEC: seguridad
-- REQ-UI: interfaz
-- REQ-NOT: notificaciones
+Los requisitos usan `REQ-XXX-###`. “Deberá” indica obligatoriedad.
 
-"Deberá" indica requisito obligatorio.
+Foundation define contratos y reglas. Platform deberá implementar runtimes e integraciones reales.
 
-## 2. Organización y acceso
+Una capability Foundation no deberá marcarse como implementada en Platform por existir schema, policy, adapter de referencia o test Foundation.
 
 ### REQ-ORG-001
 El sistema deberá soportar una organización con múltiples usuarios.
 
 ### REQ-ORG-002
-El sistema deberá implementar roles, al menos: Admin, Project Manager, Developer, Auditor y Client.
+El sistema deberá implementar, como mínimo, Admin, Project Manager, Developer, Auditor y Client.
 
 ### REQ-ORG-003
-Cada acción sensible deberá comprobar autorización antes de ejecutarse.
+Cada acción sensible deberá comprobar autorización server-side antes de ejecutarse.
 
 ### REQ-ORG-004
-Un usuario Client solo podrá acceder a proyectos y datos explícitamente autorizados.
+Un usuario Client solo deberá acceder a proyectos explícitamente autorizados.
 
 ### REQ-ORG-005
-Los agentes no heredarán automáticamente los permisos del usuario que creó una orden.
+Los agentes no deberán heredar automáticamente todos los permisos del humano que originó una orden.
 
-## 3. Clientes
+### REQ-ORG-006
+La Platform deberá distinguir capability NOT_IMPLEMENTED, PARTIAL, IMPLEMENTED y VERIFIED cuando informe estado de integración.
+
+---
+
+## 2. Clientes y proyectos
 
 ### REQ-CLI-001
 El sistema deberá permitir crear, editar, archivar y consultar clientes.
@@ -58,90 +44,152 @@ El sistema deberá permitir crear, editar, archivar y consultar clientes.
 Un cliente podrá tener múltiples proyectos.
 
 ### REQ-CLI-003
-Un proyecto podrá ser interno y no requerir cliente.
-
-## 4. Proyectos
+Un proyecto podrá ser interno sin cliente.
 
 ### REQ-PRJ-001
-El sistema deberá permitir crear proyectos.
+El sistema deberá persistir proyectos en PostgreSQL.
 
 ### REQ-PRJ-002
 Cada proyecto deberá tener nombre, estado, prioridad y responsables.
 
 ### REQ-PRJ-003
-Cada proyecto podrá conectar uno o varios repositorios.
+Cada proyecto deberá soportar múltiples repositorios.
 
 ### REQ-PRJ-004
-Cada proyecto deberá poder asociar PRD, SPEC y ROADMAP.
+Cada proyecto deberá asociar PRD, SPEC y ROADMAP.
 
 ### REQ-PRJ-005
-Cada proyecto deberá poder definir presupuesto y política de modelos.
+Cada proyecto deberá poder definir budgets y política de modelos.
 
 ### REQ-PRJ-006
-El proyecto deberá mantener configuración de entorno separada de otros proyectos.
+La configuración de environment deberá poder variar por proyecto y repositorio.
 
 ### REQ-PRJ-007
-JEV no deberá ejecutar una orden si no puede determinar inequívocamente el proyecto objetivo.
+JEV no deberá ejecutar una orden si no puede resolver inequívocamente el proyecto objetivo.
 
-## 5. Órdenes
+### REQ-PRJ-008
+Cada repositorio deberá declarar un rol: frontend, backend, infra u other.
+
+### REQ-PRJ-009
+Cada Task que modifique código deberá resolver explícitamente el repositorio objetivo.
+
+### REQ-PRJ-010
+JEV no deberá asumir que un proyecto multi-repo comparte ramas, URLs o deploy provider.
+
+---
+
+## 3. Environments
+
+### REQ-ENV-001
+Cada repository mapping deberá poder registrar default branch, staging branch y metadata de environment.
+
+### REQ-ENV-002
+La Platform deberá soportar staging URL por proyecto/repositorio según arquitectura del proyecto.
+
+### REQ-ENV-003
+La Platform deberá diferenciar environment development, staging y production.
+
+### REQ-ENV-004
+Los secretos de producción no deberán estar disponibles en development workspaces.
+
+### REQ-ENV-005
+La configuración de staging no deberá asumir equivalencia con producción.
+
+---
+
+## 4. Work Orders
 
 ### REQ-ORD-001
 El usuario deberá poder crear una orden en lenguaje natural.
 
 ### REQ-ORD-002
-La orden deberá registrar autor, proyecto, objetivo, prioridad, fecha y estado.
+El Work Order deberá persistir autor, proyecto, objetivo, prioridad, fecha y estado.
 
 ### REQ-ORD-003
-JEV deberá generar criterios de aceptación estructurados antes de ejecutar trabajo.
+JEV deberá producir criterios de aceptación estructurados antes de ejecutar implementación.
 
 ### REQ-ORD-004
-Una orden podrá generar una o varias tareas.
+Un Work Order podrá producir una o varias Tasks.
 
 ### REQ-ORD-005
-La orden deberá permitir adjuntar restricciones explícitas.
+El Work Order deberá persistir restricciones explícitas.
 
 ### REQ-ORD-006
-Una orden deberá poder ser pausada, cancelada o reabierta.
+El Work Order deberá poder pausarse, cancelarse o reabrirse según políticas.
 
 ### REQ-ORD-007
-Las órdenes críticas deberán mostrar un resumen de impacto antes de ejecución.
+Las órdenes sensibles deberán mostrar impacto antes de ejecutar la acción crítica.
 
-## 6. Tareas
+### REQ-ORD-008
+El Work Order deberá persistir su work type.
+
+### REQ-ORD-009
+El Work Order deberá conservar referencias a attachments y sus roles.
+
+### REQ-ORD-020
+Command Center deberá aceptar órdenes administrativas de alto nivel.
+
+### REQ-ORD-021
+Una orden administrativa deberá resolverse contra targets concretos antes de ejecutarse.
+
+### REQ-ORD-022
+Pausar proyecto deberá impedir nuevas ejecuciones sin corromper runs activos.
+
+### REQ-ORD-023
+Las órdenes de budget deberán modificar únicamente policies autorizadas y persistidas.
+
+### REQ-ORD-024
+Las acciones sensibles derivadas de lenguaje natural deberán pasar autorización/confirmación requerida.
+
+---
+
+## 5. Tasks y lifecycle
 
 ### REQ-TSK-001
-Cada tarea deberá tener ID único.
+Cada Task deberá tener ID único y persistente.
 
 ### REQ-TSK-002
-Cada tarea deberá pertenecer a exactamente un proyecto.
+Cada Task deberá pertenecer a exactamente un proyecto.
 
 ### REQ-TSK-003
-Los estados permitidos serán PLANNED, READY, RUNNING, BLOCKED, VERIFYING, FAILED, VERIFIED y DONE.
+El lifecycle canónico deberá incluir PLANNED, READY, RUNNING, VERIFYING, VERIFIED, STAGING, AWAITING_HUMAN, APPROVED y DONE.
 
 ### REQ-TSK-004
-No deberá ser posible saltar transiciones no autorizadas.
+Los estados alternativos deberán incluir BLOCKED, FAILED, CHANGES_REQUESTED y REJECTED.
 
 ### REQ-TSK-005
-Una tarea no podrá pasar a VERIFIED sin evidencia de verificación.
+La Platform deberá rechazar transiciones ilegales.
 
 ### REQ-TSK-006
-Una tarea R4 no podrá pasar a DONE sin aprobación humana.
+VERIFIED no deberá interpretarse como aprobación humana ni DONE.
 
 ### REQ-TSK-007
-Cada tarea deberá registrar historial de transiciones.
+APPROVED no deberá interpretarse como promoción completada ni DONE.
 
 ### REQ-TSK-008
-Cada tarea deberá poder definir límites de acciones, reintentos y coste.
+Cada transición deberá persistir actor, timestamp y causa/evidencia cuando aplique.
 
-## 7. Riesgo
+### REQ-TSK-009
+DONE deberá requerir una Promotion de ESA MISMA Task con estado PROMOTED_TO_MAIN.
+
+### REQ-TSK-010
+Un booleano manual `production_promoted=true` no deberá satisfacer el gate de DONE.
+
+### REQ-TSK-011
+Cada Task deberá poder definir max_actions, max_retries y max_cost.
+
+---
+
+## 6. Riesgo
 
 ### REQ-RSK-001
-Toda tarea deberá tener nivel R0-R4.
+Toda Task deberá tener riesgo R0-R4.
 
 ### REQ-RSK-002
-El riesgo deberá calcularse antes de asignar agentes.
+El riesgo deberá calcularse antes de asignar agentes y permisos.
 
 ### REQ-RSK-003
-Cambios de autenticación/autorización deberán ser como mínimo R3.
+Cambios de auth/authz deberán ser como mínimo R3.
 
 ### REQ-RSK-004
 Cambios de aislamiento multi-tenant deberán ser como mínimo R3.
@@ -153,476 +201,824 @@ Cambios de esquema de base de datos deberán ser como mínimo R2.
 Operaciones destructivas de datos deberán ser R4.
 
 ### REQ-RSK-007
-Despliegues a producción deberán ser R4.
+Promoción a producción deberá tratarse como acción crítica gobernada aunque la Task original tenga menor riesgo.
 
 ### REQ-RSK-008
-Cuando existan varios indicadores, deberá prevalecer el riesgo más alto.
+Si existen varios indicadores deberá prevalecer el riesgo más alto.
 
-## 8. Skills Engine
+---
+
+## 7. Skills Engine
 
 ### REQ-SKL-001
-Todas las skills disponibles deberán estar registradas en un manifest.
+La Platform deberá consumir el manifest Foundation de skills compatible con la versión soportada.
 
 ### REQ-SKL-002
-Cada skill deberá tener ID estable independiente del nombre de carpeta.
+Cada skill deberá usar ID estable.
 
 ### REQ-SKL-003
-Cada skill deberá indicar prioridad y triggers.
+La resolución deberá respetar prioridad y triggers.
 
 ### REQ-SKL-004
-El resolver deberá cargar las skills obligatorias en toda tarea.
+Toda Task deberá cargar skills obligatorias.
 
 ### REQ-SKL-005
-El resolver deberá añadir skills específicas según los triggers.
+El resolver deberá añadir skills específicas según el contexto.
 
 ### REQ-SKL-006
-Las skills deberán validarse automáticamente en CI.
+La compatibilidad con contracts Foundation deberá validarse en CI.
 
 ### REQ-SKL-007
-Una skill inexistente referenciada por el manifest deberá bloquear CI.
+Una referencia a skill inexistente deberá fallar validación.
 
 ### REQ-SKL-008
-JEV deberá registrar qué skills se aplicaron a una ejecución.
+Cada run deberá registrar las skills efectivamente aplicadas.
 
-## 9. Agentes
+---
+
+## 8. Auth/RBAC y Control Plane
+
+### REQ-CTL-001
+La Platform deberá exponer un Control Layer único para acciones mutantes.
+
+### REQ-CTL-002
+API, UI, Command Center y Channel Adapters no deberán bypassar el Control Layer.
+
+### REQ-CTL-003
+El Control Layer deberá validar input, actor context, authorization, risk y policy.
+
+### REQ-CTL-004
+Toda acción mutante deberá generar audit event.
+
+### REQ-CTL-005
+El Control Layer deberá devolver errores tipados y estables.
+
+### REQ-CTL-006
+Command Center deberá exponer solo un subconjunto seguro de Control Actions.
+
+---
+
+## 9. Queue y workers
+
+### REQ-QUE-001
+Los trabajos largos deberán ejecutarse fuera del request thread.
+
+### REQ-QUE-002
+Los jobs deberán persistir estado.
+
+### REQ-QUE-003
+Los jobs deberán soportar retry controlado e idempotencia cuando aplique.
+
+### REQ-QUE-004
+El worker deberá propagar correlation, project, order y task IDs.
+
+### REQ-QUE-005
+La pérdida de un worker no deberá marcar una Task como DONE.
+
+---
+
+## 10. Agent contracts
 
 ### REQ-AGT-001
-Los agentes deberán definirse mediante contratos declarativos.
+Architect, Developer, Verifier e Integrator deberán existir como roles runtime reales.
 
 ### REQ-AGT-002
-Cada contrato deberá especificar rol, permisos, skills obligatorias y outputs.
+Cada agente deberá ejecutar solo permisos declarados.
 
 ### REQ-AGT-003
-Architect no deberá tener permiso de implementación por defecto.
+Architect no deberá tener write de implementación por defecto.
 
 ### REQ-AGT-004
-Verifier no deberá modificar el código que está verificando.
+Verifier deberá ser independiente y read-only respecto al código que verifica.
 
 ### REQ-AGT-005
-Un agente no podrá ampliar sus propios permisos.
+Un agente no deberá ampliar sus propios permisos.
 
 ### REQ-AGT-006
-JEV deberá poder detener un agente.
+JEV deberá poder detener un agent run.
 
 ### REQ-AGT-007
-JEV deberá poder pausar y reanudar ejecuciones.
+JEV deberá poder pausar/reanudar ejecuciones válidas.
 
 ### REQ-AGT-008
-Los agentes deberán respetar locks de recursos.
+Los agentes deberán respetar locks.
 
 ### REQ-AGT-009
-Dos agentes no deberán escribir simultáneamente en un recurso bloqueado.
+Dos agentes no deberán escribir simultáneamente en recursos incompatibles.
 
-## 10. Model Router
+### REQ-AGT-010
+La identidad del agente deberá ser independiente del provider/model.
+
+---
+
+## 11. Model Gateway real
 
 ### REQ-MDL-001
-El rol del agente y el modelo deberán ser conceptos independientes.
+La Platform deberá implementar un Model Gateway proveedor-neutral.
 
 ### REQ-MDL-002
-El router deberá admitir múltiples proveedores.
+Deberá soportar inicialmente DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ### REQ-MDL-003
-El router deberá poder seleccionar modelo según riesgo.
+El router deberá seleccionar provider/model según capability, risk, budget y availability.
 
 ### REQ-MDL-004
-El router deberá poder considerar coste y presupuesto.
+El gateway deberá normalizar usage/cost.
 
 ### REQ-MDL-005
-El usuario autorizado deberá poder forzar un modelo para una tarea.
+Un usuario autorizado podrá forzar provider/model dentro de policy.
 
 ### REQ-MDL-006
-El cambio de proveedor no deberá modificar los permisos del agente.
+Cambiar provider no deberá cambiar permisos del agente.
 
 ### REQ-MDL-007
-Cada llamada deberá registrar proveedor/modelo y coste medible o estimado.
+Cada provider call deberá registrar provider/model, usage, coste y outcome.
 
 ### REQ-MDL-008
-Si un proveedor no está disponible, el router deberá poder seleccionar un fallback permitido.
+El gateway deberá soportar fallback permitido.
 
-## 11. GitHub Engine
+### REQ-MDL-009
+Cada adapter deberá soportar timeout.
 
-### REQ-GIT-001
-JEV deberá poder conectar repositorios GitHub autorizados.
+### REQ-MDL-010
+Cada adapter deberá soportar retry policy.
 
-### REQ-GIT-002
-JEV deberá poder leer estructura y archivos.
+### REQ-MDL-011
+El gateway deberá usar typed errors.
 
-### REQ-GIT-003
-JEV deberá crear una rama por tarea de implementación.
+### REQ-MDL-012
+El gateway deberá implementar circuit breaker/health behavior.
 
-### REQ-GIT-004
-Los agentes no deberán escribir directamente a main/master.
+### REQ-MDL-013
+DeepSeek/OpenAI/Qwen/GLM no deberán marcarse implementados hasta funcionar contra sus APIs reales.
 
-### REQ-GIT-005
-JEV deberá poder crear commits.
+---
 
-### REQ-GIT-006
-JEV deberá poder crear Pull Requests.
-
-### REQ-GIT-007
-JEV deberá poder leer checks y GitHub Actions.
-
-### REQ-GIT-008
-Una integración deberá usar PR.
-
-### REQ-GIT-009
-El agente que implementa no deberá aprobar su propia verificación.
-
-### REQ-GIT-010
-El merge deberá bloquearse cuando el Verifier no haya aprobado.
-
-### REQ-GIT-011
-Un merge R4 deberá requerir aprobación humana.
-
-### REQ-GIT-012
-JEV deberá poder trabajar sobre repositorios existentes.
-
-### REQ-GIT-013
-JEV deberá poder crear repositorios nuevos cuando la integración disponga de permisos.
-
-## 12. Workspaces
-
-### REQ-WSP-001
-Cada ejecución escribible deberá disponer de un workspace aislado.
-
-### REQ-WSP-002
-Dos tareas no deberán compartir el mismo workspace escribible.
-
-### REQ-WSP-003
-El workspace deberá clonar únicamente el repositorio y rama asignados.
-
-### REQ-WSP-004
-Las credenciales deberán ser temporales y limitadas.
-
-### REQ-WSP-005
-Credenciales de producción no deberán montarse en workspaces de desarrollo.
-
-### REQ-WSP-006
-El workspace deberá permitir instalación, build y tests.
-
-### REQ-WSP-007
-El workspace deberá destruirse al finalizar salvo retención explícita para debugging.
-
-### REQ-WSP-008
-Los comandos ejecutados deberán registrarse.
-
-## 13. Límites y presupuestos
+## 12. Budgets y costes
 
 ### REQ-CST-001
-Cada run deberá tener max_actions.
+Cada run deberá soportar max_actions.
 
 ### REQ-CST-002
-Cada run deberá tener max_retries.
+Cada run deberá soportar max_retries.
 
 ### REQ-CST-003
-Cada run deberá tener max_cost.
+Cada run deberá soportar max_cost.
 
 ### REQ-CST-004
-JEV deberá bloquear la siguiente acción si supera un hard limit.
+JEV deberá bloquear la siguiente acción cuando se alcance un hard limit.
 
 ### REQ-CST-005
-JEV deberá considerar coste estimado de la siguiente acción cuando esté disponible.
+Antes de una provider call pagada deberá ejecutarse un budget guard.
 
 ### REQ-CST-006
-Los costes deberán agregarse por tarea, orden, proyecto, cliente y periodo.
+Los costes deberán agregarse por Task, Work Order, Project, Client, provider, model y periodo.
 
 ### REQ-CST-007
-El administrador deberá poder establecer alertas de presupuesto.
+El administrador deberá configurar warnings y hard stops.
 
 ### REQ-CST-008
-El dashboard deberá mostrar gasto real/estimado frente a presupuesto.
+El dashboard deberá mostrar coste frente a budget.
 
-## 14. Verificación
+### REQ-CST-009
+Un hard stop deberá generar audit y notification.
+
+---
+
+## 13. GitHub App
+
+### REQ-GIT-001
+La Platform deberá integrar una GitHub App real.
+
+### REQ-GIT-002
+Deberá usar installation tokens temporales.
+
+### REQ-GIT-003
+Cada Task de código deberá usar branch dedicada.
+
+### REQ-GIT-004
+Ningún agente deberá escribir directamente a main/master.
+
+### REQ-GIT-005
+La Platform deberá crear commits reales.
+
+### REQ-GIT-006
+La Platform deberá crear Pull Requests reales.
+
+### REQ-GIT-007
+La Platform deberá leer checks y GitHub Actions.
+
+### REQ-GIT-008
+La integración de código deberá usar PR.
+
+### REQ-GIT-009
+El agente implementador no deberá verificar/aprobar su propio trabajo cuando se exige independencia.
+
+### REQ-GIT-010
+La Platform deberá bloquear promoción si faltan verification/human gates requeridos.
+
+### REQ-GIT-011
+Todo merge/promoción a producción deberá requerir aprobación humana vigente.
+
+### REQ-GIT-012
+JEV deberá trabajar sobre repositorios existentes autorizados.
+
+### REQ-GIT-013
+JEV podrá crear repositorios nuevos cuando la GitHub App disponga del permiso explícito.
+
+### REQ-GIT-014
+Las operaciones GitHub deberán quedar auditadas.
+
+---
+
+## 14. Workspace Engine real
+
+### REQ-WSP-001
+Cada Task escribible deberá disponer de workspace aislado real.
+
+### REQ-WSP-002
+Dos Tasks no deberán compartir el mismo workspace escribible.
+
+### REQ-WSP-003
+El workspace deberá clonar repo/branch asignados.
+
+### REQ-WSP-004
+Las credenciales deberán ser scoped y temporales.
+
+### REQ-WSP-005
+Producción credentials no deberán entrar en development workspace.
+
+### REQ-WSP-006
+El workspace deberá permitir install, build y tests.
+
+### REQ-WSP-007
+El workspace deberá destruirse después de finalizar/cancelar salvo retención autorizada.
+
+### REQ-WSP-008
+Los comandos deberán registrarse.
+
+### REQ-WSP-009
+El runtime deberá imponer CPU/RAM/network/timeouts.
+
+### REQ-WSP-010
+Temporary Workspace no deberá confundirse con Permanent Staging.
+
+---
+
+## 15. Verification Engine
 
 ### REQ-VER-001
 La verificación deberá ser independiente de la implementación.
 
 ### REQ-VER-002
-El Verifier deberá recibir los criterios de aceptación originales.
+Verifier deberá recibir criterios de aceptación originales.
 
 ### REQ-VER-003
-El Verifier deberá poder consultar diff y archivos relevantes.
+Verifier deberá poder inspeccionar diff y contexto relevante en read-only.
 
 ### REQ-VER-004
-El Verifier deberá comprobar CI.
+Verifier deberá recopilar CI/check evidence.
 
 ### REQ-VER-005
-Cuando aplique, deberá comprobar frontend y backend conjuntamente.
+Cuando aplique deberá comprobar frontend y backend conjuntamente.
 
 ### REQ-VER-006
-Cuando aplique, deberá comprobar persistencia real de datos.
+Cuando aplique deberá comprobar persistencia/DB real del environment de prueba.
 
 ### REQ-VER-007
-Cuando aplique, deberá ejecutar E2E.
+Cuando aplique deberá ejecutar browser/E2E.
 
 ### REQ-VER-008
-El resultado será VERIFIED, FAILED o BLOCKED.
+Verification deberá producir VERIFIED, FAILED o BLOCKED y evidencia estructurada.
 
 ### REQ-VER-009
-FAILED deberá devolver trabajo al flujo de corrección.
+FAILED deberá retornar la Task a corrección; no deberá avanzar a staging.
 
 ### REQ-VER-010
-La evidencia de verificación deberá quedar asociada a la tarea.
+La evidencia deberá quedar ligada a la Task/revision.
 
-## 15. Trazabilidad
+### REQ-VER-011
+Collectors reales deberán cubrir, según aplique, CI, unit, integration, browser/E2E, backend/API y DB.
+
+---
+
+## 16. Permanent Staging
+
+### REQ-STG-001
+Cada proyecto activo que lo requiera deberá poder tener Permanent Staging Environment.
+
+### REQ-STG-002
+Staging deberá permanecer disponible después de completar una Task.
+
+### REQ-STG-003
+Staging deberá usar una branch de staging explícita.
+
+### REQ-STG-004
+La Platform deberá exponer staging URL cuando exista UI/web.
+
+### REQ-STG-005
+Backend staging deberá ser independiente de producción.
+
+### REQ-STG-006
+Staging DB deberá ser separada de production DB.
+
+### REQ-STG-007
+Producción no deberá usarse como DB de test.
+
+### REQ-STG-008
+La Platform deberá aplicar/validar migrations de staging.
+
+### REQ-STG-009
+La Platform deberá soportar test data/seed seguro.
+
+### REQ-STG-010
+Readiness deberá incluir health checks aplicables.
+
+### REQ-STG-011
+Readiness deberá incluir browser/API/E2E aplicables.
+
+### REQ-STG-012
+Una Task no podrá pasar a AWAITING_HUMAN sin readiness evidence vigente cuando staging sea requerido.
+
+---
+
+## 17. Human Approval
+
+### REQ-APR-001
+La Platform deberá ofrecer una bandeja de approvals.
+
+### REQ-APR-002
+Approval deberá estar ligada a Task, staging evidence, staging URL, revision/commit, PR y actor.
+
+### REQ-APR-003
+Las decisiones deberán ser APPROVED, CHANGES_REQUESTED o REJECTED.
+
+### REQ-APR-004
+Todo merge/promoción a production deberá requerir approval humana.
+
+### REQ-APR-005
+Approval deberá persistirse y auditarse.
+
+### REQ-APR-006
+Si cambia la revision/commit o la staging evidence relevante, la approval anterior deberá quedar stale/inválida.
+
+### REQ-APR-007
+CHANGES_REQUESTED deberá devolver la Task a trabajo correctivo.
+
+### REQ-APR-008
+REJECTED deberá impedir promoción.
+
+---
+
+## 18. Selective Promotion
+
+### REQ-PRM-001
+La Platform no deberá promocionar staging completo por aprobar una única Task.
+
+### REQ-PRM-002
+Cada Promotion deberá estar ligada a Task.
+
+### REQ-PRM-003
+Cada Promotion deberá registrar source PR y approved commit.
+
+### REQ-PRM-004
+Cada Promotion deberá registrar migration IDs aplicables.
+
+### REQ-PRM-005
+Cada Promotion deberá referenciar la approval vigente.
+
+### REQ-PRM-006
+Cada Promotion deberá generar/usar production PR específico.
+
+### REQ-PRM-007
+La Promotion deberá tener estados estructurados, incluyendo PROMOTED_TO_MAIN.
+
+### REQ-PRM-008
+DONE solo deberá permitirse cuando la Promotion de esa Task esté PROMOTED_TO_MAIN.
+
+### REQ-PRM-009
+El fallo de promotion/deploy deberá impedir DONE y permitir rollback.
+
+---
+
+## 19. Multiagent y conflictos
+
+### REQ-MUL-001
+La Platform deberá soportar DAG de Tasks/dependencias para ejecución multiagente.
+
+### REQ-MUL-002
+Handoffs deberán ser persistentes y estructurados.
+
+### REQ-MUL-003
+Locks deberán identificar resource, owner y Task.
+
+### REQ-MUL-004
+Parallel work deberá respetar dependencies y locks.
+
+### REQ-MUL-005
+Los conflictos deberán detectarse explícitamente.
+
+### REQ-MUL-006
+La Platform deberá soportar conflict resolution sin sobrescritura silenciosa.
+
+### REQ-MUL-007
+Integrator deberá coordinar integración de trabajo validado.
+
+---
+
+## 20. Trazabilidad y Quality
 
 ### REQ-TRC-001
 Los requisitos deberán usar IDs estables REQ-<DOMAIN>-<NNN>.
 
 ### REQ-TRC-002
-JEV deberá relacionar requisito con tarea.
+JEV deberá relacionar Requirement con Task.
 
 ### REQ-TRC-003
-JEV deberá relacionar tarea con rama.
+JEV deberá relacionar Task con repository/branch.
 
 ### REQ-TRC-004
-JEV deberá relacionar tarea con PR.
+JEV deberá relacionar Task con PR.
 
 ### REQ-TRC-005
-JEV deberá relacionar requisito con archivos implementados.
+JEV deberá relacionar Requirement con implementation files.
 
 ### REQ-TRC-006
-JEV deberá relacionar requisito con tests.
+JEV deberá relacionar Requirement con tests/evidence.
 
 ### REQ-TRC-007
-JEV deberá registrar resultado de verificación.
+JEV deberá registrar verification result.
 
 ### REQ-TRC-008
-Un requisito no deberá marcarse VERIFIED sin evidencia.
+Un Requirement no deberá marcarse VERIFIED sin evidencia.
 
-## 16. Locks y concurrencia
+### REQ-QLT-001
+Quality Center deberá ingerir trazabilidad real.
 
-### REQ-SEC-001
-JEV deberá mantener locks activos de recursos modificados.
+### REQ-QLT-002
+Deberá mostrar missing, unverified, failed y verified requirements.
 
-### REQ-SEC-002
-Un agente no propietario no podrá escribir en un recurso con lock activo.
+### REQ-QLT-003
+Deberá mostrar CI, verification, staging readiness y promotion state.
 
-### REQ-SEC-003
-Los locks deberán tener owner y task_id.
+### REQ-QLT-004
+La UI de Quality no deberá inferir estados que no existan en el backend canónico.
 
-### REQ-SEC-004
-Los locks deberán liberarse explícitamente al completar o cancelar.
+---
 
-### REQ-SEC-005
-JEV deberá detectar locks huérfanos o expirados.
+## 21. Audit y Notifications
 
-## 17. Aprobaciones humanas
+### REQ-AUD-001
+Toda acción mutante deberá generar audit event.
 
-### REQ-APR-001
-El sistema deberá tener una bandeja de aprobaciones.
+### REQ-AUD-002
+Audit deberá ser append-only.
 
-### REQ-APR-002
-Cada aprobación deberá mostrar acción propuesta, impacto, riesgo y evidencia.
+### REQ-AUD-003
+Audit deberá registrar actor, action, target, timestamp y result.
 
-### REQ-APR-003
-El usuario podrá aprobar, rechazar o pedir cambios.
+### REQ-AUD-004
+Provider calls deberán registrar provider/model/usage/cost.
 
-### REQ-APR-004
-R4 deberá exigir aprobación humana para finalizar acciones críticas.
+### REQ-AUD-005
+Development agents no deberán modificar ni borrar audit history.
 
-### REQ-APR-005
-Las aprobaciones deberán quedar registradas en auditoría.
+### REQ-AUD-006
+Audit deberá ser consultable por Project/Task/action.
 
-## 18. Dashboard y UI
+### REQ-NOT-001
+La Platform deberá generar notification ante approval requerida.
+
+### REQ-NOT-002
+La Platform deberá generar notification ante fallo crítico.
+
+### REQ-NOT-003
+Warnings y budget hard stops deberán poder generar notifications.
+
+### REQ-NOT-004
+Notifications deberán enlazar a Project/Task/staging review correspondiente.
+
+### REQ-NOT-005
+Attention Center deberá agregar approvals, blocked, failures, stale evidence, budget alerts y conflictos.
+
+---
+
+## 22. Dashboard, Project Control Center y Reports
 
 ### REQ-UI-001
-El dashboard deberá mostrar proyectos, tareas activas, bloqueos, aprobaciones, fallos y costes.
+Dashboard deberá mostrar Projects, Orders, running/blocked Tasks, approvals, staging, costs y Attention Center.
 
 ### REQ-UI-002
 La navegación deberá incluir Dashboard, Projects, Orders, Agents, Approvals, Quality, GitHub, Costs, Reports, Clients y Settings.
 
 ### REQ-UI-003
-Cada proyecto deberá mostrar resumen operativo.
+Cada Project deberá exponer un Project Control Center.
 
 ### REQ-UI-004
-El usuario deberá poder filtrar tareas por estado, riesgo, agente, modelo y proyecto.
+El usuario deberá filtrar Tasks por estado, risk, agent, model y project.
 
 ### REQ-UI-005
-El usuario deberá poder abrir una tarea y consultar todo su historial.
+La vista Task deberá mostrar timeline, evidence, PR, staging, approval y promotion.
 
 ### REQ-UI-006
-Las acciones destructivas deberán requerir confirmación explícita.
+Acciones destructivas/sensibles deberán requerir confirmación según policy.
 
 ### REQ-UI-007
-El dashboard deberá diferenciar claramente bloqueado, fallido y pendiente de aprobación.
+La UI deberá diferenciar blocked, failed, awaiting human, approved y promoted.
 
 ### REQ-UI-008
 La interfaz deberá ser responsive.
 
-## 19. Centro de mando
-
-### REQ-ORD-020
-JEV deberá aceptar órdenes administrativas de alto nivel.
-
-### REQ-ORD-021
-Una orden administrativa deberá resolverse contra proyectos concretos.
-
-### REQ-ORD-022
-Órdenes como "pausar proyecto" deberán afectar nuevas ejecuciones sin corromper tareas activas.
-
-### REQ-ORD-023
-Órdenes de presupuesto deberán actualizar los límites aplicables.
-
-### REQ-ORD-024
-Una orden que implique R4 deberá generar aprobación antes de ejecutar la acción crítica.
-
-## 20. Reportes
-
 ### REQ-RPT-001
-JEV deberá generar un reporte de proyecto.
+JEV deberá generar project reports.
 
 ### REQ-RPT-002
-El reporte deberá incluir progreso, calidad, fallos y costes.
+El reporte deberá incluir progreso, quality, failures, staging/promotion y costs.
 
 ### REQ-RPT-003
-JEV deberá generar reportes por periodo.
+Los reportes deberán soportar periodos.
 
 ### REQ-RPT-004
-JEV deberá poder mostrar costes por proveedor/modelo.
+Deberán mostrar costes por provider/model.
 
 ### REQ-RPT-005
-JEV deberá poder mostrar requisitos no verificados.
+Deberán mostrar requirements no verificados.
 
 ### REQ-RPT-006
-La exportación PDF/Excel podrá implementarse después del MVP, pero el modelo de datos deberá soportarla.
+La arquitectura de reporting deberá permitir futuras exportaciones PDF/Excel/CSV.
 
-## 21. Auditoría
+---
 
-### REQ-AUD-001
-Toda acción mutante deberá generar evento de auditoría.
+## 23. Command Center
 
-### REQ-AUD-002
-El evento deberá registrar actor, acción, objeto, timestamp y resultado.
+### REQ-CMD-001
+Command Center deberá convertir lenguaje natural en intent estructurado.
 
-### REQ-AUD-003
-Las llamadas a IA deberán registrar modelo/proveedor.
+### REQ-CMD-002
+El intent deberá validarse antes de autorización.
 
-### REQ-AUD-004
-Las decisiones críticas deberán registrar rationale.
+### REQ-CMD-003
+La acción deberá pasar authorization antes de execution.
 
-### REQ-AUD-005
-Los eventos no deberán ser modificables por agentes de desarrollo.
+### REQ-CMD-004
+Commands ambiguos/sensibles deberán requerir confirmación cuando policy lo exija.
 
-### REQ-AUD-006
-El sistema deberá permitir consultar auditoría por proyecto/tarea.
+### REQ-CMD-005
+Command Center deberá invocar Control Layer; no servicios internos directamente.
 
-## 22. Notificaciones
+### REQ-CMD-006
+Command Center deberá exponer solo el subconjunto seguro de Control Actions definido para él.
 
-### REQ-NOT-001
-El usuario deberá recibir aviso cuando una tarea requiera aprobación.
+### REQ-CMD-007
+Toda ejecución deberá quedar auditada.
 
-### REQ-NOT-002
-El usuario deberá recibir aviso ante fallo crítico.
+---
 
-### REQ-NOT-003
-El usuario deberá poder configurar notificaciones no críticas.
+## 24. Multimodal Intake
 
-### REQ-NOT-004
-Las notificaciones deberán enlazar al contexto correspondiente.
+### REQ-MM-001
+La Platform deberá aceptar text.
 
-## 23. Entidades principales
+### REQ-MM-002
+La Platform deberá aceptar image.
 
-```
-Organization
-User
-Client
-Project
-Repository
-ProductDocument
-Order
-Requirement
-Task
-TaskRun
-AgentDefinition
-AgentRun
-Skill
-ModelProvider
-Model
-Workspace
-ResourceLock
-PullRequestLink
-Verification
-Approval
-CostEvent
-AuditEvent
-Report
-Notification
-```
+### REQ-MM-003
+La Platform deberá aceptar screenshot.
 
-## 24. Arquitectura lógica
+### REQ-MM-004
+La Platform deberá aceptar file.
 
-```
-Web Dashboard
-      |
-JEV API
-      |
-+-------------------------------+
-| Orchestrator                  |
-| Risk Engine                   |
-| Skills Engine                 |
-| Agent Registry                |
-| Model Router                  |
-| Approval Engine               |
-+-------------------------------+
-      |
-+-------------+-----------------+
-| GitHub      | Workspace       |
-| Engine      | Engine          |
-+-------------+-----------------+
-      |
-Model Providers / GitHub / Containers
+### REQ-MM-005
+La Platform deberá aceptar link.
 
-PostgreSQL = estado canónico empresarial
-GitHub = fuente de verdad del código
-Queue = ejecución asíncrona
-```
+### REQ-MM-006
+Attachment roles deberán incluir CURRENT_BASE, EDIT_TARGET, STYLE_REFERENCE, DESIRED_RESULT y REQUIREMENT_DOCUMENT.
 
-## 25. Stack objetivo
+### REQ-MM-007
+Work types deberán incluir GENERAL, IMAGE_REPLACEMENT, IMAGE_GENERATION, IMAGE_EDIT y UI_REFERENCE_REDESIGN.
 
-- Frontend: Next.js + TypeScript
-- API/control plane: Python FastAPI o equivalente
-- Base de datos: PostgreSQL
-- Queue: Redis
-- Workers: Python
-- Workspaces: Docker
-- Git: GitHub App + GitHub API
-- CI: GitHub Actions
-- E2E: Playwright
-- Observabilidad: logs estructurados + métricas
-- Despliegue: contenedores
+### REQ-MM-008
+JEV deberá conservar la relación original/target/reference sin ambigüedad.
 
-## 26. Gates de calidad mínimos
+### REQ-MM-009
+Los visual Work Orders deberán persistir target section/component cuando aplique.
 
-Antes de merge:
+### REQ-MM-010
+Todo cambio visual deberá pasar por staging y revisión humana antes de producción.
 
-- manifest/contratos válidos;
-- lint;
-- typecheck cuando aplique;
-- unit tests;
-- integration tests cuando aplique;
-- build;
-- E2E cuando aplique;
-- verificación;
-- aprobación humana cuando aplique.
+---
 
-## 27. Criterio de aceptación del MVP
+## 25. Image workflows
 
-El MVP deberá demostrar end-to-end:
+### REQ-IMG-001
+IMAGE_REPLACEMENT deberá permitir asociar asset original y replacement.
 
-1. proyecto conectado a GitHub;
-2. orden creada;
-3. tarea derivada;
-4. riesgo calculado;
-5. skills resueltas;
-6. agente/modelo seleccionados;
-7. rama creada;
-8. workspace creado;
-9. cambio implementado;
-10. pruebas ejecutadas;
-11. PR creado;
-12. verificación independiente;
-13. estado reflejado en dashboard;
-14. coste registrado;
-15. requisito trazado;
-16. aprobación aplicada si corresponde.
+### REQ-IMG-002
+IMAGE_GENERATION deberá soportar provider de generación real en Platform.
+
+### REQ-IMG-003
+IMAGE_EDIT deberá preservar el asset de entrada y registrar el generado.
+
+### REQ-IMG-004
+UI_REFERENCE_REDESIGN deberá diferenciar current screenshot de style/reference screenshot.
+
+### REQ-IMG-005
+Los assets generados deberán quedar ligados a Work Order/Task y branch de implementación.
+
+### REQ-IMG-006
+El resultado deberá revisarse en Permanent Staging.
+
+---
+
+## 26. Channels
+
+### REQ-CHN-001
+La arquitectura deberá soportar Web, Telegram y WhatsApp.
+
+### REQ-CHN-002
+Channel Adapters deberán limitarse a ingreso/egreso.
+
+### REQ-CHN-003
+Channel Adapter no deberá ejecutar GitHub, agents, Docker, model providers o deploy directamente.
+
+### REQ-CHN-004
+El flujo deberá ser Channel → Multimodal Intake → Work Order/Command → Control Layer.
+
+### REQ-CHN-005
+Telegram real deberá implementarse en Platform.
+
+### REQ-CHN-006
+WhatsApp real deberá implementarse en Platform.
+
+### REQ-CHN-007
+Los channels deberán respetar auth, confirmation, audit y staging gates.
+
+---
+
+## 27. Secrets, observability y security
+
+### REQ-SEC-001
+La Platform deberá usar secrets management fuera del repository.
+
+### REQ-SEC-002
+Workers deberán recibir únicamente secrets necesarios y scoped.
+
+### REQ-SEC-003
+Production secrets no deberán entrar en development workspaces.
+
+### REQ-SEC-004
+La Platform deberá probar authz bypass.
+
+### REQ-SEC-005
+La Platform deberá probar tenant leakage.
+
+### REQ-SEC-006
+La Platform deberá probar secret leakage.
+
+### REQ-SEC-007
+La Platform deberá probar command injection.
+
+### REQ-SEC-008
+Hallazgos críticos deberán bloquear release.
+
+### REQ-OBS-001
+API, workers y agents deberán emitir structured logs.
+
+### REQ-OBS-002
+Correlation/request/task IDs deberán propagarse.
+
+### REQ-OBS-003
+La Platform deberá exponer métricas de latency, errors, jobs y costs.
+
+### REQ-OBS-004
+Los incidentes críticos deberán generar señal operativa/notification.
+
+---
+
+## 28. Backups y rollback
+
+### REQ-BAK-001
+La Platform deberá implementar backup de PostgreSQL.
+
+### REQ-BAK-002
+La Platform deberá disponer de restore procedure probado.
+
+### REQ-BAK-003
+Los deployments fallidos deberán poder rollback.
+
+### REQ-BAK-004
+Rollback deberá generar audit event.
+
+### REQ-BAK-005
+Antes de activar JEV self-development deberá existir rollback probado.
+
+---
+
+## 29. Contract Drift
+
+### REQ-DRF-001
+CI deberá comprobar lifecycle consistente entre runtime, schemas, policies y docs.
+
+### REQ-DRF-002
+CI deberá comprobar risk levels consistentes.
+
+### REQ-DRF-003
+CI deberá comprobar Control Actions consistentes con contratos expuestos.
+
+### REQ-DRF-004
+CI deberá comprobar Command Center actions como subconjunto seguro permitido.
+
+### REQ-DRF-005
+CI deberá comprobar Work Order states/types.
+
+### REQ-DRF-006
+CI deberá comprobar Notification categories.
+
+### REQ-DRF-007
+CI deberá comprobar approval rules.
+
+### REQ-DRF-008
+Contract drift crítico deberá bloquear release.
+
+---
+
+## 30. Pilotos y self-development
+
+### REQ-PIL-001
+Primero deberá ejecutarse un controlled pilot repository.
+
+### REQ-PIL-002
+El piloto deberá completar Order → Task → workspace → provider → implementation → tests → PR → verification → staging → human approval → selective promotion → production → DONE.
+
+### REQ-PIL-003
+El piloto deberá mostrar costs, audit y traceability.
+
+### REQ-PIL-004
+Espacore solo deberá activarse después del controlled pilot.
+
+### REQ-PIL-005
+Nuvurent deberá activarse después de Espacore.
+
+### REQ-PIL-006
+JEV self-development solo deberá activarse después de Nuvurent, security hardening y backup/rollback.
+
+### REQ-PIL-007
+JEV self-development deberá operar bajo highest-risk policy, Verifier independiente y aprobación humana obligatoria.
+
+---
+
+## 31. Entidades canónicas Platform
+
+PostgreSQL deberá contemplar, como mínimo:
+
+- Organization
+- User
+- Client
+- Project
+- Repository
+- Environment
+- WorkOrder
+- Requirement
+- Task
+- TaskRun
+- AgentRun
+- ModelCall/CostEvent
+- Workspace
+- ResourceLock
+- PullRequestLink
+- Verification
+- StagingDeployment
+- StagingEvidence
+- Approval
+- Promotion
+- Deployment
+- AuditEvent
+- Notification
+
+---
+
+## 32. MVP Definition
+
+### REQ-MVP-001
+El MVP no deberá declararse completo sin un circuit end-to-end real.
+
+### REQ-MVP-002
+El circuit deberá incluir real workspace y real AI provider.
+
+### REQ-MVP-003
+Deberá incluir PR y independent verification.
+
+### REQ-MVP-004
+Deberá incluir Permanent Staging y readiness evidence.
+
+### REQ-MVP-005
+Deberá incluir human review vigente.
+
+### REQ-MVP-006
+Deberá incluir selective promotion a production.
+
+### REQ-MVP-007
+DONE deberá ocurrir solo después de PROMOTED_TO_MAIN.
+
+### REQ-MVP-008
+Cost y audit deberán ser visibles y persistentes.
