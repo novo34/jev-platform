@@ -1,9 +1,9 @@
 # JEV Development Platform — SPEC
 
-**Versión:** 2.0  
+**Versión:** 3.0  
 **Estado:** Canonical System Specification  
 **Rama:** `jev-foundation`  
-**Fecha:** 2026-09-27
+**Fecha:** 2026-10-05
 
 ---
 
@@ -967,7 +967,420 @@ JEV self-development deberá operar bajo highest-risk policy, Verifier independi
 
 ---
 
-## 31. Entidades canónicas Platform
+## 31. Intent Refinement y Acceptance Contracts
+
+### REQ-INT-001
+Toda orden ejecutable deberá producir un IntentBrief antes de planificación/implementación, salvo operaciones puramente administrativas ya estructuradas.
+
+### REQ-INT-002
+IntentBrief deberá persistir goal, requested_change, in_scope, out_of_scope, observed_context, assumptions, open_questions, ambiguity_score, change_radius, risk_signals, documentation_depth, clarification_required y evidence_needed.
+
+### REQ-INT-003
+documentation_depth deberá usar L0, L1, L2, L3 o L4.
+
+### REQ-INT-004
+Una ambigüedad material que permita interpretaciones con efectos diferentes deberá establecer clarification_required=true y bloquear implementación.
+
+### REQ-INT-005
+change_radius deberá distinguir LOCAL, COMPONENT, CROSS_LAYER, ARCHITECTURAL y PRODUCT.
+
+### REQ-INT-006
+La profundidad documental podrá aumentar por riesgo/radio de cambio, pero no reducir controles obligatorios definidos por policy.
+
+### REQ-ACC-001
+JEV deberá producir un AcceptanceContract con criterios observables antes de ejecutar cambios de comportamiento.
+
+### REQ-ACC-002
+Cada acceptance criterion deberá indicar un método de verificación.
+
+### REQ-ACC-003
+AcceptanceContract deberá registrar constraints, assumptions, non_goals, affected_requirements, compatibility_requirements, required_evidence y unresolved_decisions.
+
+### REQ-ACC-004
+JEV no deberá inventar requisitos para completar una plantilla cuando la intención no los proporciona.
+
+---
+
+## 32. Execution Blueprint y Replanning
+
+### REQ-BLP-001
+Las tareas no triviales deberán poder generar un ExecutionBlueprint persistente y versionado.
+
+### REQ-BLP-002
+ExecutionBlueprint deberá incluir objective, source_requirements, constraints, assumptions, steps, dependencies, parallel_groups, required_capabilities, required_evidence, rollback_strategy y completion_criteria.
+
+### REQ-BLP-003
+Cada step deberá incluir step_id, objective, inputs, outputs, dependencies, affected_resources, capabilities, evidence_required y exit_criteria.
+
+### REQ-BLP-004
+El scheduler deberá rechazar dependency cycles.
+
+### REQ-BLP-005
+JEV deberá rechazar parallel groups con dependencia directa entre sus steps o conflictos de recursos incompatibles.
+
+### REQ-BLP-006
+Cada handoff de ejecución deberá quedar ligado a task_id, blueprint_id, blueprint_revision, step_id, context_pack_ref y authorized_resources.
+
+### REQ-BLP-007
+Un agente no deberá ampliar su writable scope fuera de authorized_resources.
+
+### REQ-PLN-001
+Todo replanning deberá crear una PlanRevision append-only; no deberá sobrescribir la revisión previa.
+
+### REQ-PLN-002
+PlanRevision deberá registrar actor, reason, evidence, operations, dependency_impact, risk_impact y budget_impact.
+
+### REQ-PLN-003
+Las operaciones admitidas deberán incluir INSERT, SPLIT, REORDER, BLOCK, REPLACE y REMOVE.
+
+### REQ-PLN-004
+Después de replanning deberán revalidarse DAG, locks, risk, budget, required evidence y approvals antes de continuar.
+
+### REQ-PLN-005
+El Integrator deberá bloquear una entrega cuya blueprint_revision no coincida con la revisión aprobada.
+
+---
+
+## 33. Adaptive Workflow Compiler
+
+### REQ-WFL-001
+JEV deberá compilar un AdaptiveWorkflow desde intent depth, risk, change radius, capabilities disponibles, constraints, evidence requirements y budget.
+
+### REQ-WFL-002
+AdaptiveWorkflow deberá incluir workflow_id, task_id, intent_depth, risk, change_radius, capabilities, steps, gates, evidence_requirements y budget_class.
+
+### REQ-WFL-003
+budget_class deberá distinguir LIGHT, STANDARD, DEEP y CRITICAL.
+
+### REQ-WFL-004
+La profundidad mínima resultante deberá ser el máximo requerido por intent depth, risk y change radius.
+
+### REQ-WFL-005
+Un workflow adaptativo nunca deberá eliminar un gate mínimo impuesto por policy/risk.
+
+### REQ-WFL-006
+Cambios de comportamiento deberán añadir regression evidence.
+
+### REQ-WFL-007
+Cambios browser/UI-dependent deberán añadir browser/runtime evidence.
+
+### REQ-WFL-008
+Cambios arquitectónicos deberán incluir architecture evidence y revisión correspondiente.
+
+---
+
+## 34. Context Compiler y Retrieval Budget
+
+### REQ-CTX-001
+Cada Task/agent handoff deberá poder usar un ContextPack acotado.
+
+### REQ-CTX-002
+ContextPack deberá clasificar información como REQUIRED, USEFUL, OPTIONAL o EXCLUDED.
+
+### REQ-CTX-003
+Cada elemento incluido deberá conservar provenance.
+
+### REQ-CTX-004
+ContextPack deberá declarar token_or_size_budget, missing_required, truncation_decisions y freshness.
+
+### REQ-CTX-005
+missing_required no vacío deberá bloquear ejecución.
+
+### REQ-CTX-006
+La recuperación deberá soportar ciclos bounded dispatch → evaluate → refine.
+
+### REQ-CTX-007
+ContextRetrievalPlan deberá declarar budget, max_iterations, required_queries, optional_queries y stop_when.
+
+### REQ-CTX-008
+Exceder budget/max_iterations o terminar con required context ausente deberá producir BLOCKED, no ejecución parcial silenciosa.
+
+---
+
+## 35. Capability Composition y Harness Contracts
+
+### REQ-CAP-001
+JEV deberá separar role authority de technical capability.
+
+### REQ-CAP-002
+Una CapabilityComposition deberá registrar requested, granted, denied capabilities y permission ceiling.
+
+### REQ-CAP-003
+Una capability no deberá conceder permisos fuera del permission ceiling del role/policy.
+
+### REQ-CAP-004
+La Platform deberá evitar crear nuevos authority roles únicamente por lenguaje, framework o proveedor.
+
+### REQ-HRN-001
+Cada harness adapter deberá declarar version, capabilities, limitations y soporte de browser/tools/structured output.
+
+### REQ-HRN-002
+Claude Code, Codex, Cursor y futuros harnesses deberán ser replaceable execution surfaces y no governance authorities.
+
+### REQ-HRN-003
+Si un workflow requiere una capability no disponible, Platform deberá retornar typed BLOCKED/UNSUPPORTED.
+
+### REQ-HRN-004
+Authz, risk, audit, verification y human approval deberán permanecer en JEV core y no depender de prompt text del harness.
+
+---
+
+## 36. Artifact Conversation and Review
+
+### REQ-ART-001
+PRD, SPEC, ROADMAP, ADR, Execution Blueprint, UI evidence, verification reports y improvement proposals deberán poder participar en review conversations.
+
+### REQ-ART-002
+Todo comentario deberá referenciar artifact_id, revision y selector/fragmento cuando aplique.
+
+### REQ-ART-003
+Revisiones previas deberán permanecer inmutables/auditables.
+
+### REQ-ART-004
+Las decisiones de review deberán ser PENDING, APPROVE, REQUEST_CHANGES o REJECT.
+
+### REQ-ART-005
+APPROVE no deberá inferirse de lenguaje conversacional; deberá ser transición explícita/autorizada.
+
+### REQ-ART-006
+Una aprobación deberá estar ligada a la exacta revision inspeccionada.
+
+### REQ-ART-007
+REQUEST_CHANGES deberá producir una nueva revision en vez de mutar la anterior.
+
+---
+
+## 37. Living Documentation y Requirement Graph
+
+### REQ-DOC-001
+Cambios materiales deberán calcular DocumentationImpact antes de cerrar la Task.
+
+### REQ-DOC-002
+DocumentationImpact deberá identificar affected_artifacts, required_updates, optional_updates, no_change_rationale, trace_links y drift_findings.
+
+### REQ-DOC-003
+Drift crítico entre requisitos canónicos, backlog, implementación, tests o evidencia deberá bloquear release.
+
+### REQ-GRF-001
+JEV deberá mantener un Requirement Graph con node types BUSINESS_GOAL, PRD_CAPABILITY, SPEC_REQUIREMENT, ADR, ROADMAP_PHASE, TASK, CODE, TEST, EVIDENCE y RELEASE.
+
+### REQ-GRF-002
+El grafo deberá soportar relaciones IMPLEMENTS, REFINES, DECIDES, PLANS, VERIFIES, EVIDENCES, RELEASES y DEPENDS_ON.
+
+### REQ-GRF-003
+Una edge con node inexistente deberá ser inválida.
+
+### REQ-GRF-004
+JEV deberá poder calcular impacto upstream/downstream desde un node modificado.
+
+### REQ-GRF-005
+Para requirements release-ready, el grafo deberá permitir demostrar Goal/PRD upstream y Task/Code/Test/Evidence downstream; Release se exigirá cuando aplique.
+
+### REQ-GRF-006
+Quality Center deberá consumir el Requirement Graph canónico y no flags manuales equivalentes.
+
+---
+
+## 38. Decision Ledger y Provenance
+
+### REQ-DEC-001
+Decisiones materiales deberán persistir en un DecisionRecord append-only.
+
+### REQ-DEC-002
+DecisionRecord deberá incluir topic, scope, actor, alternatives, selected, rationale, evidence, affected_artifacts, supersedes y status.
+
+### REQ-DEC-003
+Una decisión histórica no deberá poder reescribirse con el mismo decision_id.
+
+### REQ-DEC-004
+Supersession cycles deberán rechazarse.
+
+### REQ-DEC-005
+Decision retrieval deberá poder limitarse por project/scope/topic para evitar cargar historial irrelevante.
+
+### REQ-DEC-006
+Decisiones LOCKED deberán conservar los gates de reapertura/autorización Foundation.
+
+---
+
+## 39. Skill Health y Evidence-Based Learning
+
+### REQ-SHL-001
+JEV deberá mantener métricas por skill para activation_count, successful_activations, false_activations, missed_activations, verifier_failure_rate, correction_rate, average_cost, average_latency, overlap_score, freshness y benchmark_status.
+
+### REQ-SHL-002
+JEV deberá poder recomendar KEEP, IMPROVE, MERGE, RETIRE o DEFER con evidencia.
+
+### REQ-SHL-003
+MERGE deberá identificar merge_target.
+
+### REQ-SHL-004
+Skill health no deberá tener autoridad directa para modificar/retirar una skill de producción.
+
+### REQ-LRN-001
+El learning model deberá distinguir OBSERVATION, HYPOTHESIS, PATTERN, PROJECT_RULE, GLOBAL_RULE, SKILL_CANDIDATE y POLICY_CANDIDATE.
+
+### REQ-LRN-002
+LearningCandidate deberá persistir scope, confidence, evidence, contradictions y source_events.
+
+### REQ-LRN-003
+Project knowledge no deberá promoverse automáticamente a global.
+
+### REQ-LRN-004
+GLOBAL_RULE, SKILL_CANDIDATE y POLICY_CANDIDATE deberán requerir evaluación y aprobación correspondiente antes de activarse.
+
+---
+
+## 40. Improvement Candidates y Counterfactual Evaluation
+
+### REQ-IMP-001
+JEV deberá poder generar ImprovementCandidate desde repeated failures, corrections, cost/latency anomalies, overlap, missing capabilities o stale rules.
+
+### REQ-IMP-002
+ImprovementCandidate deberá incluir problem, evidence, improvement_type, proposed_change, expected_benefit, risk, affected_contracts, rollback_concept y evaluation_plan.
+
+### REQ-IMP-003
+Generar una propuesta no deberá conceder autoridad para autoaplicarla.
+
+### REQ-EVL-001
+La Platform deberá mantener un replay corpus versionado con escenarios reproducibles.
+
+### REQ-EVL-002
+Baseline y candidate deberán ejecutarse sobre el mismo corpus/version.
+
+### REQ-EVL-003
+La evaluación deberá medir al menos quality, safety, cost, latency, corrections y completion.
+
+### REQ-EVL-004
+Una regresión crítica de safety o critical quality deberá forzar FAIL independientemente de mejoras de coste/latencia.
+
+### REQ-EVL-005
+CounterfactualEvalReport deberá exponer regressions, wins, uncertainty y verdict.
+
+### REQ-EVL-006
+El replay corpus no deberá poder modificarse silenciosamente para favorecer el candidate bajo evaluación.
+
+---
+
+## 41. Supervised Self-Improvement
+
+### REQ-SLF-001
+Todo self-improvement deberá clasificarse R4.
+
+### REQ-SLF-002
+El flujo deberá ser proposal → artifact review → counterfactual benchmark → human approval → isolated canary → monitoring → promote/rollback.
+
+### REQ-SLF-003
+Authorization, audit, verification, verifier independence, human approval, risk gates y direct-main protections deberán considerarse protected controls.
+
+### REQ-SLF-004
+Un candidate que intente debilitar protected controls deberá ser rechazado.
+
+### REQ-SLF-005
+Un self-improvement candidate deberá disponer de rollback proof antes de canary.
+
+### REQ-SLF-006
+Canary deberá tener scope limitado y no podrá escribir directamente a producción.
+
+### REQ-SLF-007
+Canary FAIL deberá obligar a ROLLED_BACK.
+
+### REQ-SLF-008
+Canary PASS solo permitirá READY_TO_PROMOTE/PROMOTED después de approvals restantes.
+
+---
+
+## 42. Repository Hygiene, Dead Code y Reuse Guard
+
+### REQ-HYG-001
+La Platform deberá producir HygieneReport para Tasks que creen, sustituyan o eliminen superficies de código relevantes.
+
+### REQ-HYG-002
+Los candidatos deberán clasificarse SAFE_TO_DELETE, LIKELY_DEAD, POSSIBLY_DYNAMIC, GENERATED_REQUIRED, TEST_ARTIFACT o UNKNOWN.
+
+### REQ-HYG-003
+Ausencia de static references no deberá ser evidencia suficiente para auto-eliminar código dinámico/reflection/config/plugin-driven.
+
+### REQ-HYG-004
+JEV deberá detectar temporary/debug artifacts, orphan files, generated drift, stale TODO/FIXME y unused dependencies cuando tooling del stack lo permita.
+
+### REQ-HYG-005
+Antes de crear una nueva superficie de código, JEV deberá realizar una búsqueda reuse-first y registrar ReuseDecision.
+
+### REQ-HYG-006
+ReuseDecision deberá distinguir REUSE, EXTEND, CREATE_NEW y BLOCK_DUPLICATE.
+
+### REQ-HYG-007
+Un equivalente fuerte sin rationale deberá producir BLOCK_DUPLICATE.
+
+### REQ-HYG-008
+Refactors deberán registrar added, replaced, removed y retained_for_compatibility.
+
+### REQ-HYG-009
+Código replaced que no sea removed ni justificado deberá producir INCOMPLETE_CLEANUP.
+
+### REQ-HYG-010
+Temporary artifacts creados por una Task deberán eliminarse o promoverse explícitamente a ubicación permanente aprobada.
+
+### REQ-HYG-011
+Repository Health deberá persistir cleanup debt baseline/delta y bloquear aumentos no justificados.
+
+### REQ-HYG-012
+El hygiene gate no deberá auto-borrar candidatos inciertos; deberá bloquear o pedir review.
+
+---
+
+## 43. Adaptive Risk Integration
+
+### REQ-ARS-001
+high_ambiguity_intent deberá tener riesgo mínimo R2.
+
+### REQ-ARS-002
+cross_layer_change deberá tener riesgo mínimo R2.
+
+### REQ-ARS-003
+architectural_change y product_change deberán tener riesgo mínimo R3.
+
+### REQ-ARS-004
+plan_mutation deberá tener riesgo mínimo R2.
+
+### REQ-ARS-005
+self_improvement deberá ser R4.
+
+### REQ-ARS-006
+repository_cleanup_delete deberá tener riesgo mínimo R2.
+
+### REQ-ARS-007
+uncertain_code_deletion deberá tener riesgo mínimo R3.
+
+---
+
+## 44. Adaptive Platform Persistence
+
+PostgreSQL deberá persistir/adaptar, según la implementación final, entidades para:
+
+- IntentBrief
+- AcceptanceContract
+- ExecutionBlueprint / BlueprintRevision
+- ExecutionStepHandoff
+- ContextPack / ContextRetrievalRun
+- AdaptiveWorkflow
+- Artifact / ArtifactRevision / ArtifactComment / ArtifactReview
+- DecisionRecord
+- RequirementGraphNode / RequirementGraphEdge
+- SkillHealthSnapshot
+- LearningCandidate
+- ImprovementCandidate
+- ReplayCorpus / EvalRun / CounterfactualEvalReport
+- SelfImprovementRelease / CanaryRun
+- HygieneReport / ReuseDecision / CleanupEvidence / RepositoryHealthSnapshot
+
+Estas entidades deberán respetar tenant/project scope, append-only/version semantics cuando aplique y audit references.
+
+---
+
+## 45. Entidades canónicas Platform
+
 
 PostgreSQL deberá contemplar, como mínimo:
 
@@ -994,10 +1407,24 @@ PostgreSQL deberá contemplar, como mínimo:
 - Deployment
 - AuditEvent
 - Notification
+- IntentBrief
+- AcceptanceContract
+- ExecutionBlueprint / BlueprintRevision
+- ContextPack
+- AdaptiveWorkflow
+- ArtifactRevision / ArtifactReview
+- DecisionRecord
+- RequirementGraphNode / RequirementGraphEdge
+- SkillHealthSnapshot
+- LearningCandidate
+- ImprovementCandidate
+- ReplayCorpus / EvalRun
+- SelfImprovementRelease / CanaryRun
+- HygieneReport / ReuseDecision / CleanupEvidence / RepositoryHealthSnapshot
 
 ---
 
-## 32. MVP Definition
+## 46. MVP Definition
 
 ### REQ-MVP-001
 El MVP no deberá declararse completo sin un circuit end-to-end real.
