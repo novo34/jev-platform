@@ -11,3 +11,16 @@ The reusable governance and skills library remains separate in:
 - `novo34/base-skills_klever`
 
 JEV consumes those skills but does not own them.
+
+## PLT-002 application skeleton
+
+The Platform starts as a TypeScript workspace with explicit service boundaries:
+
+- `apps/web` — React/Vite web application
+- `apps/api` — Fastify HTTP API
+- `apps/worker` — background-worker process with a health endpoint
+- `packages/shared` — shared typed contracts/utilities
+
+Local development and validation instructions live in `docs/DEVELOPMENT.md`.
+
+The next backlog task must not be implemented until PLT-002 is verified and closed by the Development Control Gate.
