@@ -2,9 +2,9 @@
 
 **Versión:** 3.0  
 **Estado:** Canonical Development Roadmap  
-**Rama:** `jev-foundation`  
+**Rama canónica:** `main`  
 **Fecha:** 2026-10-05  
-**Fuente Foundation:** `novo34/base-skills_klever@jev-v8-adaptive-foundation` — `FND-070` DONE
+**Fuente Foundation:** `novo34/base-skills_klever@main` — `FND-071` Development Control Gate DONE
 
 ---
 
@@ -24,7 +24,7 @@ PRD capability
 → future Task/Test/Evidence
 ```
 
-No iniciar PLT-002 hasta aceptación manual de PLT-001.
+PLT-001 está aceptado. PLT-002 solo puede iniciarse mediante el Development Control Gate / NEXT_TASK y autorización explícita del operador.
 
 ---
 
@@ -67,7 +67,7 @@ Congelar PRD/SPEC/ROADMAP alineados con Foundation final.
 # Fase 2 — Platform Skeleton
 
 **Backlog:** PLT-002  
-**Depende de:** PLT-001
+**Depende de:** PLT-001, FND-071
 
 ## Objetivo
 Crear estructura de Web, API, workers y packages compartidos.
