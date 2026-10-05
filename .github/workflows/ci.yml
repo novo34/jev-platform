@@ -28,3 +28,27 @@ jobs:
 
       - name: Check
         run: npm run check
+
+      - name: Smoke local development
+        shell: bash
+        run: |
+          npm run dev > /tmp/jev-dev.log 2>&1 &
+          DEV_PID=$!
+          cleanup() {
+            kill "$DEV_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3000/ >/dev/null               && curl --fail --silent http://127.0.0.1:3001/health >/dev/null               && curl --fail --silent http://127.0.0.1:3002/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            cat /tmp/jev-dev.log
+            exit 1
+          fi
