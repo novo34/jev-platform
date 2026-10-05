@@ -1,10 +1,10 @@
 # JEV Development Platform — PRD
 
-**Versión:** 2.0  
+**Versión:** 3.0  
 **Estado:** Canonical Product Requirements  
 **Rama:** `jev-foundation`  
-**Fecha:** 2026-09-27  
-**Fuente Foundation:** `novo34/base-skills_klever@jev-v7-foundation`
+**Fecha:** 2026-10-05  
+**Fuente Foundation:** `novo34/base-skills_klever@jev-v8-adaptive-foundation` — gate `FND-070` validado
 
 ---
 
@@ -54,7 +54,12 @@ Debe resolver, entre otros:
 - gasto de IA sin control;
 - acoplamiento a un proveedor;
 - ausencia de visión empresarial;
-- falta de separación entre decisión humana, verificación técnica y despliegue real.
+- falta de separación entre decisión humana, verificación técnica y despliegue real;
+- ejecución con contexto excesivo o insuficiente;
+- planes rígidos que quedan obsoletos cuando aparecen hechos nuevos;
+- proliferación innecesaria de agentes/skills;
+- aprendizaje no evaluado que degrada comportamiento;
+- código muerto, duplicación, artefactos temporales y deuda de limpieza acumulada.
 
 ---
 
@@ -85,7 +90,18 @@ JEV deberá permitir:
 21. mostrar Attention Center, Quality Center, costes y reportes;
 22. aceptar órdenes desde Web y preparar adapters para Telegram/WhatsApp;
 23. soportar workflows visuales e imágenes;
-24. operar pilotos controlados antes del self-development.
+24. operar pilotos controlados antes del self-development;
+25. refinar intención y ambigüedad antes de ejecutar;
+26. generar Acceptance Contracts y Execution Blueprints versionados;
+27. compilar workflows proporcionalmente a riesgo, alcance y capacidades;
+28. construir Context Packs acotados con retrieval iterativo;
+29. permitir replanning versionado sin perder trazabilidad;
+30. componer capacidades sobre pocos roles de autoridad;
+31. mantener Requirement Graph y documentación viva;
+32. evaluar salud de skills y aprendizaje basado en evidencia;
+33. comparar mejoras contra baseline mediante replay/counterfactual evaluation;
+34. auto-mejorarse únicamente mediante aprobación humana, canary aislado y rollback;
+35. impedir acumulación silenciosa de código muerto, duplicación y basura de pruebas.
 
 ---
 
@@ -330,18 +346,18 @@ Los costes deberán ser trazables y reportables.
 Roles iniciales:
 
 ### Architect
-Planifica arquitectura y dependencias.
+Refina intención, especifica restricciones, diseña arquitectura, genera Execution Blueprints y propone replanning.
 
 ### Developer
-Implementa en el workspace asignado.
+Implementa en el workspace asignado usando source-grounded development, TDD incremental, debugging, simplificación y cleanup obligatorio.
 
 ### Verifier
-Revisa independientemente y será read-only respecto al código que verifica.
+Revisa independientemente y será read-only respecto al código que verifica. Deberá consumir evidencia de runtime/browser, trazabilidad, adversarial review e higiene cuando aplique.
 
 ### Integrator
-Coordina integración, conflictos y promoción autorizada.
+Coordina integración, conflictos y promoción autorizada. Solo podrá integrar la revisión exacta del Blueprint aprobada y el scope exacto autorizado.
 
-La identidad del agente y el proveedor/modelo utilizado serán conceptos separados.
+La identidad del agente y el proveedor/modelo utilizado serán conceptos separados. **Rol de autoridad y capability también serán conceptos separados**: JEV compondrá capacidades técnicas sobre pocos roles estables en lugar de crear un agente distinto por tecnología/proveedor.
 
 ---
 
@@ -642,6 +658,134 @@ No forma parte del MVP:
 
 ---
 
-## 30. Criterio de éxito del producto
+## 30. Intent Compiler y Acceptance Contracts
 
-JEV será operacional cuando pueda completar el circuito MVP con integraciones reales, mostrar evidencia y costes, impedir bypass de aprobación/promoción y administrar al menos un proyecto multi-repo desde el dashboard.
+Toda orden deberá pasar por un refinamiento proporcional antes de convertirse en ejecución.
+
+JEV deberá producir un `IntentBrief` con objetivo, alcance, exclusiones, contexto observado, supuestos, preguntas abiertas, ambigüedad, radio de cambio, señales de riesgo, profundidad documental y evidencia necesaria.
+
+La profundidad será proporcional:
+
+- L0 — cambio local/directo;
+- L1 — acceptance brief;
+- L2 — task specification;
+- L3 — cambio de SPEC/arquitectura;
+- L4 — cambio de producto/roadmap.
+
+Una ambigüedad material deberá bloquear ejecución en vez de ser rellenada por el modelo.
+
+Después del IntentBrief, JEV deberá producir un `AcceptanceContract` con criterios observables, restricciones, no-objetivos, compatibilidad, requisitos afectados y evidencia requerida.
+
+---
+
+## 31. Execution Blueprint, Adaptive Workflow y Context Compiler
+
+Cada tarea no trivial deberá poder disponer de un `ExecutionBlueprint` versionado con objetivo, pasos, DAG, dependencias, parallel groups, recursos afectados, capabilities, evidencia, rollback y exit criteria.
+
+Los workflows no serán plantillas rígidas: JEV deberá compilar un `AdaptiveWorkflow` desde intención, riesgo, radio de cambio, capabilities disponibles, constraints, evidencia y budget. El riesgo podrá aumentar profundidad/gates, nunca reducir controles obligatorios.
+
+Si aparecen nuevos hechos, JEV deberá crear una `PlanRevision` append-only, revalidar DAG, locks, riesgo, budget, evidencia y approvals, e impedir ejecución sobre una revisión obsoleta.
+
+Cada agente recibirá un `ContextPack` acotado y trazable. La recuperación deberá ser iterativa y presupuestada; ausencia de contexto REQUIRED bloqueará ejecución.
+
+---
+
+## 32. Capability Composition, Harness Contracts y Artifact Workspace
+
+JEV mantendrá pocos roles de autoridad y compondrá capabilities técnicas por tarea. Una capability no podrá elevar permisos por encima del role/policy ceiling.
+
+Claude Code, Codex, Cursor y futuros harnesses serán superficies de ejecución reemplazables. Cada adapter deberá declarar capabilities y limitaciones reales. Si falta una capability requerida, JEV deberá producir un resultado typed BLOCKED/UNSUPPORTED.
+
+PRD, SPEC, ROADMAP, ADR, Execution Blueprint, UI evidence, verification reports y propuestas de mejora deberán ser revisables mediante conversación/anotaciones ligadas a una revisión exacta.
+
+APPROVE, REQUEST_CHANGES y REJECT deberán ser decisiones explícitas; nunca se inferirán del tono de una conversación.
+
+---
+
+## 33. Living Documentation, Decision Ledger y Requirement Graph
+
+JEV deberá mantener una trazabilidad canónica:
+
+```
+Business Goal
+→ PRD Capability
+→ SPEC Requirement
+→ ADR
+→ ROADMAP Phase
+→ Task
+→ Code
+→ Test
+→ Evidence
+→ Release
+```
+
+Los cambios deberán calcular impacto upstream/downstream y detectar drift entre documentación, backlog, implementación, tests y evidencia.
+
+Las decisiones materiales deberán vivir en un ledger append-only con alternativas, rationale, evidencia, actor, scope, artefactos afectados y relaciones de supersesión.
+
+Quality Center deberá consumir este grafo canónico en lugar de reconstruir estado empresarial desde flags manuales.
+
+---
+
+## 34. Evidence-Based Learning y Self-Improvement
+
+JEV distinguirá entre Observation, Hypothesis, Pattern, Project Rule, Global Rule, Skill Candidate y Policy Candidate.
+
+El aprendizaje deberá registrar scope, confidence, evidence, contradictions y source events. Ningún aprendizaje global podrá autoactivarse.
+
+Las propuestas de mejora deberán surgir de fallos repetidos, correcciones, coste, latencia, overlap, capacidades ausentes o reglas obsoletas y deberán incluir beneficio esperado, riesgo, contratos afectados, rollback y evaluation plan.
+
+Antes de promover una mejora, JEV deberá comparar baseline vs candidate sobre el mismo replay corpus versionado. Regresiones críticas de seguridad o calidad tendrán veto aunque el candidato sea más barato o rápido.
+
+El self-improvement seguirá obligatoriamente:
+
+```
+proposal
+→ artifact review
+→ counterfactual benchmark
+→ human approval
+→ isolated canary
+→ monitoring
+→ promote OR rollback
+```
+
+JEV no podrá modificar unilateralmente authorization, audit, risk gates, verifier independence, human approval ni otras salvaguardas protegidas.
+
+---
+
+## 35. Repository Hygiene y Clean Repository Gate
+
+La Definition of Done deberá incluir higiene del repositorio.
+
+JEV deberá detectar y clasificar:
+
+- dead-code candidates;
+- orphan files;
+- temporary/debug artifacts;
+- exact/semantic duplication;
+- unused dependencies cuando el stack lo permita;
+- obsolete test artifacts;
+- stale TODO/FIXME;
+- generated-file drift;
+- código reemplazado que quedó abandonado.
+
+Antes de crear una nueva función, clase, componente, servicio, endpoint o archivo, JEV deberá buscar candidatos reutilizables/extensibles y registrar una `ReuseDecision`.
+
+Un refactor deberá declarar added/replaced/removed/retained-for-compatibility. Reemplazar sin retirar ni justificar el legado será `INCOMPLETE_CLEANUP`.
+
+El sistema no deberá auto-eliminar código incierto, dinámico, reflection/config-driven o plugin-driven únicamente por ausencia de referencias estáticas.
+
+Repository Health deberá mantener baseline/delta de cleanup debt para impedir que la deuda aumente silenciosamente.
+
+---
+
+## 36. Criterio de éxito del producto
+
+JEV será operacional cuando pueda completar el circuito MVP con integraciones reales, mostrar evidencia y costes, impedir bypass de aprobación/promoción, gobernar workflows adaptativos y administrar al menos un proyecto multi-repo desde el dashboard.
+
+Además, deberá demostrar que:
+- el workflow elegido es proporcional al trabajo;
+- el contexto utilizado es suficiente y acotado;
+- los cambios quedan trazados hasta requisito/evidencia;
+- una propuesta de auto-mejora no puede auto-promocionarse;
+- repository hygiene bloquea duplicación/basura no justificada.
