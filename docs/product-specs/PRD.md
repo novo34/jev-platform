@@ -2,9 +2,9 @@
 
 **Versión:** 3.0  
 **Estado:** Canonical Product Requirements  
-**Rama:** `jev-foundation`  
+**Rama canónica:** `main`  
 **Fecha:** 2026-10-05  
-**Fuente Foundation:** `novo34/base-skills_klever@jev-v8-adaptive-foundation` — gate `FND-070` validado
+**Fuente Foundation:** `novo34/base-skills_klever@main` — `FND-071` Development Control Gate DONE
 
 ---
 
