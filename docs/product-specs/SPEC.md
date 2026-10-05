@@ -3,7 +3,8 @@
 **Versión:** 3.0  
 **Estado:** Canonical System Specification  
 **Rama:** `jev-foundation`  
-**Fecha:** 2026-10-05
+**Fecha:** 2026-10-05  
+**Fuente Foundation:** `novo34/base-skills_klever@jev-v8-adaptive-foundation` — `FND-070` DONE
 
 ---
 
