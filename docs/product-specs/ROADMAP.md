@@ -1,9 +1,9 @@
 # JEV Development Platform — ROADMAP
 
-**Versión:** 2.0  
+**Versión:** 3.0  
 **Estado:** Canonical Development Roadmap  
 **Rama:** `jev-foundation`  
-**Fecha:** 2026-09-27
+**Fecha:** 2026-10-05
 
 ---
 
@@ -30,7 +30,7 @@ No iniciar PLT-002 hasta aceptación manual de PLT-001.
 # Fase 1 — Document Freeze
 
 **Backlog:** PLT-001  
-**Dependencia:** FND-032 DONE
+**Dependencia:** FND-070 DONE
 
 ## Objetivo
 Congelar PRD/SPEC/ROADMAP alineados con Foundation final.
@@ -43,7 +43,16 @@ Congelar PRD/SPEC/ROADMAP alineados con Foundation final.
 - selective promotion;
 - multi-repo;
 - multimodal/channels;
-- contract drift.
+- contract drift;
+- IntentBrief / AcceptanceContract;
+- Execution Blueprint / PlanRevision;
+- Adaptive Workflow / Context Compiler;
+- capability composition / harness contracts;
+- artifact conversation / living documentation;
+- Requirement Graph / decision provenance;
+- skill health / evidence-based learning / counterfactual evaluation;
+- supervised self-improvement;
+- repository hygiene / duplication / cleanup debt.
 
 ## Exit criteria
 - PRD/SPEC/ROADMAP misma versión;
@@ -152,7 +161,110 @@ Centralizar commands, authz y audit desde el principio.
 
 ---
 
-# Fase 9 — Secrets Management
+# Fase 9 — Adaptive Intent + Acceptance Runtime
+
+**Backlog:** PLT-040  
+**Depende de:** PLT-005, PLT-008, FND-034/FND-035
+
+## Objetivo
+Convertir órdenes humanas en IntentBrief y AcceptanceContract persistentes antes de implementación.
+
+## Exit criteria
+- ambiguity/change radius/documentation depth persistidos;
+- criterios observables con verification method;
+- material ambiguity bloquea ejecución;
+- no se generan specs pesadas para cambios L0 sin necesidad.
+
+---
+
+# Fase 10 — Execution Blueprint / Replanning / Context Runtime
+
+**Backlog:** PLT-041  
+**Depende de:** PLT-006, PLT-008, PLT-040, FND-044..047
+
+## Exit criteria
+- ExecutionBlueprint versionado;
+- DAG/cycles/resource conflicts validados;
+- handoff ligado a exact blueprint revision + ContextPack;
+- PlanRevision append-only;
+- stale plan bloqueado;
+- bounded retrieval y missing REQUIRED context bloquean ejecución.
+
+---
+
+# Fase 11 — Adaptive Workflow Compiler
+
+**Backlog:** PLT-041  
+**Depende de:** Fase 10
+
+## Exit criteria
+- workflow compilado desde intent/risk/change radius/capabilities/evidence/budget;
+- LIGHT/STANDARD/DEEP/CRITICAL;
+- risk solo eleva profundidad/gates;
+- UI añade browser evidence;
+- behavior change añade regression evidence;
+- architecture change añade architecture evidence.
+
+---
+
+# Fase 12 — Capability Composition + Harness Runtime
+
+**Backlog:** PLT-042  
+**Depende de:** PLT-009, PLT-041
+
+## Exit criteria
+- role authority != technical capability;
+- permission ceiling enforceado;
+- Claude Code/Codex/Cursor adapters declaran capabilities reales;
+- missing capability produce typed BLOCKED/UNSUPPORTED;
+- harness nunca gobierna authz/risk/audit/approval.
+
+---
+
+# Fase 13 — Requirement Graph + Decision Ledger
+
+**Backlog:** PLT-044  
+**Depende de:** PLT-003, PLT-008, PLT-030
+
+## Exit criteria
+- Goal → PRD → SPEC → ADR → Roadmap → Task → Code → Test → Evidence → Release persistido;
+- impact traversal;
+- missing trace detectable;
+- decisions append-only/scoped;
+- supersession cycle rechazado.
+
+---
+
+# Fase 14 — Repository Hygiene + Reuse Engine
+
+**Backlog:** PLT-048  
+**Depende de:** PLT-011, PLT-014, PLT-015
+
+## Exit criteria
+- reuse-first antes de nuevas superficies;
+- dead code/orphans/temporaries/duplicates clasificados;
+- replaced code eliminado o justificado;
+- dynamic/reflection code no auto-borrado;
+- cleanup debt baseline/delta;
+- hygiene evidence consumible por Verifier.
+
+---
+
+# Fase 15 — Artifact Review + Living Documentation Base
+
+**Backlog:** PLT-043 (backend contracts/base; UI completa después del Dashboard)  
+**Depende de:** PLT-040 + Requirement Graph base
+
+## Exit criteria
+- artifact revisions persistentes;
+- comentarios ligados a revision/selector;
+- explicit APPROVE / REQUEST_CHANGES / REJECT;
+- DocumentationImpact calculado;
+- drift crítico bloquea release.
+
+---
+
+# Fase 16 — Secrets Management
 
 **Backlog:** PLT-032  
 **Depende de:** PLT-002
@@ -164,7 +276,7 @@ Centralizar commands, authz y audit desde el principio.
 
 ---
 
-# Fase 10 — Real Model Gateway
+# Fase 17 — Real Model Gateway
 
 **Backlog:** PLT-009 + PLT-017 para budget integration  
 **Depende de:** skeleton + Foundation provider profiles
@@ -181,7 +293,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 11 — GitHub App
+# Fase 18 — GitHub App
 
 **Backlog:** PLT-010  
 **Depende de:** PLT-002, secrets
@@ -195,7 +307,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 12 — Workspace Engine
+# Fase 19 — Workspace Engine
 
 **Backlog:** PLT-011  
 **Depende de:** PLT-006, PLT-010, secrets
@@ -210,7 +322,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 13 — Architect + Developer Runtime
+# Fase 20 — Architect + Developer Runtime
 
 **Backlog:** PLT-014 + Architect Platform runtime requerido por SPEC  
 **Depende de:** Model Gateway, GitHub App, Workspace Engine
@@ -225,7 +337,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 14 — Real Verification Engine
+# Fase 21 — Real Verification Engine
 
 **Backlog:** PLT-015  
 **Depende de:** workspace + staging prerequisites
@@ -238,7 +350,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 15 — Permanent Staging
+# Fase 22 — Permanent Staging
 
 **Backlog:** PLT-012  
 **Depende de:** Project Registry, GitHub App, staging Foundation contracts
@@ -256,7 +368,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 16 — Human Review / Approval
+# Fase 23 — Human Review / Approval
 
 **Backlog:** PLT-021  
 **Depende de:** PLT-012, Dashboard base
@@ -269,7 +381,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 17 — Selective Promotion / Production
+# Fase 24 — Selective Promotion / Production
 
 **Backlog:** PLT-013  
 **Depende de:** staging + approval + FND-028
@@ -283,7 +395,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 18 — Budget / Costs
+# Fase 25 — Budget / Costs
 
 **Backlog:** PLT-017 + PLT-023  
 **Depende de:** PostgreSQL + Model Gateway
@@ -296,7 +408,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 19 — Notifications / Attention Center
+# Fase 26 — Notifications / Attention Center
 
 **Backlog:** PLT-018  
 **Depende de:** PostgreSQL + audit/control events
@@ -308,7 +420,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 20 — Multiagent / Conflicts
+# Fase 27 — Multiagent / Conflicts
 
 **Backlog:** PLT-016  
 **Depende de:** Developer + Verifier
@@ -323,7 +435,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
 
 ---
 
-# Fase 21 — Dashboard
+# Fase 28 — Dashboard
 
 **Backlog:** PLT-019  
 **Depende de:** Control Plane, Project Registry, Tasks, Notifications
@@ -333,7 +445,7 @@ Dashboard muestra Projects, Orders, running/blocked Tasks, approvals, staging, c
 
 ---
 
-# Fase 22 — Project Control Center
+# Fase 29 — Project Control Center
 
 **Backlog:** PLT-020  
 **Depende de:** Dashboard
@@ -343,7 +455,7 @@ Overview, Orders, Requirements, Tasks, GitHub, Agents, Staging, Quality, Costs, 
 
 ---
 
-# Fase 23 — Quality Center
+# Fase 30 — Quality Center
 
 **Backlog:** PLT-022  
 **Depende de:** Verification + Dashboard
@@ -355,7 +467,7 @@ Overview, Orders, Requirements, Tasks, GitHub, Agents, Staging, Quality, Costs, 
 
 ---
 
-# Fase 24 — Reports
+# Fase 31 — Reports
 
 **Backlog:** PLT-023  
 **Depende de:** canonical data + Dashboard
@@ -365,7 +477,7 @@ Project report reproducible desde datos canónicos con calidad, progreso, costes
 
 ---
 
-# Fase 25 — Command Center
+# Fase 32 — Command Center
 
 **Backlog:** PLT-024  
 **Depende de:** Control Plane + Foundation command contracts
@@ -375,7 +487,7 @@ natural language → structured intent → validation → authorization → Cont
 
 ---
 
-# Fase 26 — Multimodal Intake
+# Fase 33 — Multimodal Intake
 
 **Backlog:** PLT-025  
 **Depende de:** Control Plane + Foundation multimodal contracts
@@ -385,7 +497,7 @@ Text/image/screenshot/file/link; attachment roles; visual work types; Work Order
 
 ---
 
-# Fase 27 — Image Workflows
+# Fase 34 — Image Workflows
 
 **Backlog:** PLT-028, PLT-029  
 **Depende de:** Multimodal Intake
@@ -399,7 +511,7 @@ Text/image/screenshot/file/link; attachment roles; visual work types; Work Order
 
 ---
 
-# Fase 28 — Telegram / WhatsApp
+# Fase 35 — Telegram / WhatsApp
 
 **Backlog:** PLT-026, PLT-027  
 **Depende de:** Multimodal Intake
@@ -412,7 +524,7 @@ Text/image/screenshot/file/link; attachment roles; visual work types; Work Order
 
 ---
 
-# Fase 29 — Observability + Security Hardening
+# Fase 36 — Observability + Security Hardening
 
 **Backlog:** PLT-031, PLT-033  
 **Depende de:** skeleton/workers/auth/GitHub/workspace/secrets
@@ -426,7 +538,7 @@ Text/image/screenshot/file/link; attachment roles; visual work types; Work Order
 
 ---
 
-# Fase 30 — Backups / Rollback
+# Fase 37 — Backups / Rollback
 
 **Backlog:** PLT-034  
 **Depende de:** PostgreSQL, staging, promotion
@@ -438,7 +550,7 @@ Text/image/screenshot/file/link; attachment roles; visual work types; Work Order
 
 ---
 
-# Fase 31 — Controlled Pilot Repo
+# Fase 38 — Controlled Pilot Repo
 
 **Backlog:** PLT-035  
 **Depende de:** core end-to-end stack
@@ -465,7 +577,7 @@ Order
 
 ---
 
-# Fase 32 — Espacore
+# Fase 39 — Espacore
 
 **Backlog:** PLT-036  
 **Depende de:** controlled pilot
@@ -477,7 +589,7 @@ Order
 
 ---
 
-# Fase 33 — Nuvurent
+# Fase 40 — Nuvurent
 
 **Backlog:** PLT-037  
 **Depende de:** Espacore
@@ -489,7 +601,7 @@ Order
 
 ---
 
-# Fase 34 — JEV Self-Development Safety Mode
+# Fase 41 — JEV Self-Development Safety Mode
 
 **Backlog:** PLT-038  
 **Depende de:** Nuvurent + security + backup/rollback
@@ -503,7 +615,7 @@ Order
 
 ---
 
-# Fase 35 — MVP Release Readiness
+# Fase 42 — MVP Release Readiness
 
 **Backlog:** PLT-039  
 **Depende de:** P0 gates del master backlog
@@ -528,6 +640,11 @@ Una capability Platform solo se considerará terminada cuando:
 - security review cuando aplique;
 - audit;
 - docs actualizados;
+- source grounding y reuse decision cuando se cree nueva superficie;
+- cleanup evidence para código reemplazado/temporales;
+- hygiene gate sin deuda nueva injustificada;
+- requirement trace actualizado;
+- exact blueprint revision usada;
 - staging/human review/promotion cuando el cambio afecte producción.
 
 ---
@@ -536,7 +653,8 @@ Una capability Platform solo se considerará terminada cuando:
 
 Después de aceptar manualmente esta actualización documental:
 
-- Foundation: release-ready;
-- Platform docs: frozen v2.0;
-- PLT-001: elegible para cerrar;
-- PLT-002: siguiente tarea, **pero no debe iniciarse automáticamente**.
+- Foundation v8 Adaptive: release-ready mediante FND-070;
+- Platform docs: candidate freeze v3.0;
+- PLT-001: pendiente únicamente de revisión/aceptación manual;
+- PLT-002: siguiente tarea después de cerrar PLT-001;
+- PLT-040..049: incorporadas al master backlog para que las capacidades adaptativas no se pierdan durante la construcción de Platform.
