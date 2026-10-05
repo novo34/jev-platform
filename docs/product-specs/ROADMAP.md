@@ -550,7 +550,68 @@ Text/image/screenshot/file/link; attachment roles; visual work types; Work Order
 
 ---
 
-# Fase 38 — Controlled Pilot Repo
+# Fase 38 — Skill Health + Evidence-Based Learning
+
+**Backlog:** PLT-045  
+**Depende de:** PLT-023, PLT-030, PLT-044
+
+## Exit criteria
+- skill activation/success/false/missed metrics persistentes;
+- cost/latency/corrections/overlap/freshness medibles;
+- KEEP/IMPROVE/MERGE/RETIRE/DEFER como recomendaciones con evidencia;
+- LearningCandidate scope/confidence/evidence/contradictions/source-events;
+- project learning no se convierte silenciosamente en global;
+- ImprovementCandidate no tiene autoridad de autoaplicación.
+
+---
+
+# Fase 39 — Replay Corpus + Counterfactual Evaluation
+
+**Backlog:** PLT-046  
+**Depende de:** PLT-015, PLT-045
+
+## Exit criteria
+- replay corpus versionado;
+- baseline y candidate ejecutados sobre mismos scenarios;
+- quality/safety/cost/latency/corrections/completion comparables;
+- critical safety/quality regression produce FAIL;
+- reports reproducibles y auditables;
+- corpus no puede reescribirse silenciosamente durante evaluación.
+
+---
+
+# Fase 40 — Adaptive Engineering Control Center
+
+**Backlog:** PLT-049 + finalización UI de PLT-043  
+**Depende de:** PLT-022, PLT-043, PLT-044, PLT-045, PLT-048
+
+## Exit criteria
+- Project Control Center muestra intent depth, blueprint revision y context state;
+- AdaptiveWorkflow/gates/evidence visibles;
+- Requirement Graph navegable;
+- artifact conversations/revisions visibles;
+- repository health/cleanup debt visible;
+- skill health e improvement proposals visibles;
+- Attention Center agrega missing context, stale plan, hygiene regression y eval/canary failures.
+
+---
+
+# Fase 41 — Supervised Self-Improvement Canary Runtime
+
+**Backlog:** PLT-047  
+**Depende de:** PLT-046, security hardening, backup/rollback
+
+## Exit criteria
+- self-improvement siempre R4;
+- proposal → review → benchmark → human approval → isolated canary → monitoring;
+- protected controls no modificables unilateralmente;
+- rollback proof previo al canary;
+- canary FAIL fuerza rollback;
+- promotion permanece human-gated y auditable.
+
+---
+
+# Fase 42 — Controlled Pilot Repo
 
 **Backlog:** PLT-035  
 **Depende de:** core end-to-end stack
@@ -577,7 +638,7 @@ Order
 
 ---
 
-# Fase 39 — Espacore
+# Fase 43 — Espacore
 
 **Backlog:** PLT-036  
 **Depende de:** controlled pilot
@@ -589,7 +650,7 @@ Order
 
 ---
 
-# Fase 40 — Nuvurent
+# Fase 44 — Nuvurent
 
 **Backlog:** PLT-037  
 **Depende de:** Espacore
@@ -601,7 +662,7 @@ Order
 
 ---
 
-# Fase 41 — JEV Self-Development Safety Mode
+# Fase 45 — JEV Self-Development Safety Mode
 
 **Backlog:** PLT-038  
 **Depende de:** Nuvurent + security + backup/rollback
@@ -615,7 +676,7 @@ Order
 
 ---
 
-# Fase 42 — MVP Release Readiness
+# Fase 46 — MVP Release Readiness
 
 **Backlog:** PLT-039  
 **Depende de:** P0 gates del master backlog
