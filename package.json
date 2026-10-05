@@ -10,9 +10,9 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n web,api,worker \"npm run dev -w @jev/web\" \"npm run dev -w @jev/api\" \"npm run dev -w @jev/worker\"",
+    "dev": "npm run build -w @jev/shared && concurrently -n web,api,worker \"npm run dev -w @jev/web\" \"npm run dev -w @jev/api\" \"npm run dev -w @jev/worker\"",
     "build": "npm run build -w @jev/shared && npm run build -w @jev/api && npm run build -w @jev/worker && npm run build -w @jev/web",
-    "typecheck": "npm run typecheck -w @jev/shared && npm run typecheck -w @jev/api && npm run typecheck -w @jev/worker && npm run typecheck -w @jev/web",
+    "typecheck": "npm run build -w @jev/shared && npm run typecheck -w @jev/api && npm run typecheck -w @jev/worker && npm run typecheck -w @jev/web",
     "test": "npm run test -w @jev/api && npm run test -w @jev/worker",
     "check": "npm run typecheck && npm run test && npm run build"
   },
