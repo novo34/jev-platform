@@ -34,7 +34,8 @@ async function recordAudit(
   context: ControlContext,
   command: ControlCommand,
   result: "SUCCESS" | "BLOCKED" | "FAILED",
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>,
+  projectId: string | null = command.projectId
 ): Promise<void> {
   await client.query(
     `INSERT INTO audit_events (
@@ -50,7 +51,7 @@ async function recordAudit(
      ) VALUES ($1, $2, 'USER', $3, $4, $5, $6, $7, $8::jsonb)`,
     [
       context.actor.organizationId,
-      command.projectId,
+      projectId,
       context.actor.id,
       command.action,
       command.targetId ? "TARGET" : "PROJECT",
@@ -94,9 +95,17 @@ export class ControlService {
       );
     } catch (error) {
       try {
-        await recordAudit(this.pool, context, command, "BLOCKED", {
-          reason: error instanceof Error ? error.message : "authorization_failed"
-        });
+        await recordAudit(
+          this.pool,
+          context,
+          command,
+          "BLOCKED",
+          {
+            reason: error instanceof Error ? error.message : "authorization_failed",
+            requestedProjectId: command.projectId
+          },
+          null
+        );
       } finally {
         mapAuthorizationError(error);
       }
