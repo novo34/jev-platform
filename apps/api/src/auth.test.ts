@@ -30,6 +30,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await pool.query("DELETE FROM auth_sessions WHERE user_id = $1", [userId]);
+  await pool.query("DELETE FROM users WHERE id = $1", [userId]);
   await pool.query("DELETE FROM organizations WHERE id = $1", [organizationId]);
   await pool.end();
 });
