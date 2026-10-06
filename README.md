@@ -20,7 +20,9 @@ The Platform starts as a TypeScript workspace with explicit service boundaries:
 - `apps/api` — Fastify HTTP API
 - `apps/worker` — background-worker process with a health endpoint
 - `packages/shared` — shared typed contracts/utilities
+- `packages/db` — PostgreSQL pool, versioned migrations and persistence verification
 
 Local development and validation instructions live in `docs/DEVELOPMENT.md`.
+PostgreSQL setup and migration rules live in `docs/DATABASE.md`.
 
 The next backlog task must not be implemented until PLT-002 is verified and closed by the Development Control Gate.
