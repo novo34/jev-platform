@@ -13,8 +13,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await pool.query("DELETE FROM jobs WHERE correlation_id LIKE 'queue-test-%'");
   await pool.query("DELETE FROM worker_instances WHERE worker_id = $1", [workerId]);
+  await pool.query("DELETE FROM jobs WHERE correlation_id LIKE 'queue-test-%'");
   await pool.end();
 });
 
@@ -22,14 +22,17 @@ describe("QueueService", () => {
   it("deduplicates enqueue by idempotency key", async () => {
     const key = `idem-${randomUUID()}`;
     const correlationId = `queue-test-${randomUUID()}`;
+    const queueName = `queue-${randomUUID()}`;
 
     const first = await queue.enqueue({
+      queue: queueName,
       jobType: "NOOP",
       idempotencyKey: key,
       correlationId,
       payload: { value: 1 }
     });
     const second = await queue.enqueue({
+      queue: queueName,
       jobType: "NOOP",
       idempotencyKey: key,
       correlationId,
@@ -47,12 +50,14 @@ describe("QueueService", () => {
 
   it("claims one persisted job and marks worker state", async () => {
     const correlationId = `queue-test-${randomUUID()}`;
+    const queueName = `queue-${randomUUID()}`;
     const enqueued = await queue.enqueue({
+      queue: queueName,
       jobType: "NOOP",
       correlationId
     });
 
-    const claimed = await queue.claimNext(workerId);
+    const claimed = await queue.claimNext(workerId, queueName);
     expect(claimed?.id).toBe(enqueued.id);
     expect(claimed?.status).toBe("RUNNING");
     expect(claimed?.attemptCount).toBe(1);
@@ -71,19 +76,21 @@ describe("QueueService", () => {
 
   it("requeues retryable failures and permanently fails at max attempts", async () => {
     const correlationId = `queue-test-${randomUUID()}`;
+    const queueName = `queue-${randomUUID()}`;
     const enqueued = await queue.enqueue({
+      queue: queueName,
       jobType: "FAIL",
       correlationId,
       maxAttempts: 2
     });
 
-    const first = await queue.claimNext(workerId);
+    const first = await queue.claimNext(workerId, queueName);
     expect(first?.id).toBe(enqueued.id);
     await queue.fail(workerId, first!, new Error("first failure"));
 
     await pool.query("UPDATE jobs SET available_at = NOW() WHERE id = $1", [enqueued.id]);
 
-    const second = await queue.claimNext(workerId);
+    const second = await queue.claimNext(workerId, queueName);
     expect(second?.attemptCount).toBe(2);
     await queue.fail(workerId, second!, new Error("second failure"));
 
