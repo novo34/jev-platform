@@ -77,7 +77,7 @@ export class ProjectRegistryError extends Error {
       | "PROJECT_NOT_FOUND"
       | "REPOSITORY_NOT_FOUND"
       | "AMBIGUOUS_REPOSITORY_TARGET",
-    message = code
+    message: string = code
   ) {
     super(message);
     this.name = "ProjectRegistryError";
