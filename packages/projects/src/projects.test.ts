@@ -20,6 +20,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pool.query(
+    "DELETE FROM environments WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
+    [organizationId]
+  );
+  await pool.query(
+    "DELETE FROM repositories WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
+    [organizationId]
+  );
+  await pool.query(
     "DELETE FROM projects WHERE organization_id = $1",
     [organizationId]
   );
