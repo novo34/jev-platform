@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabasePool } from "@jev/db";
-import { migrate } from "@jev/db/migrations";
+import { createDatabasePool, migrate } from "@jev/db";
 import {
   AuthError,
   authenticateToken,
