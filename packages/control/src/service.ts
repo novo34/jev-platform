@@ -124,7 +124,7 @@ export class ControlService {
 
     try {
       await client.query("BEGIN");
-      const data = await this.executeMutation(client, command);
+      const data = await this.executeMutation(client, command, context);
       await recordAudit(client, context, command, "SUCCESS");
       await client.query("COMMIT");
 
@@ -171,7 +171,8 @@ export class ControlService {
 
   private async executeMutation(
     client: PoolClient,
-    command: ControlCommand
+    command: ControlCommand,
+    context: ControlContext
   ): Promise<unknown> {
     switch (command.action) {
       case "CREATE_ORDER": {
@@ -201,7 +202,7 @@ export class ControlService {
            RETURNING id, project_id, author_user_id, objective, priority, status, work_type, created_at`,
           [
             command.projectId,
-            null,
+            context.actor.id,
             objective,
             typeof payload.priority === "string" ? payload.priority : "NORMAL",
             typeof payload.workType === "string" ? payload.workType : "GENERAL",
