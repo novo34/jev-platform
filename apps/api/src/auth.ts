@@ -34,7 +34,23 @@ export async function requireAuthenticatedUser(
 }
 
 export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
-  app.post<{ Body: LoginBody }>("/auth/login", async (request, reply) => {
+  app.post<{ Body: LoginBody }>(
+    "/auth/login",
+    {
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["organizationId", "email", "password"],
+          properties: {
+            organizationId: { type: "string", format: "uuid" },
+            email: { type: "string", minLength: 3, maxLength: 320 },
+            password: { type: "string", minLength: 1, maxLength: 1024 }
+          }
+        }
+      }
+    },
+    async (request, reply) => {
     try {
       const result = await login(pool, request.body);
       return reply.code(200).send(result);
@@ -46,7 +62,7 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
       }
       throw error;
     }
-  });
+     );
 
   app.get("/auth/me", async (request, reply) => {
     try {
