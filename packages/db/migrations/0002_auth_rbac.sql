@@ -5,6 +5,9 @@ ALTER TABLE users
   ADD CONSTRAINT users_role_check
   CHECK (role IN ('ADMIN', 'PROJECT_MANAGER', 'DEVELOPER', 'AUDITOR', 'CLIENT'));
 
+CREATE UNIQUE INDEX idx_users_org_email_lower
+  ON users(organization_id, lower(email));
+
 CREATE TABLE auth_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
