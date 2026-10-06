@@ -241,7 +241,8 @@ describe("canonical PostgreSQL persistence", () => {
     expect(result.rows.map((row) => row.version)).toEqual([
       "0001_canonical_persistence.sql",
       "0002_auth_rbac.sql",
-      "0003_queue_worker.sql"
+      "0003_queue_worker.sql",
+      "0004_project_registry.sql"
     ]);
   });
 });
