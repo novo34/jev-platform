@@ -187,6 +187,35 @@ describe("ControlService", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
+  it("denies an unknown project without losing the blocked audit event", async () => {
+    const commandId = randomUUID();
+    const unknownProjectId = randomUUID();
+
+    await expect(
+      service.execute(
+        {
+          commandId,
+          action: "GET_PROJECT_STATUS",
+          projectId: unknownProjectId
+        },
+        {
+          actor: adminUser,
+          correlationId: randomUUID()
+        }
+      )
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const audit = await pool.query(
+      "SELECT project_id, result, evidence->>'requestedProjectId' AS requested_project_id FROM audit_events WHERE evidence->>'commandId' = $1",
+      [commandId]
+    );
+    expect(audit.rows[0]).toMatchObject({
+      project_id: null,
+      result: "BLOCKED",
+      requested_project_id: unknownProjectId
+    });
+  });
+
   it("prevents cross-organization access even for admin", async () => {
     await expect(
       service.execute(
