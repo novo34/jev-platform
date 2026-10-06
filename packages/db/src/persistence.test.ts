@@ -239,7 +239,8 @@ describe("canonical PostgreSQL persistence", () => {
       "SELECT version FROM schema_migrations ORDER BY version"
     );
     expect(result.rows.map((row) => row.version)).toEqual([
-      "0001_canonical_persistence.sql"
+      "0001_canonical_persistence.sql",
+      "0002_auth_rbac.sql"
     ]);
   });
 });
