@@ -7,8 +7,10 @@ import { WorkerRuntime } from "./runtime.js";
 const pool = createDatabasePool();
 const queue = new QueueService(pool);
 const workerId = `runtime-worker-${randomUUID()}`;
+const queueName = `worker-queue-${randomUUID()}`;
 const runtime = new WorkerRuntime(queue, {
   workerId,
+  queue: queueName,
   pollIntervalMs: 60_000,
   heartbeatIntervalMs: 60_000,
   handlers: {
@@ -37,6 +39,7 @@ afterAll(async () => {
 describe("WorkerRuntime", () => {
   it("executes queued work in the worker runtime and persists completion", async () => {
     const job = await queue.enqueue({
+      queue: queueName,
       jobType: "LONG_TASK",
       correlationId: `worker-test-${randomUUID()}`,
       payload: { value: 42 }
@@ -57,6 +60,7 @@ describe("WorkerRuntime", () => {
 
   it("persists retry state when a handler fails", async () => {
     const job = await queue.enqueue({
+      queue: queueName,
       jobType: "FAIL_TASK",
       correlationId: `worker-test-${randomUUID()}`,
       maxAttempts: 2
