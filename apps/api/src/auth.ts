@@ -42,7 +42,7 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
           additionalProperties: false,
           required: ["organizationId", "email", "password"],
           properties: {
-            organizationId: { type: "string", format: "uuid" },
+            organizationId: { type: "string", pattern: "^[0-9a-fA-F-]{36}$" },
             email: { type: "string", minLength: 3, maxLength: 320 },
             password: { type: "string", minLength: 1, maxLength: 1024 }
           }
