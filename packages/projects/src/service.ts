@@ -59,6 +59,13 @@ function validateProject(input: RegisterProjectInput): void {
         "staging branch must differ from production"
       );
     }
+
+    if (repo.primary === true && productionBranch !== "main") {
+      throw new ProjectRegistryError(
+        "INVALID_PROJECT",
+        "primary production branch must be main"
+      );
+    }
   }
 
   for (const environment of input.environments ?? []) {
