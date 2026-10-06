@@ -35,6 +35,6 @@ CREATE TABLE worker_instances (
   status TEXT NOT NULL CHECK (status IN ('STARTING', 'RUNNING', 'STOPPED', 'FAILED')),
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  current_job_id UUID REFERENCES jobs(id),
+  current_job_id UUID REFERENCES jobs(id) ON DELETE SET NULL,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
