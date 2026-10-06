@@ -20,7 +20,6 @@ function authErrorStatus(error: AuthError): number {
     case "UNAUTHENTICATED":
       return 401;
     case "FORBIDDEN":
-      return 403;
     case "USER_INACTIVE":
       return 403;
   }
@@ -51,18 +50,19 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
       }
     },
     async (request, reply) => {
-    try {
-      const result = await login(pool, request.body);
-      return reply.code(200).send(result);
-    } catch (error) {
-      if (error instanceof AuthError) {
-        return reply.code(authErrorStatus(error)).send({
-          error: error.code
-        });
+      try {
+        const result = await login(pool, request.body);
+        return reply.code(200).send(result);
+      } catch (error) {
+        if (error instanceof AuthError) {
+          return reply.code(authErrorStatus(error)).send({
+            error: error.code
+          });
+        }
+        throw error;
       }
-      throw error;
     }
-     );
+  );
 
   app.get("/auth/me", async (request, reply) => {
     try {
