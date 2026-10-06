@@ -140,9 +140,13 @@ export async function authorizeProject(
     [projectId, actor.id]
   );
 
-  const role = membership.rows[0]?.role;
+  const membershipRole = membership.rows[0]?.role;
 
-  if (!role || !ROLE_PERMISSIONS[role]?.has(permission)) {
+  if (
+    !membershipRole ||
+    !ROLE_PERMISSIONS[actor.role]?.has(permission) ||
+    !ROLE_PERMISSIONS[membershipRole]?.has(permission)
+  ) {
     throw new AuthError("FORBIDDEN");
   }
 }
