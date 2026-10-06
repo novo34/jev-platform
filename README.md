@@ -22,9 +22,11 @@ The Platform starts as a TypeScript workspace with explicit service boundaries:
 - `packages/shared` — shared typed contracts/utilities
 - `packages/db` — PostgreSQL pool, versioned migrations and persistence verification
 - `packages/auth` — human authentication, sessions and project-scoped RBAC
+- `packages/control` — canonical API/control-plane commands, authorization and audit
 
 Local development and validation instructions live in `docs/DEVELOPMENT.md`.
 PostgreSQL setup and migration rules live in `docs/DATABASE.md`.
 Authentication and RBAC rules live in `docs/AUTH_RBAC.md`.
+Control-plane boundaries and contracts live in `docs/CONTROL_PLANE.md`.
 
 The next backlog task must not be implemented until PLT-002 is verified and closed by the Development Control Gate.
