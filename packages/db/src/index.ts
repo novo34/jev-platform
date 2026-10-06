@@ -16,3 +16,5 @@ export function createDatabasePool(config?: PoolConfig): Pool {
 export async function checkDatabase(pool: Pool): Promise<void> {
   await pool.query("SELECT 1");
 }
+
+export { migrate, DEFAULT_MIGRATIONS_DIR } from "./migrations.js";
