@@ -52,6 +52,26 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await pool.query("DELETE FROM project_memberships WHERE user_id IN ($1, $2, $3)", [
+    adminId,
+    developerId,
+    clientId
+  ]);
+  await pool.query("DELETE FROM auth_sessions WHERE user_id IN ($1, $2, $3)", [
+    adminId,
+    developerId,
+    clientId
+  ]);
+  await pool.query("DELETE FROM projects WHERE id IN ($1, $2, $3)", [
+    projectA,
+    projectB,
+    otherProject
+  ]);
+  await pool.query("DELETE FROM users WHERE id IN ($1, $2, $3)", [
+    adminId,
+    developerId,
+    clientId
+  ]);
   await pool.query("DELETE FROM organizations WHERE id IN ($1, $2)", [
     organizationId,
     otherOrganizationId
