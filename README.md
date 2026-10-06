@@ -23,10 +23,12 @@ The Platform starts as a TypeScript workspace with explicit service boundaries:
 - `packages/db` — PostgreSQL pool, versioned migrations and persistence verification
 - `packages/auth` — human authentication, sessions and project-scoped RBAC
 - `packages/control` — canonical API/control-plane commands, authorization and audit
+- `packages/queue` — PostgreSQL-backed jobs, idempotency, retries and worker state
 
 Local development and validation instructions live in `docs/DEVELOPMENT.md`.
 PostgreSQL setup and migration rules live in `docs/DATABASE.md`.
 Authentication and RBAC rules live in `docs/AUTH_RBAC.md`.
 Control-plane boundaries and contracts live in `docs/CONTROL_PLANE.md`.
+Queue and worker runtime behavior lives in `docs/QUEUE_WORKER.md`.
 
 The next backlog task must not be implemented until PLT-002 is verified and closed by the Development Control Gate.
