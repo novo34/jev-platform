@@ -111,6 +111,37 @@ ALTER TABLE tasks
     )
   );
 
+CREATE OR REPLACE FUNCTION validate_task_deployment_scope()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.task_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM tasks t
+    JOIN environments e ON e.id = NEW.environment_id
+    WHERE t.id = NEW.task_id
+      AND t.project_id = NEW.project_id
+      AND t.repository_id = NEW.repository_id
+      AND e.project_id = NEW.project_id
+      AND e.repository_id = NEW.repository_id
+  ) THEN
+    RAISE EXCEPTION
+      'deployment project/repository/environment must match the task scope'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_task_deployment_scope
+BEFORE INSERT OR UPDATE OF project_id, repository_id, environment_id, task_id
+ON deployments
+FOR EACH ROW EXECUTE FUNCTION validate_task_deployment_scope();
+
 CREATE OR REPLACE FUNCTION validate_task_status_transition()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -118,23 +149,41 @@ DECLARE
     NULLIF(current_setting('jev.transition_evidence', true), '')::jsonb,
     '{}'::jsonb
   );
+  staging_required BOOLEAN;
 BEGIN
   IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
     RETURN NEW;
   END IF;
 
-  IF NEW.status = 'AWAITING_HUMAN' THEN
+  SELECT EXISTS (
+    SELECT 1
+    FROM environments e
+    WHERE e.project_id = NEW.project_id
+      AND e.repository_id = NEW.repository_id
+      AND e.kind = 'staging'
+  )
+  INTO staging_required;
+
+  IF NEW.status = 'AWAITING_HUMAN' AND staging_required THEN
     IF NOT EXISTS (
       SELECT 1
       FROM deployments d
       JOIN environments e ON e.id = d.environment_id
       WHERE d.task_id = NEW.id
+        AND d.project_id = NEW.project_id
+        AND d.repository_id = NEW.repository_id
+        AND e.project_id = NEW.project_id
+        AND e.repository_id = NEW.repository_id
         AND e.kind = 'staging'
         AND d.id = (
           SELECT d2.id
           FROM deployments d2
           JOIN environments e2 ON e2.id = d2.environment_id
           WHERE d2.task_id = NEW.id
+            AND d2.project_id = NEW.project_id
+            AND d2.repository_id = NEW.repository_id
+            AND e2.project_id = NEW.project_id
+            AND e2.repository_id = NEW.repository_id
             AND e2.kind = 'staging'
           ORDER BY d2.created_at DESC, d2.id DESC
           LIMIT 1
@@ -153,37 +202,63 @@ BEGIN
   END IF;
 
   IF NEW.status = 'APPROVED' THEN
-    IF NOT EXISTS (
-      SELECT 1
-      FROM approvals a
-      JOIN deployments d
-        ON d.task_id = a.task_id
-       AND d.revision = a.revision
-       AND d.url = a.staging_url
-      JOIN environments e ON e.id = d.environment_id
-      WHERE a.task_id = NEW.id
-        AND a.decision = 'APPROVED'
-        AND a.stale = FALSE
-        AND a.revision IS NOT NULL
-        AND a.commit_sha IS NOT NULL
-        AND a.pull_request_url IS NOT NULL
-        AND a.staging_url IS NOT NULL
-        AND a.evidence <> '{}'::jsonb
-        AND e.kind = 'staging'
-        AND d.status = 'READY'
-        AND d.id = (
-          SELECT d2.id
-          FROM deployments d2
-          JOIN environments e2 ON e2.id = d2.environment_id
-          WHERE d2.task_id = NEW.id
-            AND e2.kind = 'staging'
-          ORDER BY d2.created_at DESC, d2.id DESC
-          LIMIT 1
-        )
-    ) THEN
-      RAISE EXCEPTION
-        'task requires approval bound to the current ready staging revision'
-        USING ERRCODE = '23514';
+    IF staging_required THEN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM approvals a
+        JOIN deployments d
+          ON d.task_id = a.task_id
+         AND d.revision = a.revision
+         AND d.url = a.staging_url
+         AND a.evidence->>'stagingDeploymentId' = d.id::text
+        JOIN environments e ON e.id = d.environment_id
+        WHERE a.task_id = NEW.id
+          AND a.decision = 'APPROVED'
+          AND a.stale = FALSE
+          AND a.revision IS NOT NULL
+          AND a.commit_sha IS NOT NULL
+          AND a.pull_request_url IS NOT NULL
+          AND a.staging_url IS NOT NULL
+          AND e.kind = 'staging'
+          AND d.project_id = NEW.project_id
+          AND d.repository_id = NEW.repository_id
+          AND e.project_id = NEW.project_id
+          AND e.repository_id = NEW.repository_id
+          AND d.status = 'READY'
+          AND d.id = (
+            SELECT d2.id
+            FROM deployments d2
+            JOIN environments e2 ON e2.id = d2.environment_id
+            WHERE d2.task_id = NEW.id
+              AND d2.project_id = NEW.project_id
+              AND d2.repository_id = NEW.repository_id
+              AND e2.project_id = NEW.project_id
+              AND e2.repository_id = NEW.repository_id
+              AND e2.kind = 'staging'
+            ORDER BY d2.created_at DESC, d2.id DESC
+            LIMIT 1
+          )
+      ) THEN
+        RAISE EXCEPTION
+          'task requires approval bound to the exact current staging deployment'
+          USING ERRCODE = '23514';
+      END IF;
+    ELSE
+      IF NOT EXISTS (
+        SELECT 1
+        FROM approvals a
+        WHERE a.task_id = NEW.id
+          AND a.decision = 'APPROVED'
+          AND a.stale = FALSE
+          AND a.revision IS NOT NULL
+          AND a.commit_sha IS NOT NULL
+          AND a.pull_request_url IS NOT NULL
+          AND a.evidence <> '{}'::jsonb
+      ) THEN
+        RAISE EXCEPTION
+          'task requires a persisted non-stale approval'
+          USING ERRCODE = '23514';
+      END IF;
     END IF;
   END IF;
 
@@ -201,8 +276,6 @@ BEGIN
     (OLD.status = 'VERIFIED' AND NEW.status IN ('STAGING', 'RUNNING', 'CHANGES_REQUESTED')) OR
     (OLD.status = 'STAGING' AND NEW.status IN ('AWAITING_HUMAN', 'BLOCKED', 'FAILED')) OR
     (OLD.status = 'AWAITING_HUMAN' AND NEW.status IN ('APPROVED', 'CHANGES_REQUESTED', 'REJECTED')) OR
-    -- DONE remains a canonical state but cannot be entered until the Promotion
-    -- engine can prove PROMOTED_TO_MAIN for this exact Task (REQ-TSK-009).
     (OLD.status = 'APPROVED' AND NEW.status = 'CHANGES_REQUESTED') OR
     (OLD.status = 'CHANGES_REQUESTED' AND NEW.status IN ('READY', 'RUNNING', 'REJECTED')) OR
     (OLD.status = 'BLOCKED' AND NEW.status IN ('READY', 'RUNNING', 'REJECTED')) OR
@@ -226,20 +299,25 @@ RETURNS TRIGGER AS $$
 DECLARE
   is_staging BOOLEAN;
 BEGIN
-  SELECT (kind = 'staging')
+  SELECT (
+    kind = 'staging'
+    AND project_id = NEW.project_id
+    AND repository_id = NEW.repository_id
+  )
   INTO is_staging
   FROM environments
   WHERE id = NEW.environment_id;
 
   IF is_staging AND NEW.task_id IS NOT NULL THEN
-    UPDATE approvals
+    UPDATE approvals a
     SET stale = TRUE
-    WHERE task_id = NEW.task_id
-      AND stale = FALSE
+    WHERE a.task_id = NEW.task_id
+      AND a.stale = FALSE
       AND (
         NEW.status IS DISTINCT FROM 'READY' OR
-        revision IS DISTINCT FROM NEW.revision OR
-        staging_url IS DISTINCT FROM NEW.url
+        a.evidence->>'stagingDeploymentId' IS DISTINCT FROM NEW.id::text OR
+        a.revision IS DISTINCT FROM NEW.revision OR
+        a.staging_url IS DISTINCT FROM NEW.url
       );
   END IF;
 
