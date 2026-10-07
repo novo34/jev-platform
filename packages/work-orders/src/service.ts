@@ -110,6 +110,7 @@ export class WorkOrderService {
     }
 
     const client = await this.pool.connect();
+    let orderId: string;
     try {
       await client.query("BEGIN");
       const orderResult = await client.query(
@@ -130,7 +131,7 @@ export class WorkOrderService {
         ]
       );
 
-      const orderId = orderResult.rows[0].id as string;
+      orderId = orderResult.rows[0].id as string;
       for (const requirement of input.requirements ?? []) {
         await client.query(
           `INSERT INTO requirements (
@@ -148,13 +149,14 @@ export class WorkOrderService {
       }
 
       await client.query("COMMIT");
-      return await this.getOrder(orderId);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
+
+    return this.getOrder(orderId);
   }
 
   async createTask(input: CreateTaskInput): Promise<TaskRecord> {
@@ -173,6 +175,7 @@ export class WorkOrderService {
     }
 
     const client = await this.pool.connect();
+    let taskId: string;
 
     try {
       await client.query("BEGIN");
@@ -220,7 +223,7 @@ export class WorkOrderService {
         ]
       );
 
-      const taskId = taskResult.rows[0].id as string;
+      taskId = taskResult.rows[0].id as string;
       for (const requirementId of requirementIds) {
         await client.query(
           "INSERT INTO task_requirements (task_id, requirement_id) VALUES ($1, $2)",
@@ -229,13 +232,14 @@ export class WorkOrderService {
       }
 
       await client.query("COMMIT");
-      return await this.getTask(taskId);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
+
+    return this.getTask(taskId);
   }
 
   async transitionOrder(
