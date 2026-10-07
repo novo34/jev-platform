@@ -107,7 +107,7 @@ BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_validate_task_status_transition
 BEFORE UPDATE OF status ON tasks
