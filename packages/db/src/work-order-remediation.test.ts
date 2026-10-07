@@ -272,4 +272,178 @@ describe("PLT-008 remediation migration", () => {
     }
   });
 
+  it("marks every pre-remediation approval stale before enabling the new gate", async () => {
+    const pool = createDatabasePool();
+    const client = await pool.connect();
+    const schema = `plt008_approval_${randomUUID().replaceAll("-", "")}`;
+
+    try {
+      await client.query(`CREATE SCHEMA "${schema}"`);
+      await client.query(`SET search_path TO "${schema}", public`);
+
+      for (const file of [
+        "0001_canonical_persistence.sql",
+        "0002_auth_rbac.sql",
+        "0003_queue_worker.sql",
+        "0004_project_registry.sql",
+        "0005_work_order_task_lifecycle.sql"
+      ]) {
+        await client.query(await migration(file));
+      }
+
+      const organizationId = randomUUID();
+      const userId = randomUUID();
+      const projectId = randomUUID();
+      const repositoryId = randomUUID();
+      const orderId = randomUUID();
+      const taskId = randomUUID();
+
+      await client.query(
+        "INSERT INTO organizations (id, name) VALUES ($1, 'Legacy Approval Org')",
+        [organizationId]
+      );
+      await client.query(
+        `INSERT INTO users (id, organization_id, email, display_name, role)
+         VALUES ($1, $2, $3, 'Legacy Reviewer', 'ADMIN')`,
+        [userId, organizationId, `legacy-${userId}@test.local`]
+      );
+      await client.query(
+        "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Legacy Approval Project')",
+        [projectId, organizationId]
+      );
+      await client.query(
+        `INSERT INTO repositories (
+           id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+         ) VALUES ($1, $2, 'novo34/legacy-approval', 'backend', TRUE, 'main', 'staging')`,
+        [repositoryId, projectId]
+      );
+      await client.query(
+        "INSERT INTO orders (id, project_id, objective) VALUES ($1, $2, 'Legacy approval order')",
+        [orderId, projectId]
+      );
+      await client.query(
+        `INSERT INTO tasks (
+           id, project_id, order_id, repository_id, title, status
+         ) VALUES ($1, $2, $3, $4, 'Legacy approval task', 'READY')`,
+        [taskId, projectId, orderId, repositoryId]
+      );
+      await client.query(
+        `INSERT INTO approvals (
+           task_id, actor_user_id, decision, revision, commit_sha,
+           pull_request_url, evidence, stale
+         ) VALUES ($1, $2, 'APPROVED', 'legacy-rev', 'abcdef0123456789',
+                   'https://github.com/novo34/example/pull/legacy',
+                   '{"legacy":true}'::jsonb, FALSE)`,
+        [taskId, userId]
+      );
+
+      await client.query(
+        await migration("0006_work_order_task_review_remediation.sql")
+      );
+
+      const approval = await client.query(
+        "SELECT stale FROM approvals WHERE task_id = $1",
+        [taskId]
+      );
+      expect(approval.rows).toHaveLength(1);
+      expect(approval.rows[0].stale).toBe(true);
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      client.release();
+      await pool.end();
+    }
+  });
+
+  it("locks the task row while an approval decision is being inserted", async () => {
+    const pool = createDatabasePool();
+    const setup = await pool.connect();
+    const blocker = await pool.connect();
+    const reviewer = await pool.connect();
+    const schema = `plt008_approval_lock_${randomUUID().replaceAll("-", "")}`;
+
+    try {
+      await setup.query(`CREATE SCHEMA "${schema}"`);
+      await setup.query(`SET search_path TO "${schema}", public`);
+
+      for (const file of [
+        "0001_canonical_persistence.sql",
+        "0002_auth_rbac.sql",
+        "0003_queue_worker.sql",
+        "0004_project_registry.sql",
+        "0005_work_order_task_lifecycle.sql",
+        "0006_work_order_task_review_remediation.sql"
+      ]) {
+        await setup.query(await migration(file));
+      }
+
+      const organizationId = randomUUID();
+      const userId = randomUUID();
+      const projectId = randomUUID();
+      const repositoryId = randomUUID();
+      const orderId = randomUUID();
+      const taskId = randomUUID();
+
+      await setup.query(
+        "INSERT INTO organizations (id, name) VALUES ($1, 'Approval Lock Org')",
+        [organizationId]
+      );
+      await setup.query(
+        `INSERT INTO users (id, organization_id, email, display_name, role)
+         VALUES ($1, $2, $3, 'Approval Lock Reviewer', 'ADMIN')`,
+        [userId, organizationId, `lock-${userId}@test.local`]
+      );
+      await setup.query(
+        "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Approval Lock Project')",
+        [projectId, organizationId]
+      );
+      await setup.query(
+        `INSERT INTO repositories (
+           id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+         ) VALUES ($1, $2, 'novo34/approval-lock', 'backend', TRUE, 'main', 'staging')`,
+        [repositoryId, projectId]
+      );
+      await setup.query(
+        "INSERT INTO orders (id, project_id, objective) VALUES ($1, $2, 'Approval lock order')",
+        [orderId, projectId]
+      );
+      await setup.query(
+        `INSERT INTO tasks (
+           id, project_id, order_id, repository_id, title, status
+         ) VALUES ($1, $2, $3, $4, 'Approval lock task', 'AWAITING_HUMAN')`,
+        [taskId, projectId, orderId, repositoryId]
+      );
+
+      await blocker.query(`SET search_path TO "${schema}", public`);
+      await reviewer.query(`SET search_path TO "${schema}", public`);
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM tasks WHERE id = $1 FOR UPDATE", [taskId]);
+
+      await reviewer.query("SET statement_timeout = '250ms'");
+      await expect(
+        reviewer.query(
+          `INSERT INTO approvals (
+             task_id, actor_user_id, decision, revision, commit_sha,
+             pull_request_url, evidence
+           ) VALUES ($1, $2, 'CHANGES_REQUESTED', 'lock-rev', '1234567890abcdef',
+                     'https://github.com/novo34/example/pull/lock',
+                     '{"reason":"serialize"}'::jsonb)`,
+          [taskId, userId]
+        )
+      ).rejects.toMatchObject({ code: "57014" });
+
+      await blocker.query("ROLLBACK");
+    } finally {
+      try {
+        await blocker.query("ROLLBACK");
+      } catch {}
+      await setup.query("SET search_path TO public");
+      await setup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      setup.release();
+      blocker.release();
+      reviewer.release();
+      await pool.end();
+    }
+  });
+
 });
