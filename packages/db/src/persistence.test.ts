@@ -242,7 +242,8 @@ describe("canonical PostgreSQL persistence", () => {
       "0001_canonical_persistence.sql",
       "0002_auth_rbac.sql",
       "0003_queue_worker.sql",
-      "0004_project_registry.sql"
+      "0004_project_registry.sql",
+      "0005_work_order_task_lifecycle.sql"
     ]);
   });
 });
