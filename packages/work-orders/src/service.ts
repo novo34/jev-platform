@@ -52,6 +52,9 @@ async function applyTransitionContext(
   context: TransitionContext
 ): Promise<void> {
   assertNonEmpty(context.cause, "transition cause");
+  if (context.actorType !== "SYSTEM") {
+    assertNonEmpty(context.actorId, "transition actor ID");
+  }
   await client.query(
     "SELECT set_config('jev.transition_actor_type', $1, true)",
     [context.actorType]
