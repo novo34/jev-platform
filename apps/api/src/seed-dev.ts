@@ -10,7 +10,12 @@ const organizationId =
 const userId =
   process.env.JEV_DEV_ADMIN_USER_ID ?? "00000000-0000-4000-8000-000000000002";
 const email = process.env.JEV_DEV_ADMIN_EMAIL ?? "admin@jev.local";
-const password = process.env.JEV_DEV_ADMIN_PASSWORD ?? "JevLocalAdmin!2026";
+const password = process.env.JEV_DEV_ADMIN_PASSWORD;
+if (!password) {
+  throw new Error(
+    "JEV_DEV_ADMIN_PASSWORD is required; choose a local development password"
+  );
+}
 const displayName = process.env.JEV_DEV_ADMIN_NAME ?? "JEV Local Admin";
 
 const pool = createDatabasePool();
@@ -51,7 +56,7 @@ try {
   console.log("JEV local development admin is ready.");
   console.log(`Organization ID: ${organizationId}`);
   console.log(`Email: ${email}`);
-  console.log("Password: use JEV_DEV_ADMIN_PASSWORD or the documented local default.");
+  console.log("Password: the local JEV_DEV_ADMIN_PASSWORD value you supplied.");
 } finally {
   await pool.end();
 }
