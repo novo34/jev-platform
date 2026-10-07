@@ -121,13 +121,29 @@ ALTER TABLE tasks
   FOREIGN KEY (project_id, repository_id)
   REFERENCES repositories(project_id, id);
 
+-- Backfill legacy repositoryless environments only when the project target is unambiguous.
+UPDATE environments e
+SET repository_id = (
+  SELECT r.id
+  FROM repositories r
+  WHERE r.project_id = e.project_id
+  ORDER BY r.id
+  LIMIT 1
+)
+WHERE e.repository_id IS NULL
+  AND (
+    SELECT COUNT(*)
+    FROM repositories r2
+    WHERE r2.project_id = e.project_id
+  ) = 1;
+
 DO $envcheck$
 BEGIN
   IF EXISTS (
     SELECT 1
     FROM environments e
-    WHERE e.repository_id IS NOT NULL
-      AND NOT EXISTS (
+    WHERE e.repository_id IS NULL
+       OR NOT EXISTS (
         SELECT 1
         FROM repositories r
         WHERE r.id = e.repository_id
@@ -140,6 +156,9 @@ BEGIN
   END IF;
 END;
 $envcheck$;
+
+ALTER TABLE environments
+  ALTER COLUMN repository_id SET NOT NULL;
 
 ALTER TABLE environments
   ADD CONSTRAINT environments_project_repository_fk
@@ -204,6 +223,11 @@ WHERE a.id = ranked.id
 CREATE OR REPLACE FUNCTION protect_persisted_approval()
 RETURNS TRIGGER AS $approval_immutable$
 BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION
+      'persisted approvals are append-only and cannot be deleted'
+      USING ERRCODE = '23514';
+  END IF;
   IF OLD.task_id IS DISTINCT FROM NEW.task_id
      OR OLD.actor_user_id IS DISTINCT FROM NEW.actor_user_id
      OR OLD.decision IS DISTINCT FROM NEW.decision
@@ -224,8 +248,55 @@ END;
 $approval_immutable$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_protect_persisted_approval
-BEFORE UPDATE ON approvals
+BEFORE UPDATE OR DELETE ON approvals
 FOR EACH ROW EXECUTE FUNCTION protect_persisted_approval();
+
+CREATE OR REPLACE FUNCTION validate_approval_actor()
+RETURNS TRIGGER AS $approval_actor$
+DECLARE
+  task_project_id UUID;
+  task_organization_id UUID;
+BEGIN
+  SELECT t.project_id, p.organization_id
+  INTO task_project_id, task_organization_id
+  FROM tasks t
+  JOIN projects p ON p.id = t.project_id
+  WHERE t.id = NEW.task_id;
+
+  IF task_project_id IS NULL THEN
+    RAISE EXCEPTION 'approval task does not exist'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM users u
+    WHERE u.id = NEW.actor_user_id
+      AND u.organization_id = task_organization_id
+      AND u.status = 'ACTIVE'
+      AND (
+        u.role = 'ADMIN'
+        OR EXISTS (
+          SELECT 1
+          FROM project_memberships pm
+          WHERE pm.project_id = task_project_id
+            AND pm.user_id = u.id
+            AND pm.role = 'PROJECT_MANAGER'
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION
+      'approval actor is not authorized for the task project'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$approval_actor$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_approval_actor
+BEFORE INSERT ON approvals
+FOR EACH ROW EXECUTE FUNCTION validate_approval_actor();
 
 CREATE OR REPLACE FUNCTION supersede_previous_task_approvals()
 RETURNS TRIGGER AS $decision$
