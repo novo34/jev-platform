@@ -20,13 +20,20 @@ The seed is development-only and refuses to run with `NODE_ENV=production`.
 npm run seed:dev
 ```
 
-Default local credentials:
+Local test identity:
 
 - Organization ID: `00000000-0000-4000-8000-000000000001`
 - Email: `admin@jev.local`
-- Password: `JevLocalAdmin!2026`
 
-Override the password before seeding with `JEV_DEV_ADMIN_PASSWORD` if desired.
+No test password is committed to the repository. Choose one locally before seeding:
+
+```bash
+export JEV_DEV_ADMIN_PASSWORD="$(openssl rand -base64 24)"
+echo "$JEV_DEV_ADMIN_PASSWORD"
+npm run seed:dev
+```
+
+Use the printed value on the login screen.
 
 ## Configure the local encryption key
 
