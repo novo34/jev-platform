@@ -23,6 +23,11 @@ SET actor_type = 'SYSTEM',
     cause = 'legacy_transition'
 WHERE actor_type IS NULL;
 
+-- Temporarily remove the legacy PLT-008 guard so existing rows can be
+-- canonicalized without being rejected by the old state machine.
+DROP TRIGGER trg_validate_task_status_transition ON tasks;
+ALTER TABLE tasks DROP CONSTRAINT tasks_status_check;
+
 -- Canonicalize legacy PLT-008 task states without manufacturing DONE.
 UPDATE tasks
 SET status = CASE status
@@ -46,8 +51,6 @@ SET from_status = CASE from_status
       WHEN 'CANCELLED' THEN 'REJECTED'
       ELSE to_status
     END;
-
-ALTER TABLE tasks DROP CONSTRAINT tasks_status_check;
 
 ALTER TABLE tasks
   ADD CONSTRAINT tasks_status_check
@@ -96,7 +99,11 @@ BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_task_status_transition
+BEFORE UPDATE OF status ON tasks
+FOR EACH ROW EXECUTE FUNCTION validate_task_status_transition();
 
 CREATE OR REPLACE FUNCTION record_order_state_history()
 RETURNS TRIGGER AS $$
