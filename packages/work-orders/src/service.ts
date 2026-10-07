@@ -90,6 +90,9 @@ function mapRepositoryError(error: unknown): never {
     if (error.code === "REPOSITORY_NOT_FOUND") {
       throw new WorkOrderError("REPOSITORY_NOT_FOUND", error.message);
     }
+    if (error.code === "PROJECT_NOT_FOUND") {
+      throw new WorkOrderError("INVALID_ORDER", "project not found");
+    }
   }
   throw error;
 }
