@@ -28,6 +28,33 @@ export class ModelGateway {
     private readonly circuitCooldownMs = 30_000
   ) {}
 
+  private async assertOwnership(request: ModelGatewayRequest): Promise<void> {
+    const result = await this.pool.query(
+      `SELECT 1
+         FROM projects p
+         JOIN tasks t ON t.project_id = p.id
+         LEFT JOIN orders o ON o.id = t.order_id
+        WHERE p.id = $1
+          AND p.organization_id = $2
+          AND t.id = $3
+          AND ($4::uuid IS NULL OR (o.id = $4 AND o.project_id = p.id))
+        LIMIT 1`,
+      [
+        request.projectId,
+        request.organizationId,
+        request.taskId,
+        request.orderId ?? null
+      ]
+    );
+
+    if (result.rowCount !== 1) {
+      throw new ModelGatewayError(
+        "INVALID_REQUEST",
+        "organization/project/order/task ownership mismatch"
+      );
+    }
+  }
+
   private assertRequest(request: ModelGatewayRequest): void {
     if (
       !request.requestId.trim() ||
@@ -97,6 +124,7 @@ export class ModelGateway {
 
   async execute(request: ModelGatewayRequest): Promise<ModelGatewayResult> {
     this.assertRequest(request);
+    await this.assertOwnership(request);
     const timeoutMs = request.timeoutMs ?? 120_000;
     const maxRetries = request.maxRetries ?? 1;
     let previousProvider: ModelProvider | undefined;
