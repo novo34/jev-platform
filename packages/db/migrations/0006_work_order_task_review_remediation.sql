@@ -47,6 +47,36 @@ SET status = CASE status
 END
 WHERE status IN ('IN_PROGRESS', 'COMPLETED', 'CANCELLED');
 
+-- Backfill legacy repositoryless Tasks only when the project has exactly
+-- one registered repository. Ambiguous legacy rows require explicit repair.
+UPDATE tasks t
+SET repository_id = (
+  SELECT r.id
+  FROM repositories r
+  WHERE r.project_id = t.project_id
+  ORDER BY r.id
+  LIMIT 1
+)
+WHERE t.repository_id IS NULL
+  AND (
+    SELECT COUNT(*)
+    FROM repositories r2
+    WHERE r2.project_id = t.project_id
+  ) = 1;
+
+DO $jev$
+BEGIN
+  IF EXISTS (SELECT 1 FROM tasks WHERE repository_id IS NULL) THEN
+    RAISE EXCEPTION
+      'legacy repositoryless tasks require explicit repository remediation'
+      USING ERRCODE = '23514';
+  END IF;
+END;
+$jev$;
+
+ALTER TABLE tasks
+  ALTER COLUMN repository_id SET NOT NULL;
+
 UPDATE task_state_history
 SET from_status = CASE from_status
       WHEN 'IN_PROGRESS' THEN 'RUNNING'
@@ -86,6 +116,25 @@ RETURNS TRIGGER AS $$
 BEGIN
   IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
     RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'APPROVED' THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM approvals a
+      WHERE a.task_id = NEW.id
+        AND a.decision = 'APPROVED'
+        AND a.stale = FALSE
+        AND a.revision IS NOT NULL
+        AND a.commit_sha IS NOT NULL
+        AND a.pull_request_url IS NOT NULL
+        AND a.staging_url IS NOT NULL
+        AND a.evidence <> '{}'::jsonb
+    ) THEN
+      RAISE EXCEPTION
+        'task requires a persisted, non-stale approval with revision and evidence'
+        USING ERRCODE = '23514';
+    END IF;
   END IF;
 
   IF NOT (
