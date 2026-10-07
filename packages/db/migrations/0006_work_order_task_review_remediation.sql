@@ -124,18 +124,30 @@ BEGIN
   END IF;
 
   IF NEW.status = 'AWAITING_HUMAN' THEN
-    IF transition_evidence = '{}'::jsonb OR NOT EXISTS (
+    IF NOT EXISTS (
       SELECT 1
       FROM deployments d
       JOIN environments e ON e.id = d.environment_id
       WHERE d.task_id = NEW.id
         AND e.kind = 'staging'
+        AND d.id = (
+          SELECT d2.id
+          FROM deployments d2
+          JOIN environments e2 ON e2.id = d2.environment_id
+          WHERE d2.task_id = NEW.id
+            AND e2.kind = 'staging'
+          ORDER BY d2.created_at DESC, d2.id DESC
+          LIMIT 1
+        )
         AND d.status = 'READY'
         AND d.url IS NOT NULL
         AND d.revision IS NOT NULL
+        AND transition_evidence->>'stagingDeploymentId' = d.id::text
+        AND transition_evidence->>'revision' = d.revision
+        AND transition_evidence->>'url' = d.url
     ) THEN
       RAISE EXCEPTION
-        'task requires ready staging deployment and readiness evidence'
+        'task requires readiness evidence bound to the current ready staging deployment'
         USING ERRCODE = '23514';
     END IF;
   END IF;
@@ -165,7 +177,6 @@ BEGIN
           JOIN environments e2 ON e2.id = d2.environment_id
           WHERE d2.task_id = NEW.id
             AND e2.kind = 'staging'
-            AND d2.status = 'READY'
           ORDER BY d2.created_at DESC, d2.id DESC
           LIMIT 1
         )
@@ -226,6 +237,7 @@ BEGIN
     WHERE task_id = NEW.task_id
       AND stale = FALSE
       AND (
+        NEW.status IS DISTINCT FROM 'READY' OR
         revision IS DISTINCT FROM NEW.revision OR
         staging_url IS DISTINCT FROM NEW.url
       );
