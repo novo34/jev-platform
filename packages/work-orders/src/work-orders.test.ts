@@ -942,6 +942,28 @@ describe("WorkOrderService", () => {
     ).rejects.toMatchObject({ code: "AMBIGUOUS_REPOSITORY_TARGET" });
   });
 
+  it("prevents changing a task repository after creation", async () => {
+    const order = await service.createOrder({
+      projectId,
+      objective: "Immutable task scope"
+    });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Immutable repository task"
+    });
+
+    await expect(
+      pool.query(
+        "UPDATE tasks SET repository_id = $2 WHERE id = $1",
+        [task.id, secondRepositoryId]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+
+    expect((await service.getTask(task.id)).repositoryId).toBe(repositoryId);
+  });
+
   it("rejects repositories that belong to a different project", async () => {
     const order = await service.createOrder({ projectId, objective: "Foreign repository" });
 
