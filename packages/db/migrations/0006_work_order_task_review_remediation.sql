@@ -190,6 +190,33 @@ CREATE TRIGGER trg_protect_referenced_environment_scope
 BEFORE UPDATE OF project_id, repository_id, kind ON environments
 FOR EACH ROW EXECUTE FUNCTION protect_referenced_environment_scope();
 
+CREATE OR REPLACE FUNCTION invalidate_approvals_on_staging_requirement_change()
+RETURNS TRIGGER AS $staging_requirement$
+BEGIN
+  IF NEW.kind = 'staging'
+     AND (
+       TG_OP = 'INSERT'
+       OR OLD.kind IS DISTINCT FROM NEW.kind
+       OR OLD.project_id IS DISTINCT FROM NEW.project_id
+       OR OLD.repository_id IS DISTINCT FROM NEW.repository_id
+     ) THEN
+    UPDATE approvals a
+    SET stale = TRUE
+    FROM tasks t
+    WHERE a.task_id = t.id
+      AND a.stale = FALSE
+      AND t.project_id = NEW.project_id
+      AND t.repository_id = NEW.repository_id;
+  END IF;
+
+  RETURN NEW;
+END;
+$staging_requirement$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_invalidate_approvals_on_staging_requirement_change
+AFTER INSERT OR UPDATE OF project_id, repository_id, kind ON environments
+FOR EACH ROW EXECUTE FUNCTION invalidate_approvals_on_staging_requirement_change();
+
 UPDATE task_state_history
 SET from_status = CASE from_status
       WHEN 'IN_PROGRESS' THEN 'RUNNING'
