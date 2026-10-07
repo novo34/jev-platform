@@ -270,6 +270,17 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1
+    FROM tasks t
+    WHERE t.id = NEW.task_id
+      AND t.status = 'AWAITING_HUMAN'
+  ) THEN
+    RAISE EXCEPTION
+      'approval decisions may only be recorded while the task awaits human review'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
     FROM users u
     WHERE u.id = NEW.actor_user_id
       AND u.organization_id = task_organization_id
