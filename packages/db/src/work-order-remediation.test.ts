@@ -129,4 +129,80 @@ describe("PLT-008 remediation migration", () => {
       await pool.end();
     }
   });
+  it("repairs legacy cross-project repository IDs and enforces project-scoped repository ownership", async () => {
+    const pool = createDatabasePool();
+    const client = await pool.connect();
+    const schema = `plt008_repo_${randomUUID().replaceAll("-", "")}`;
+
+    try {
+      await client.query(`CREATE SCHEMA "${schema}"`);
+      await client.query(`SET search_path TO "${schema}", public`);
+
+      for (const file of [
+        "0001_canonical_persistence.sql",
+        "0002_auth_rbac.sql",
+        "0003_queue_worker.sql",
+        "0004_project_registry.sql"
+      ]) {
+        await client.query(await migration(file));
+      }
+
+      const organizationId = randomUUID();
+      const projectA = randomUUID();
+      const projectB = randomUUID();
+      const repoA = randomUUID();
+      const repoB = randomUUID();
+      const orderA = randomUUID();
+      const taskA = randomUUID();
+
+      await client.query(
+        "INSERT INTO organizations (id, name) VALUES ($1, 'Legacy Repo Org')",
+        [organizationId]
+      );
+      await client.query(
+        `INSERT INTO projects (id, organization_id, name)
+         VALUES ($1, $3, 'Project A'), ($2, $3, 'Project B')`,
+        [projectA, projectB, organizationId]
+      );
+      await client.query(
+        `INSERT INTO repositories (
+           id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+         ) VALUES
+           ($1, $3, 'novo34/project-a', 'backend', TRUE, 'main', 'staging'),
+           ($2, $4, 'novo34/project-b', 'backend', TRUE, 'main', 'staging')`,
+        [repoA, repoB, projectA, projectB]
+      );
+      await client.query(
+        "INSERT INTO orders (id, project_id, objective) VALUES ($1, $2, 'Legacy repo order')",
+        [orderA, projectA]
+      );
+      await client.query(
+        `INSERT INTO tasks (id, project_id, order_id, repository_id, title)
+         VALUES ($1, $2, $3, $4, 'Legacy cross-project task')`,
+        [taskA, projectA, orderA, repoB]
+      );
+
+      await client.query(await migration("0005_work_order_task_lifecycle.sql"));
+      await client.query(await migration("0006_work_order_task_review_remediation.sql"));
+
+      const repaired = await client.query(
+        "SELECT repository_id FROM tasks WHERE id = $1",
+        [taskA]
+      );
+      expect(repaired.rows[0].repository_id).toBe(repoA);
+
+      await expect(
+        client.query(
+          "UPDATE tasks SET repository_id = $2 WHERE id = $1",
+          [taskA, repoB]
+        )
+      ).rejects.toMatchObject({ code: "23503" });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      client.release();
+      await pool.end();
+    }
+  });
+
 });
