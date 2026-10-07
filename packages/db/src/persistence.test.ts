@@ -110,7 +110,7 @@ describe("canonical PostgreSQL persistence", () => {
         `INSERT INTO tasks (
            id, project_id, order_id, repository_id, title, status, risk
          ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [taskId, projectId, orderId, repositoryId, "Task", "READY", "R2"]
+        [taskId, projectId, orderId, repositoryId, "Task", "AWAITING_HUMAN", "R2"]
       );
       await client.query(
         `INSERT INTO task_runs (
