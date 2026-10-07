@@ -315,6 +315,37 @@ describe("WorkOrderService", () => {
     expect((await service.getTask(task.id)).status).toBe("PLANNED");
   });
 
+  it("releases the transition client before reloading with a single-connection pool", async () => {
+    const singlePool = createDatabasePool({ max: 1 });
+    const singleService = new WorkOrderService(singlePool);
+
+    try {
+      const order = await singleService.createOrder({
+        projectId,
+        objective: "Single pool transition"
+      });
+      const task = await singleService.createTask({
+        projectId,
+        orderId: order.id,
+        repositoryId,
+        title: "Single pool task"
+      });
+
+      const transitioned = await singleService.transitionTask(
+        task.id,
+        "READY",
+        {
+          actorType: "SYSTEM",
+          cause: "single connection regression"
+        }
+      );
+
+      expect(transitioned.status).toBe("READY");
+    } finally {
+      await singlePool.end();
+    }
+  });
+
   it("requires an explicit repository for multi-repository projects", async () => {
     const order = await service.createOrder({ projectId, objective: "Ambiguous repository" });
 
