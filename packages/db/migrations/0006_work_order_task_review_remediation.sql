@@ -204,21 +204,13 @@ SET from_status = CASE from_status
       ELSE to_status
     END;
 
-WITH ranked_approvals AS (
-  SELECT
-    id,
-    ROW_NUMBER() OVER (
-      PARTITION BY task_id
-      ORDER BY created_at DESC, id DESC
-    ) AS row_number
-  FROM approvals
-  WHERE stale = FALSE
-)
-UPDATE approvals a
+-- Approvals written before this migration did not pass the new human-review,
+-- actor-authorization, deployment-binding and append-only invariants. Treat all
+-- legacy decisions as historical evidence only; a fresh post-migration human
+-- decision is required before APPROVED can be entered.
+UPDATE approvals
 SET stale = TRUE
-FROM ranked_approvals ranked
-WHERE a.id = ranked.id
-  AND ranked.row_number > 1;
+WHERE stale = FALSE;
 
 CREATE OR REPLACE FUNCTION protect_persisted_approval()
 RETURNS TRIGGER AS $approval_immutable$
@@ -261,7 +253,8 @@ BEGIN
   INTO task_project_id, task_organization_id
   FROM tasks t
   JOIN projects p ON p.id = t.project_id
-  WHERE t.id = NEW.task_id;
+  WHERE t.id = NEW.task_id
+  FOR UPDATE OF t;
 
   IF task_project_id IS NULL THEN
     RAISE EXCEPTION 'approval task does not exist'
