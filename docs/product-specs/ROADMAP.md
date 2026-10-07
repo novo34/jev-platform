@@ -272,6 +272,8 @@ Convertir órdenes humanas en IntentBrief y AcceptanceContract persistentes ante
 
 ## Exit criteria
 - provider/GitHub/hosting secrets fuera del repo;
+- UI/API autorizada para configurar, rotar, eliminar y probar secrets sin reexponer su valor;
+- metadata separada del material secreto cifrado y cambios auditados;
 - scoped injection;
 - production secrets excluidos de development workspaces.
 
@@ -283,7 +285,7 @@ Convertir órdenes humanas en IntentBrief y AcceptanceContract persistentes ante
 **Depende de:** skeleton + Foundation provider profiles
 
 ## Objetivo
-Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM.
+Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM. PLT-009 establece además la capa mínima cifrada de credenciales y el contrato backend que consumirá la UI; PLT-032 la amplía sin reemplazarla.
 
 ## Exit criteria
 - DeepSeek y OpenAI/Codex end-to-end;
