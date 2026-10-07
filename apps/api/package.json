@@ -16,7 +16,8 @@
     "@jev/auth": "0.1.0",
     "@jev/db": "0.1.0",
     "pg": "^8.16.3",
-    "@jev/control": "0.1.0"
+    "@jev/control": "0.1.0",
+    "@jev/model-gateway": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.7.0",
