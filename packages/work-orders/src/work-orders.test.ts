@@ -137,16 +137,26 @@ describe("WorkOrderService", () => {
       task = await service.transitionTask(task.id, status, context);
     }
 
-    await pool.query(
+    const deployment = await pool.query<{ id: string }>(
       `INSERT INTO deployments (
          project_id, repository_id, environment_id, task_id,
          provider, revision, status, url
        ) VALUES ($1, $2, $3, $4, 'test', 'rev-plt008', 'READY',
-                 'https://staging.example.test')`,
+                 'https://staging.example.test')
+       RETURNING id`,
       [projectId, repositoryId, environmentId, task.id]
     );
 
-    task = await service.transitionTask(task.id, "AWAITING_HUMAN", context);
+    const reviewContext = {
+      ...context,
+      evidence: {
+        stagingDeploymentId: deployment.rows[0].id,
+        revision: "rev-plt008",
+        url: "https://staging.example.test"
+      }
+    };
+
+    task = await service.transitionTask(task.id, "AWAITING_HUMAN", reviewContext);
 
     await pool.query(
       `INSERT INTO approvals (
@@ -159,7 +169,7 @@ describe("WorkOrderService", () => {
       [task.id, userId]
     );
 
-    task = await service.transitionTask(task.id, "APPROVED", context);
+    task = await service.transitionTask(task.id, "APPROVED", reviewContext);
 
     expect(task.stateHistory.map((entry) => entry.toStatus)).toEqual([
       "PLANNED",
@@ -186,6 +196,17 @@ describe("WorkOrderService", () => {
     ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
 
     await pool.query(
+      "UPDATE deployments SET status = 'FAILED' WHERE id = $1",
+      [deployment.rows[0].id]
+    );
+
+    let approval = await pool.query(
+      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-plt008'",
+      [task.id]
+    );
+    expect(approval.rows[0].stale).toBe(true);
+
+    await pool.query(
       `INSERT INTO deployments (
          project_id, repository_id, environment_id, task_id,
          provider, revision, status, url
@@ -194,7 +215,7 @@ describe("WorkOrderService", () => {
       [projectId, repositoryId, environmentId, task.id]
     );
 
-    const approval = await pool.query(
+    approval = await pool.query(
       "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-plt008'",
       [task.id]
     );
@@ -226,16 +247,24 @@ describe("WorkOrderService", () => {
       task = await service.transitionTask(task.id, status, context);
     }
 
-    await pool.query(
+    const deployment = await pool.query<{ id: string }>(
       `INSERT INTO deployments (
          project_id, repository_id, environment_id, task_id,
          provider, revision, status, url
        ) VALUES ($1, $2, $3, $4, 'test', 'rev-no-approval', 'READY',
-                 'https://staging.example.test')`,
+                 'https://staging.example.test')
+       RETURNING id`,
       [projectId, repositoryId, environmentId, task.id]
     );
 
-    task = await service.transitionTask(task.id, "AWAITING_HUMAN", context);
+    task = await service.transitionTask(task.id, "AWAITING_HUMAN", {
+      ...context,
+      evidence: {
+        stagingDeploymentId: deployment.rows[0].id,
+        revision: "rev-no-approval",
+        url: "https://staging.example.test"
+      }
+    });
 
     await expect(
       service.transitionTask(task.id, "APPROVED", context)
