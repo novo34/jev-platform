@@ -507,6 +507,28 @@ BEGIN
     END IF;
   END IF;
 
+  IF OLD.status = 'AWAITING_HUMAN'
+     AND NEW.status IN ('CHANGES_REQUESTED', 'REJECTED') THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM approvals a
+      WHERE a.task_id = NEW.id
+        AND a.id = (
+          SELECT latest.id
+          FROM approvals latest
+          WHERE latest.task_id = NEW.id
+          ORDER BY latest.created_at DESC, latest.id DESC
+          LIMIT 1
+        )
+        AND a.decision = NEW.status
+        AND a.stale = FALSE
+    ) THEN
+      RAISE EXCEPTION
+        'task requires a persisted human decision matching %', NEW.status
+        USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
   IF OLD.status IN ('APPROVED', 'AWAITING_HUMAN')
      AND NEW.status = 'CHANGES_REQUESTED' THEN
     UPDATE approvals
