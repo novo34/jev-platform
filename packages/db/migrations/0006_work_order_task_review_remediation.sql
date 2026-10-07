@@ -265,10 +265,16 @@ BEGIN
     SELECT 1
     FROM tasks t
     WHERE t.id = NEW.task_id
-      AND t.status = 'AWAITING_HUMAN'
+      AND (
+        t.status = 'AWAITING_HUMAN'
+        OR (
+          t.status = 'APPROVED'
+          AND NEW.decision = 'CHANGES_REQUESTED'
+        )
+      )
   ) THEN
     RAISE EXCEPTION
-      'approval decisions may only be recorded while the task awaits human review'
+      'approval decision is not valid for the task review state'
       USING ERRCODE = '23514';
   END IF;
 
@@ -346,6 +352,18 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
+  IF NOT EXISTS (
+    SELECT 1
+    FROM environments e
+    WHERE e.id = NEW.environment_id
+      AND e.project_id = NEW.project_id
+      AND e.repository_id = NEW.repository_id
+  ) THEN
+    RAISE EXCEPTION
+      'deployment environment must match deployment project/repository scope'
+      USING ERRCODE = '23514';
+  END IF;
+
   IF NEW.task_id IS NULL THEN
     RETURN NEW;
   END IF;
@@ -353,15 +371,12 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1
     FROM tasks t
-    JOIN environments e ON e.id = NEW.environment_id
     WHERE t.id = NEW.task_id
       AND t.project_id = NEW.project_id
       AND t.repository_id = NEW.repository_id
-      AND e.project_id = NEW.project_id
-      AND e.repository_id = NEW.repository_id
   ) THEN
     RAISE EXCEPTION
-      'deployment project/repository/environment must match the task scope'
+      'deployment project/repository must match the task scope'
       USING ERRCODE = '23514';
   END IF;
 
@@ -507,8 +522,14 @@ BEGIN
     END IF;
   END IF;
 
-  IF OLD.status = 'AWAITING_HUMAN'
-     AND NEW.status IN ('CHANGES_REQUESTED', 'REJECTED') THEN
+  IF (
+       OLD.status = 'AWAITING_HUMAN'
+       AND NEW.status IN ('CHANGES_REQUESTED', 'REJECTED')
+     )
+     OR (
+       OLD.status = 'APPROVED'
+       AND NEW.status = 'CHANGES_REQUESTED'
+     ) THEN
     IF NOT EXISTS (
       SELECT 1
       FROM approvals a
