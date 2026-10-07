@@ -112,7 +112,7 @@ ALTER TABLE tasks
   );
 
 CREATE OR REPLACE FUNCTION validate_task_status_transition()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $$
 DECLARE
   transition_evidence JSONB := COALESCE(
     NULLIF(current_setting('jev.transition_evidence', true), '')::jsonb,
@@ -211,7 +211,7 @@ BEFORE UPDATE OF status ON tasks
 FOR EACH ROW EXECUTE FUNCTION validate_task_status_transition();
 
 CREATE OR REPLACE FUNCTION invalidate_task_approvals_on_staging_change()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $$
 DECLARE
   is_staging BOOLEAN;
 BEGIN
