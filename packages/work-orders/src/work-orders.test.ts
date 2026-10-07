@@ -575,6 +575,72 @@ describe("WorkOrderService", () => {
     expect(approval.rows[0].stale).toBe(false);
   });
 
+  it("stales an approval when its staging deployment is reassigned to another task", async () => {
+    const order = await service.createOrder({ projectId, objective: "Deployment reassignment" });
+    let task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Approved task"
+    });
+    const secondTask = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Replacement task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "deployment reassignment test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING"] as const) {
+      task = await service.transitionTask(task.id, status, context);
+    }
+
+    const deployment = await pool.query<{ id: string }>(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-reassign', 'READY',
+                 'https://staging.example.test/reassign')
+       RETURNING id`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    task = await service.transitionTask(task.id, "AWAITING_HUMAN", {
+      ...context,
+      evidence: {
+        stagingDeploymentId: deployment.rows[0].id,
+        revision: "rev-reassign",
+        url: "https://staging.example.test/reassign"
+      }
+    });
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, staging_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-reassign', 'abcdef0123456789',
+                 'https://github.com/novo34/example/pull/6',
+                 'https://staging.example.test/reassign',
+                 jsonb_build_object('stagingDeploymentId', $3::text, 'verified', true))`,
+      [task.id, userId, deployment.rows[0].id]
+    );
+
+    await pool.query(
+      "UPDATE deployments SET task_id = $2 WHERE id = $1",
+      [deployment.rows[0].id, secondTask.id]
+    );
+
+    const approval = await pool.query(
+      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-reassign'",
+      [task.id]
+    );
+    expect(approval.rows[0].stale).toBe(true);
+  });
+
   it("rejects illegal transitions in both the service and PostgreSQL", async () => {
     const order = await service.createOrder({ projectId, objective: "Reject state jumps" });
     const task = await service.createTask({
