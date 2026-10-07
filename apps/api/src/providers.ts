@@ -8,6 +8,7 @@ import {
   type ModelProvider,
   type ProviderRegistry
 } from "@jev/model-gateway";
+import { AuthError } from "@jev/auth";
 import { requireAuthenticatedUser } from "./auth.js";
 
 interface ProviderParams {
@@ -25,6 +26,14 @@ function ensureAdmin(role: string): void {
 }
 
 function mapError(error: unknown): { status: number; body: object } {
+  if (error instanceof AuthError) {
+    const status =
+      error.code === "UNAUTHENTICATED" || error.code === "INVALID_CREDENTIALS"
+        ? 401
+        : 403;
+    return { status, body: { error: error.code } };
+  }
+
   if (
     error instanceof Error &&
     "statusCode" in error &&
