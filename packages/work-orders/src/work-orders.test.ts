@@ -970,6 +970,55 @@ describe("WorkOrderService", () => {
     ).rejects.toMatchObject({ code: "23514" });
   });
 
+  it("keeps persisted approval decisions append-only while allowing stale invalidation", async () => {
+    const order = await service.createOrder({ projectId, objective: "Immutable approval audit" });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Immutable approval task"
+    });
+
+    const approval = await pool.query<{ id: string }>(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'CHANGES_REQUESTED', 'rev-immutable', 'ffffffffffffffff',
+                 'https://github.com/novo34/example/pull/11',
+                 '{"reason":"review"}'::jsonb)
+       RETURNING id`,
+      [task.id, userId]
+    );
+
+    await expect(
+      pool.query(
+        "UPDATE approvals SET decision = 'APPROVED' WHERE id = $1",
+        [approval.rows[0].id]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+
+    await expect(
+      pool.query(
+        "UPDATE approvals SET created_at = created_at + INTERVAL '1 minute' WHERE id = $1",
+        [approval.rows[0].id]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+
+    await expect(
+      pool.query(
+        "UPDATE approvals SET stale = TRUE WHERE id = $1",
+        [approval.rows[0].id]
+      )
+    ).resolves.toBeDefined();
+
+    await expect(
+      pool.query(
+        "UPDATE approvals SET stale = FALSE WHERE id = $1",
+        [approval.rows[0].id]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
   it("rejects illegal transitions in both the service and PostgreSQL", async () => {
     const order = await service.createOrder({ projectId, objective: "Reject state jumps" });
     const task = await service.createTask({
