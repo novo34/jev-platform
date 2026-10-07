@@ -56,21 +56,35 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Test-only cleanup: production approval rows are append-only and reject DELETE.
+  // TRUNCATE does not weaken the row-level contract installed by the migration.
+  await pool.query("TRUNCATE TABLE approvals");
   await pool.query(
-    "DELETE FROM deployments WHERE task_id IN (SELECT id FROM tasks WHERE project_id IN ($1, $2))",
-    [projectId, foreignProjectId]
+    "DELETE FROM deployments WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
+    [organizationId]
   );
   await pool.query(
-    "DELETE FROM approvals WHERE task_id IN (SELECT id FROM tasks WHERE project_id IN ($1, $2))",
-    [projectId, foreignProjectId]
+    "DELETE FROM tasks WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
+    [organizationId]
   );
-  await pool.query("DELETE FROM tasks WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
-  await pool.query("DELETE FROM requirements WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
-  await pool.query("DELETE FROM orders WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
-  await pool.query("DELETE FROM environments WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
-  await pool.query("DELETE FROM repositories WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
-  await pool.query("DELETE FROM projects WHERE id IN ($1, $2)", [projectId, foreignProjectId]);
-  await pool.query("DELETE FROM users WHERE id = $1", [userId]);
+  await pool.query(
+    "DELETE FROM requirements WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
+    [organizationId]
+  );
+  await pool.query(
+    "DELETE FROM orders WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
+    [organizationId]
+  );
+  await pool.query(
+    "DELETE FROM environments WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
+    [organizationId]
+  );
+  await pool.query(
+    "DELETE FROM repositories WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
+    [organizationId]
+  );
+  await pool.query("DELETE FROM projects WHERE organization_id = $1", [organizationId]);
+  await pool.query("DELETE FROM users WHERE organization_id = $1", [organizationId]);
   await pool.query("DELETE FROM organizations WHERE id = $1", [organizationId]);
   await pool.end();
 });
@@ -351,11 +365,6 @@ describe("WorkOrderService", () => {
     task = await noStagingService.transitionTask(task.id, "APPROVED", context);
     expect(task.status).toBe("APPROVED");
 
-    await pool.query("DELETE FROM approvals WHERE task_id = $1", [task.id]);
-    await pool.query("DELETE FROM tasks WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM orders WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM repositories WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM projects WHERE id = $1", [noStagingProjectId]);
   });
 
   it("rejects deployments whose project or repository does not match the task", async () => {
@@ -498,11 +507,6 @@ describe("WorkOrderService", () => {
     );
     expect(approval.rows[0].stale).toBe(true);
 
-    await pool.query("DELETE FROM approvals WHERE task_id = $1", [task.id]);
-    await pool.query("DELETE FROM tasks WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM orders WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM repositories WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM projects WHERE id = $1", [noStagingProjectId]);
   });
 
   it("does not stale the current approval when an older deployment is edited", async () => {
@@ -803,11 +807,6 @@ describe("WorkOrderService", () => {
       noStagingService.transitionTask(task.id, "APPROVED", context)
     ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
 
-    await pool.query("DELETE FROM approvals WHERE task_id = $1", [task.id]);
-    await pool.query("DELETE FROM tasks WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM orders WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM repositories WHERE project_id = $1", [noStagingProjectId]);
-    await pool.query("DELETE FROM projects WHERE id = $1", [noStagingProjectId]);
   });
 
   it("stales approval when its exact staging deployment is deleted", async () => {
@@ -1017,6 +1016,105 @@ describe("WorkOrderService", () => {
         [approval.rows[0].id]
       )
     ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("rejects deletion and mutation of persisted approval decisions", async () => {
+    const order = await service.createOrder({ projectId, objective: "Append-only approval deletion" });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Append-only approval delete task"
+    });
+
+    const approval = await pool.query<{ id: string }>(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'CHANGES_REQUESTED', 'rev-delete-guard', '1212121212121212',
+                 'https://github.com/novo34/example/pull/12',
+                 '{"reason":"audit"}'::jsonb)
+       RETURNING id`,
+      [task.id, userId]
+    );
+
+    await expect(
+      pool.query("DELETE FROM approvals WHERE id = $1", [approval.rows[0].id])
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("rejects an approval actor outside the task organization without superseding the valid decision", async () => {
+    const otherOrganizationId = randomUUID();
+    const otherUserId = randomUUID();
+    const order = await service.createOrder({ projectId, objective: "Approval actor authorization" });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Approval actor task"
+    });
+
+    await pool.query(
+      "INSERT INTO organizations (id, name) VALUES ($1, 'Unauthorized Approval Org')",
+      [otherOrganizationId]
+    );
+    await pool.query(
+      `INSERT INTO users (id, organization_id, email, display_name, role)
+       VALUES ($1, $2, $3, 'Foreign Admin', 'ADMIN')`,
+      [otherUserId, otherOrganizationId, `foreign-${otherUserId}@test.local`]
+    );
+
+    const valid = await pool.query<{ id: string }>(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'CHANGES_REQUESTED', 'rev-valid-actor', '3434343434343434',
+                 'https://github.com/novo34/example/pull/13',
+                 '{"reason":"valid"}'::jsonb)
+       RETURNING id`,
+      [task.id, userId]
+    );
+
+    await expect(
+      pool.query(
+        `INSERT INTO approvals (
+           task_id, actor_user_id, decision, revision, commit_sha,
+           pull_request_url, evidence
+         ) VALUES ($1, $2, 'APPROVED', 'rev-foreign-actor', '5656565656565656',
+                   'https://github.com/novo34/example/pull/14',
+                   '{"verified":true}'::jsonb)`,
+        [task.id, otherUserId]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+
+    const persisted = await pool.query(
+      "SELECT stale FROM approvals WHERE id = $1",
+      [valid.rows[0].id]
+    );
+    expect(persisted.rows[0].stale).toBe(false);
+
+    await pool.query("DELETE FROM users WHERE id = $1", [otherUserId]);
+    await pool.query("DELETE FROM organizations WHERE id = $1", [otherOrganizationId]);
+  });
+
+  it("requires an identity for USER and AGENT transition actors", async () => {
+    const order = await service.createOrder({ projectId, objective: "Transition actor identity" });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Actor identity task"
+    });
+
+    await expect(
+      service.transitionTask(
+        task.id,
+        "READY",
+        { actorType: "USER", cause: "missing user identity" } as any
+      )
+    ).rejects.toMatchObject({ code: "INVALID_ORDER" });
+
+    expect((await service.getTask(task.id)).status).toBe("PLANNED");
   });
 
   it("rejects illegal transitions in both the service and PostgreSQL", async () => {
