@@ -74,6 +74,33 @@ function textFromOpenAIResponse(body: any): string {
   );
 }
 
+function normalizedUsage(
+  inputValue: unknown,
+  outputValue: unknown,
+  totalValue: unknown,
+  provider: string
+) {
+  const inputTokens = Number(inputValue);
+  const outputTokens = Number(outputValue);
+  const totalTokens = Number(totalValue);
+
+  if (
+    !Number.isFinite(inputTokens) ||
+    !Number.isFinite(outputTokens) ||
+    !Number.isFinite(totalTokens) ||
+    inputTokens < 0 ||
+    outputTokens < 0 ||
+    totalTokens < 0
+  ) {
+    throw new ModelGatewayError(
+      "PROVIDER_RESPONSE_INVALID",
+      `${provider} response contained invalid usage`
+    );
+  }
+
+  return { inputTokens, outputTokens, totalTokens };
+}
+
 abstract class BaseHttpAdapter implements ProviderAdapter {
   abstract readonly provider: ModelProvider;
 
@@ -150,18 +177,22 @@ export class OpenAIAdapter extends BaseHttpAdapter {
       input.timeoutMs
     );
     const body = await jsonOrProviderError(response);
-    const usage = body?.usage ?? {};
+    const usage = body?.usage;
+    if (!usage) {
+      throw new ModelGatewayError(
+        "PROVIDER_RESPONSE_INVALID",
+        "OpenAI response did not contain usage"
+      );
+    }
 
     return {
       content: textFromOpenAIResponse(body),
-      usage: {
-        inputTokens: Number(usage.input_tokens ?? 0),
-        outputTokens: Number(usage.output_tokens ?? 0),
-        totalTokens: Number(
-          usage.total_tokens ??
-            Number(usage.input_tokens ?? 0) + Number(usage.output_tokens ?? 0)
-        )
-      },
+      usage: normalizedUsage(
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.total_tokens,
+        "OpenAI"
+      ),
       finishReason: typeof body?.status === "string" ? body.status : undefined,
       rawMetadata: {
         responseId: typeof body?.id === "string" ? body.id : undefined
@@ -211,18 +242,22 @@ export class DeepSeekAdapter extends BaseHttpAdapter {
         "DeepSeek response did not contain text output"
       );
     }
-    const usage = body?.usage ?? {};
+    const usage = body?.usage;
+    if (!usage) {
+      throw new ModelGatewayError(
+        "PROVIDER_RESPONSE_INVALID",
+        "DeepSeek response did not contain usage"
+      );
+    }
 
     return {
       content,
-      usage: {
-        inputTokens: Number(usage.prompt_tokens ?? 0),
-        outputTokens: Number(usage.completion_tokens ?? 0),
-        totalTokens: Number(
-          usage.total_tokens ??
-            Number(usage.prompt_tokens ?? 0) + Number(usage.completion_tokens ?? 0)
-        )
-      },
+      usage: normalizedUsage(
+        usage.prompt_tokens,
+        usage.completion_tokens,
+        usage.total_tokens,
+        "DeepSeek"
+      ),
       finishReason:
         typeof body?.choices?.[0]?.finish_reason === "string"
           ? body.choices[0].finish_reason
