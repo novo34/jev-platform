@@ -4,6 +4,7 @@ import { PricingCatalog } from "./pricing.js";
 import { ProviderRegistry } from "./adapters.js";
 import {
   ModelGatewayError,
+  type AdapterResult,
   type ModelGatewayRequest,
   type ModelGatewayResult,
   type ModelProvider,
@@ -16,7 +17,7 @@ interface CircuitState {
 }
 
 export class ModelGateway {
-  private readonly circuits = new Map<ModelProvider, CircuitState>();
+  private readonly circuits = new Map<string, CircuitState>();
 
   constructor(
     private readonly pool: Pool,
@@ -46,30 +47,52 @@ export class ModelGateway {
     }
   }
 
-  private assertCircuit(provider: ModelProvider): void {
-    const state = this.circuits.get(provider);
+  private circuitKey(
+    organizationId: string,
+    provider: ModelProvider,
+    model: string
+  ): string {
+    return `${organizationId}:${provider}:${model}`;
+  }
+
+  private assertCircuit(
+    organizationId: string,
+    provider: ModelProvider,
+    model: string
+  ): void {
+    const key = this.circuitKey(organizationId, provider, model);
+    const state = this.circuits.get(key);
     if (!state?.openedAt) return;
     if (Date.now() - state.openedAt >= this.circuitCooldownMs) {
-      this.circuits.delete(provider);
+      this.circuits.delete(key);
       return;
     }
     throw new ModelGatewayError(
       "PROVIDER_CIRCUIT_OPEN",
-      `circuit open for ${provider}`
+      `circuit open for ${provider}/${model}`
     );
   }
 
-  private success(provider: ModelProvider): void {
-    this.circuits.delete(provider);
+  private success(
+    organizationId: string,
+    provider: ModelProvider,
+    model: string
+  ): void {
+    this.circuits.delete(this.circuitKey(organizationId, provider, model));
   }
 
-  private failure(provider: ModelProvider): void {
-    const state = this.circuits.get(provider) ?? { failures: 0 };
+  private failure(
+    organizationId: string,
+    provider: ModelProvider,
+    model: string
+  ): void {
+    const key = this.circuitKey(organizationId, provider, model);
+    const state = this.circuits.get(key) ?? { failures: 0 };
     state.failures += 1;
     if (state.failures >= this.circuitFailureThreshold) {
       state.openedAt = Date.now();
     }
-    this.circuits.set(provider, state);
+    this.circuits.set(key, state);
   }
 
   async execute(request: ModelGatewayRequest): Promise<ModelGatewayResult> {
@@ -100,7 +123,11 @@ export class ModelGateway {
       }
 
       try {
-        this.assertCircuit(target.provider);
+        this.assertCircuit(
+          request.organizationId,
+          target.provider,
+          target.model
+        );
       } catch (error) {
         await this.recordFailure(
           request,
@@ -141,48 +168,43 @@ export class ModelGateway {
         continue;
       }
 
-      const adapter = this.providers.get(target.provider);
+      let adapter;
+      try {
+        adapter = this.providers.get(target.provider);
+      } catch (error) {
+        const typed =
+          error instanceof ModelGatewayError
+            ? error
+            : new ModelGatewayError("PROVIDER_NOT_REGISTERED");
+        await this.recordFailure(
+          request,
+          target.provider,
+          target.model,
+          "BLOCKED",
+          0,
+          0,
+          previousProvider,
+          typed.code
+        );
+        lastError = typed;
+        previousProvider = target.provider;
+        continue;
+      }
+
       const started = Date.now();
       let attempts = 0;
+      let response: AdapterResult | undefined;
 
       while (attempts <= maxRetries) {
         attempts += 1;
         try {
-          const response = await adapter.execute(apiKey, {
+          response = await adapter.execute(apiKey, {
             model: target.model,
             prompt: request.prompt,
             maxOutputTokens: request.maxOutputTokens,
             timeoutMs
           });
-          const latencyMs = Date.now() - started;
-          const estimatedCostChf = this.pricing.estimateChf(
-            target.provider,
-            target.model,
-            response.usage
-          );
-
-          await this.recordSuccess(
-            request,
-            target.provider,
-            target.model,
-            attempts,
-            latencyMs,
-            previousProvider,
-            response.usage,
-            estimatedCostChf
-          );
-          this.success(target.provider);
-
-          return {
-            ...response,
-            requestId: request.requestId,
-            provider: target.provider,
-            model: target.model,
-            attempts,
-            latencyMs,
-            fallbackFrom: previousProvider,
-            estimatedCostChf
-          };
+          break;
         } catch (error) {
           const typed =
             error instanceof ModelGatewayError
@@ -209,12 +231,55 @@ export class ModelGateway {
             previousProvider,
             typed.code
           );
-          this.failure(target.provider);
+          this.failure(
+            request.organizationId,
+            target.provider,
+            target.model
+          );
           break;
         }
       }
 
-      previousProvider = target.provider;
+      if (!response) {
+        previousProvider = target.provider;
+        continue;
+      }
+
+      const latencyMs = Date.now() - started;
+      const estimatedCostChf = this.pricing.estimateChf(
+        target.provider,
+        target.model,
+        response.usage
+      );
+
+      // Persistence is intentionally outside the provider retry block.
+      // A database failure must never cause a second paid provider call.
+      await this.recordSuccess(
+        request,
+        target.provider,
+        target.model,
+        attempts,
+        latencyMs,
+        previousProvider,
+        response.usage,
+        estimatedCostChf
+      );
+      this.success(
+        request.organizationId,
+        target.provider,
+        target.model
+      );
+
+      return {
+        ...response,
+        requestId: request.requestId,
+        provider: target.provider,
+        model: target.model,
+        attempts,
+        latencyMs,
+        fallbackFrom: previousProvider,
+        estimatedCostChf
+      };
     }
 
     throw new ModelGatewayError(
