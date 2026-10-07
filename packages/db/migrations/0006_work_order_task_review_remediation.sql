@@ -23,6 +23,14 @@ SET actor_type = 'SYSTEM',
     cause = 'legacy_transition'
 WHERE actor_type IS NULL;
 
+ALTER TABLE order_state_history
+  ALTER COLUMN actor_type SET NOT NULL,
+  ALTER COLUMN cause SET NOT NULL;
+
+ALTER TABLE task_state_history
+  ALTER COLUMN actor_type SET NOT NULL,
+  ALTER COLUMN cause SET NOT NULL;
+
 -- Temporarily remove the legacy PLT-008 guard so existing rows can be
 -- canonicalized without being rejected by the old state machine.
 DROP TRIGGER trg_validate_task_status_transition ON tasks;
