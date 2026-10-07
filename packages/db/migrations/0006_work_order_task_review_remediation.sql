@@ -112,16 +112,43 @@ ALTER TABLE tasks
   );
 
 CREATE OR REPLACE FUNCTION validate_task_status_transition()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
+DECLARE
+  transition_evidence JSONB := COALESCE(
+    NULLIF(current_setting('jev.transition_evidence', true), '')::jsonb,
+    '{}'::jsonb
+  );
 BEGIN
   IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
     RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'AWAITING_HUMAN' THEN
+    IF transition_evidence = '{}'::jsonb OR NOT EXISTS (
+      SELECT 1
+      FROM deployments d
+      JOIN environments e ON e.id = d.environment_id
+      WHERE d.task_id = NEW.id
+        AND e.kind = 'staging'
+        AND d.status = 'READY'
+        AND d.url IS NOT NULL
+        AND d.revision IS NOT NULL
+    ) THEN
+      RAISE EXCEPTION
+        'task requires ready staging deployment and readiness evidence'
+        USING ERRCODE = '23514';
+    END IF;
   END IF;
 
   IF NEW.status = 'APPROVED' THEN
     IF NOT EXISTS (
       SELECT 1
       FROM approvals a
+      JOIN deployments d
+        ON d.task_id = a.task_id
+       AND d.revision = a.revision
+       AND d.url = a.staging_url
+      JOIN environments e ON e.id = d.environment_id
       WHERE a.task_id = NEW.id
         AND a.decision = 'APPROVED'
         AND a.stale = FALSE
@@ -130,11 +157,29 @@ BEGIN
         AND a.pull_request_url IS NOT NULL
         AND a.staging_url IS NOT NULL
         AND a.evidence <> '{}'::jsonb
+        AND e.kind = 'staging'
+        AND d.status = 'READY'
+        AND d.id = (
+          SELECT d2.id
+          FROM deployments d2
+          JOIN environments e2 ON e2.id = d2.environment_id
+          WHERE d2.task_id = NEW.id
+            AND e2.kind = 'staging'
+            AND d2.status = 'READY'
+          ORDER BY d2.created_at DESC, d2.id DESC
+          LIMIT 1
+        )
     ) THEN
       RAISE EXCEPTION
-        'task requires a persisted, non-stale approval with revision and evidence'
+        'task requires approval bound to the current ready staging revision'
         USING ERRCODE = '23514';
     END IF;
+  END IF;
+
+  IF OLD.status = 'APPROVED' AND NEW.status = 'CHANGES_REQUESTED' THEN
+    UPDATE approvals
+    SET stale = TRUE
+    WHERE task_id = NEW.id AND stale = FALSE;
   END IF;
 
   IF NOT (
@@ -164,6 +209,35 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_validate_task_status_transition
 BEFORE UPDATE OF status ON tasks
 FOR EACH ROW EXECUTE FUNCTION validate_task_status_transition();
+
+CREATE OR REPLACE FUNCTION invalidate_task_approvals_on_staging_change()
+RETURNS TRIGGER AS $
+DECLARE
+  is_staging BOOLEAN;
+BEGIN
+  SELECT (kind = 'staging')
+  INTO is_staging
+  FROM environments
+  WHERE id = NEW.environment_id;
+
+  IF is_staging AND NEW.task_id IS NOT NULL THEN
+    UPDATE approvals
+    SET stale = TRUE
+    WHERE task_id = NEW.task_id
+      AND stale = FALSE
+      AND (
+        revision IS DISTINCT FROM NEW.revision OR
+        staging_url IS DISTINCT FROM NEW.url
+      );
+  END IF;
+
+  RETURN NEW;
+END;
+$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_invalidate_task_approvals_on_staging_change
+AFTER INSERT OR UPDATE OF revision, url, status ON deployments
+FOR EACH ROW EXECUTE FUNCTION invalidate_task_approvals_on_staging_change();
 
 CREATE OR REPLACE FUNCTION record_order_state_history()
 RETURNS TRIGGER AS $$
