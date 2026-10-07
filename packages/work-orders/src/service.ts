@@ -52,8 +52,14 @@ async function applyTransitionContext(
   context: TransitionContext
 ): Promise<void> {
   assertNonEmpty(context.cause, "transition cause");
-  if (context.actorType !== "SYSTEM") {
-    assertNonEmpty(context.actorId, "transition actor ID");
+  if (
+    context.actorType !== "SYSTEM" &&
+    (typeof context.actorId !== "string" || !context.actorId.trim())
+  ) {
+    throw new WorkOrderError(
+      "INVALID_ORDER",
+      "transition actor ID is required for USER and AGENT actors"
+    );
   }
   await client.query(
     "SELECT set_config('jev.transition_actor_type', $1, true)",
