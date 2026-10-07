@@ -117,6 +117,37 @@ SET from_status = CASE from_status
       ELSE to_status
     END;
 
+WITH ranked_approvals AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY task_id
+      ORDER BY created_at DESC, id DESC
+    ) AS row_number
+  FROM approvals
+  WHERE stale = FALSE
+)
+UPDATE approvals a
+SET stale = TRUE
+FROM ranked_approvals ranked
+WHERE a.id = ranked.id
+  AND ranked.row_number > 1;
+
+CREATE OR REPLACE FUNCTION supersede_previous_task_approvals()
+RETURNS TRIGGER AS $decision$
+BEGIN
+  UPDATE approvals
+  SET stale = TRUE
+  WHERE task_id = NEW.task_id
+    AND stale = FALSE;
+  RETURN NEW;
+END;
+$decision$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_supersede_previous_task_approvals
+BEFORE INSERT ON approvals
+FOR EACH ROW EXECUTE FUNCTION supersede_previous_task_approvals();
+
 ALTER TABLE tasks
   ADD CONSTRAINT tasks_status_check
   CHECK (
@@ -239,6 +270,13 @@ BEGIN
          AND a.evidence->>'stagingDeploymentId' = d.id::text
         JOIN environments e ON e.id = d.environment_id
         WHERE a.task_id = NEW.id
+          AND a.id = (
+            SELECT latest.id
+            FROM approvals latest
+            WHERE latest.task_id = NEW.id
+            ORDER BY latest.created_at DESC, latest.id DESC
+            LIMIT 1
+          )
           AND a.decision = 'APPROVED'
           AND a.stale = FALSE
           AND a.revision IS NOT NULL
@@ -274,6 +312,13 @@ BEGIN
         SELECT 1
         FROM approvals a
         WHERE a.task_id = NEW.id
+          AND a.id = (
+            SELECT latest.id
+            FROM approvals latest
+            WHERE latest.task_id = NEW.id
+            ORDER BY latest.created_at DESC, latest.id DESC
+            LIMIT 1
+          )
           AND a.decision = 'APPROVED'
           AND a.stale = FALSE
           AND a.revision IS NOT NULL
@@ -327,6 +372,28 @@ DECLARE
   new_is_staging BOOLEAN := FALSE;
   old_is_staging BOOLEAN := FALSE;
 BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.task_id IS NOT NULL THEN
+      SELECT (
+        kind = 'staging'
+        AND project_id = OLD.project_id
+        AND repository_id = OLD.repository_id
+      )
+      INTO old_is_staging
+      FROM environments
+      WHERE id = OLD.environment_id;
+
+      IF old_is_staging THEN
+        UPDATE approvals a
+        SET stale = TRUE
+        WHERE a.task_id = OLD.task_id
+          AND a.stale = FALSE
+          AND a.evidence->>'stagingDeploymentId' = OLD.id::text;
+      END IF;
+    END IF;
+    RETURN OLD;
+  END IF;
+
   IF TG_OP = 'INSERT' THEN
     SELECT (
       kind = 'staging'
@@ -380,7 +447,7 @@ END;
 $approval$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_invalidate_task_approvals_on_staging_change
-AFTER INSERT OR UPDATE OF
+AFTER INSERT OR DELETE OR UPDATE OF
   project_id, repository_id, environment_id, task_id, revision, url, status
 ON deployments
 FOR EACH ROW EXECUTE FUNCTION invalidate_task_approvals_on_staging_change();
