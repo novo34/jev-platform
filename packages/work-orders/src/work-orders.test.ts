@@ -641,6 +641,140 @@ describe("WorkOrderService", () => {
     expect(approval.rows[0].stale).toBe(true);
   });
 
+  it("honors the latest persisted human decision instead of an older approval", async () => {
+    const noStagingProjectId = randomUUID();
+    const noStagingRepositoryId = randomUUID();
+
+    await pool.query(
+      "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Latest Decision Project')",
+      [noStagingProjectId, organizationId]
+    );
+    await pool.query(
+      `INSERT INTO repositories (
+         id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+       ) VALUES ($1, $2, 'novo34/latest-decision', 'backend', TRUE, 'main', 'staging')`,
+      [noStagingRepositoryId, noStagingProjectId]
+    );
+
+    const noStagingService = new WorkOrderService(pool);
+    const order = await noStagingService.createOrder({
+      projectId: noStagingProjectId,
+      objective: "Latest human decision"
+    });
+    let task = await noStagingService.createTask({
+      projectId: noStagingProjectId,
+      orderId: order.id,
+      repositoryId: noStagingRepositoryId,
+      title: "Decision task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "decision test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING", "AWAITING_HUMAN"] as const) {
+      task = await noStagingService.transitionTask(task.id, status, context);
+    }
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-approved', 'aaaaaaaaaaaaaaaa',
+                 'https://github.com/novo34/example/pull/7',
+                 '{"verified":true}'::jsonb)`,
+      [task.id, userId]
+    );
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'CHANGES_REQUESTED', 'rev-changes', 'bbbbbbbbbbbbbbbb',
+                 'https://github.com/novo34/example/pull/7',
+                 '{"reason":"changes"}'::jsonb)`,
+      [task.id, userId]
+    );
+
+    const decisions = await pool.query(
+      "SELECT decision, stale FROM approvals WHERE task_id = $1 ORDER BY created_at, id",
+      [task.id]
+    );
+    expect(decisions.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ decision: "APPROVED", stale: true }),
+        expect.objectContaining({ decision: "CHANGES_REQUESTED", stale: false })
+      ])
+    );
+
+    await expect(
+      noStagingService.transitionTask(task.id, "APPROVED", context)
+    ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
+
+    await pool.query("DELETE FROM approvals WHERE task_id = $1", [task.id]);
+    await pool.query("DELETE FROM tasks WHERE project_id = $1", [noStagingProjectId]);
+    await pool.query("DELETE FROM orders WHERE project_id = $1", [noStagingProjectId]);
+    await pool.query("DELETE FROM repositories WHERE project_id = $1", [noStagingProjectId]);
+    await pool.query("DELETE FROM projects WHERE id = $1", [noStagingProjectId]);
+  });
+
+  it("stales approval when its exact staging deployment is deleted", async () => {
+    const order = await service.createOrder({ projectId, objective: "Deployment deletion" });
+    let task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Deletion task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "deployment delete test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING"] as const) {
+      task = await service.transitionTask(task.id, status, context);
+    }
+
+    const deployment = await pool.query<{ id: string }>(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-delete', 'READY',
+                 'https://staging.example.test/delete')
+       RETURNING id`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    task = await service.transitionTask(task.id, "AWAITING_HUMAN", {
+      ...context,
+      evidence: {
+        stagingDeploymentId: deployment.rows[0].id,
+        revision: "rev-delete",
+        url: "https://staging.example.test/delete"
+      }
+    });
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, staging_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-delete', 'cccccccccccccccc',
+                 'https://github.com/novo34/example/pull/8',
+                 'https://staging.example.test/delete',
+                 jsonb_build_object('stagingDeploymentId', $3::text, 'verified', true))`,
+      [task.id, userId, deployment.rows[0].id]
+    );
+
+    await pool.query("DELETE FROM deployments WHERE id = $1", [deployment.rows[0].id]);
+
+    const approval = await pool.query(
+      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-delete'",
+      [task.id]
+    );
+    expect(approval.rows[0].stale).toBe(true);
+  });
+
   it("rejects illegal transitions in both the service and PostgreSQL", async () => {
     const order = await service.createOrder({ projectId, objective: "Reject state jumps" });
     const task = await service.createTask({
