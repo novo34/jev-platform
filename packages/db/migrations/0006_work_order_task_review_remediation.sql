@@ -296,7 +296,7 @@ BEFORE UPDATE OF status ON tasks
 FOR EACH ROW EXECUTE FUNCTION validate_task_status_transition();
 
 CREATE OR REPLACE FUNCTION invalidate_task_approvals_on_staging_change()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $approval$
 DECLARE
   is_staging BOOLEAN;
   is_current BOOLEAN := FALSE;
@@ -360,7 +360,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$approval$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_invalidate_task_approvals_on_staging_change
 AFTER INSERT OR UPDATE OF revision, url, status ON deployments
