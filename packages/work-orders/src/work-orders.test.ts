@@ -1523,6 +1523,17 @@ describe("WorkOrderService", () => {
     }
   });
 
+  it("maps a missing project into the WorkOrderError contract", async () => {
+    await expect(
+      service.createTask({
+        projectId: randomUUID(),
+        orderId: randomUUID(),
+        repositoryId,
+        title: "Missing project task"
+      })
+    ).rejects.toMatchObject({ code: "INVALID_ORDER" });
+  });
+
   it("requires an explicit repository for multi-repository projects", async () => {
     const order = await service.createOrder({ projectId, objective: "Ambiguous repository" });
 
