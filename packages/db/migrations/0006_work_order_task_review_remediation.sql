@@ -294,7 +294,7 @@ BEGIN
 END;
 $approval_actor$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_validate_approval_actor
+CREATE TRIGGER trg_00_validate_approval_actor
 BEFORE INSERT ON approvals
 FOR EACH ROW EXECUTE FUNCTION validate_approval_actor();
 
