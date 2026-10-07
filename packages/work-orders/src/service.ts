@@ -255,7 +255,6 @@ export class WorkOrderService {
         throw new WorkOrderError("ORDER_NOT_FOUND");
       }
       await client.query("COMMIT");
-      return await this.getOrder(orderId);
     } catch (error) {
       await client.query("ROLLBACK");
       if (isConstraintViolation(error)) {
@@ -265,6 +264,8 @@ export class WorkOrderService {
     } finally {
       client.release();
     }
+
+    return this.getOrder(orderId);
   }
 
   async transitionTask(
@@ -284,7 +285,6 @@ export class WorkOrderService {
         throw new WorkOrderError("TASK_NOT_FOUND");
       }
       await client.query("COMMIT");
-      return await this.getTask(taskId);
     } catch (error) {
       await client.query("ROLLBACK");
       if (isConstraintViolation(error)) {
@@ -294,6 +294,8 @@ export class WorkOrderService {
     } finally {
       client.release();
     }
+
+    return this.getTask(taskId);
   }
 
   async getOrder(orderId: string): Promise<WorkOrderRecord> {
