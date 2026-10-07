@@ -96,7 +96,9 @@ BEGIN
     (OLD.status = 'VERIFIED' AND NEW.status IN ('STAGING', 'RUNNING', 'CHANGES_REQUESTED')) OR
     (OLD.status = 'STAGING' AND NEW.status IN ('AWAITING_HUMAN', 'BLOCKED', 'FAILED')) OR
     (OLD.status = 'AWAITING_HUMAN' AND NEW.status IN ('APPROVED', 'CHANGES_REQUESTED', 'REJECTED')) OR
-    (OLD.status = 'APPROVED' AND NEW.status IN ('DONE', 'CHANGES_REQUESTED')) OR
+    -- DONE remains a canonical state but cannot be entered until the Promotion
+    -- engine can prove PROMOTED_TO_MAIN for this exact Task (REQ-TSK-009).
+    (OLD.status = 'APPROVED' AND NEW.status = 'CHANGES_REQUESTED') OR
     (OLD.status = 'CHANGES_REQUESTED' AND NEW.status IN ('READY', 'RUNNING', 'REJECTED')) OR
     (OLD.status = 'BLOCKED' AND NEW.status IN ('READY', 'RUNNING', 'REJECTED')) OR
     (OLD.status = 'FAILED' AND NEW.status IN ('READY', 'RUNNING', 'REJECTED'))
@@ -196,27 +198,59 @@ CREATE TRIGGER trg_record_task_state_history
 AFTER INSERT OR UPDATE OF status ON tasks
 FOR EACH ROW EXECUTE FUNCTION record_task_state_history();
 
--- Backfill records that predate history triggers. Keep existing history intact.
+-- Backfill the missing initial-state row for records that predate 0005.
+-- If transitions already occurred after 0005, use the earliest transition's
+-- from_status; otherwise use the entity's current status.
 INSERT INTO order_state_history (
   order_id, from_status, to_status, actor_type, cause, evidence, created_at
 )
 SELECT
-  o.id, NULL, o.status, 'SYSTEM', 'migration_backfill',
+  o.id,
+  NULL,
+  COALESCE(
+    (
+      SELECT h.from_status
+      FROM order_state_history h
+      WHERE h.order_id = o.id AND h.from_status IS NOT NULL
+      ORDER BY h.created_at, h.id
+      LIMIT 1
+    ),
+    o.status
+  ),
+  'SYSTEM',
+  'migration_backfill',
   jsonb_build_object('migration', '0006_work_order_task_review_remediation.sql'),
   o.created_at
 FROM orders o
 WHERE NOT EXISTS (
-  SELECT 1 FROM order_state_history h WHERE h.order_id = o.id
+  SELECT 1
+  FROM order_state_history h
+  WHERE h.order_id = o.id AND h.from_status IS NULL
 );
 
 INSERT INTO task_state_history (
   task_id, from_status, to_status, actor_type, cause, evidence, created_at
 )
 SELECT
-  t.id, NULL, t.status, 'SYSTEM', 'migration_backfill',
+  t.id,
+  NULL,
+  COALESCE(
+    (
+      SELECT h.from_status
+      FROM task_state_history h
+      WHERE h.task_id = t.id AND h.from_status IS NOT NULL
+      ORDER BY h.created_at, h.id
+      LIMIT 1
+    ),
+    t.status
+  ),
+  'SYSTEM',
+  'migration_backfill',
   jsonb_build_object('migration', '0006_work_order_task_review_remediation.sql'),
   t.created_at
 FROM tasks t
 WHERE NOT EXISTS (
-  SELECT 1 FROM task_state_history h WHERE h.task_id = t.id
+  SELECT 1
+  FROM task_state_history h
+  WHERE h.task_id = t.id AND h.from_status IS NULL
 );
