@@ -237,8 +237,14 @@ ALTER TABLE tasks
   );
 
 CREATE OR REPLACE FUNCTION validate_task_deployment_scope()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
 BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.created_at IS DISTINCT FROM NEW.created_at THEN
+    RAISE EXCEPTION
+      'deployment created_at is immutable'
+      USING ERRCODE = '23514';
+  END IF;
+
   IF NEW.task_id IS NULL THEN
     RETURN NEW;
   END IF;
@@ -263,7 +269,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_validate_task_deployment_scope
-BEFORE INSERT OR UPDATE OF project_id, repository_id, environment_id, task_id
+BEFORE INSERT OR UPDATE OF project_id, repository_id, environment_id, task_id, created_at
 ON deployments
 FOR EACH ROW EXECUTE FUNCTION validate_task_deployment_scope();
 
@@ -474,11 +480,40 @@ BEGIN
 
   IF TG_OP = 'INSERT' THEN
     IF new_is_staging AND NEW.task_id IS NOT NULL THEN
-      UPDATE approvals a
-      SET stale = TRUE
-      WHERE a.task_id = NEW.task_id
-        AND a.stale = FALSE
-        AND a.evidence->>'stagingDeploymentId' IS DISTINCT FROM NEW.id::text;
+      SELECT EXISTS (
+        SELECT 1
+        FROM deployments d
+        JOIN environments e ON e.id = d.environment_id
+        WHERE d.id = NEW.id
+          AND d.task_id = NEW.task_id
+          AND d.project_id = NEW.project_id
+          AND d.repository_id = NEW.repository_id
+          AND e.project_id = NEW.project_id
+          AND e.repository_id = NEW.repository_id
+          AND e.kind = 'staging'
+          AND d.id = (
+            SELECT d2.id
+            FROM deployments d2
+            JOIN environments e2 ON e2.id = d2.environment_id
+            WHERE d2.task_id = NEW.task_id
+              AND d2.project_id = NEW.project_id
+              AND d2.repository_id = NEW.repository_id
+              AND e2.project_id = NEW.project_id
+              AND e2.repository_id = NEW.repository_id
+              AND e2.kind = 'staging'
+            ORDER BY d2.created_at DESC, d2.id DESC
+            LIMIT 1
+          )
+      )
+      INTO new_is_current;
+
+      IF new_is_current THEN
+        UPDATE approvals a
+        SET stale = TRUE
+        WHERE a.task_id = NEW.task_id
+          AND a.stale = FALSE
+          AND a.evidence->>'stagingDeploymentId' IS DISTINCT FROM NEW.id::text;
+      END IF;
     END IF;
 
     RETURN NEW;
