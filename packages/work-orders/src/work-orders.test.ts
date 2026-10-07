@@ -565,16 +565,88 @@ describe("WorkOrderService", () => {
                  '{"verified":true}'::jsonb)`,
       [task.id, userId]
     );
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'CHANGES_REQUESTED', 'rev-rework', 'abcdef0123456790',
+                 'https://github.com/novo34/example/pull/4',
+                 '{"reason":"review changes"}'::jsonb)`,
+      [task.id, userId]
+    );
 
     task = await noStagingService.transitionTask(task.id, "CHANGES_REQUESTED", context);
     expect(task.status).toBe("CHANGES_REQUESTED");
 
-    const approval = await pool.query(
-      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-old'",
+    const approvals = await pool.query(
+      "SELECT revision, stale FROM approvals WHERE task_id = $1 ORDER BY created_at, id",
       [task.id]
     );
-    expect(approval.rows[0].stale).toBe(true);
+    expect(approvals.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ revision: "rev-old", stale: true }),
+        expect.objectContaining({ revision: "rev-rework", stale: true })
+      ])
+    );
 
+  });
+
+  it("requires persisted matching decisions for negative human-review outcomes", async () => {
+    const noStagingProjectId = randomUUID();
+    const noStagingRepositoryId = randomUUID();
+
+    await pool.query(
+      "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Negative Decision Project')",
+      [noStagingProjectId, organizationId]
+    );
+    await pool.query(
+      `INSERT INTO repositories (
+         id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+       ) VALUES ($1, $2, 'novo34/negative-decision', 'backend', TRUE, 'main', 'staging')`,
+      [noStagingRepositoryId, noStagingProjectId]
+    );
+
+    const noStagingService = new WorkOrderService(pool);
+    const order = await noStagingService.createOrder({
+      projectId: noStagingProjectId,
+      objective: "Negative decision gate"
+    });
+    let task = await noStagingService.createTask({
+      projectId: noStagingProjectId,
+      orderId: order.id,
+      repositoryId: noStagingRepositoryId,
+      title: "Negative decision task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "negative decision test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING", "AWAITING_HUMAN"] as const) {
+      task = await noStagingService.transitionTask(task.id, status, context);
+    }
+
+    await expect(
+      noStagingService.transitionTask(task.id, "CHANGES_REQUESTED", context)
+    ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
+
+    await expect(
+      noStagingService.transitionTask(task.id, "REJECTED", context)
+    ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'REJECTED', 'rev-rejected', '9999999999999999',
+                 'https://github.com/novo34/example/pull/negative',
+                 '{"reason":"not accepted"}'::jsonb)`,
+      [task.id, userId]
+    );
+
+    task = await noStagingService.transitionTask(task.id, "REJECTED", context);
+    expect(task.status).toBe("REJECTED");
   });
 
   it("does not stale the current approval when an older deployment is edited", async () => {
