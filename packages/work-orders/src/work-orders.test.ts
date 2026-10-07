@@ -49,6 +49,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await pool.query(
+    "DELETE FROM approvals WHERE task_id IN (SELECT id FROM tasks WHERE project_id IN ($1, $2))",
+    [projectId, foreignProjectId]
+  );
   await pool.query("DELETE FROM tasks WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
   await pool.query("DELETE FROM requirements WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
   await pool.query("DELETE FROM orders WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
