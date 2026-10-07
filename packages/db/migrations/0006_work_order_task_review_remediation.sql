@@ -34,6 +34,7 @@ ALTER TABLE task_state_history
 -- Temporarily remove the legacy PLT-008 guard so existing rows can be
 -- canonicalized without being rejected by the old state machine.
 DROP TRIGGER trg_validate_task_status_transition ON tasks;
+DROP TRIGGER trg_record_task_state_history ON tasks;
 ALTER TABLE tasks DROP CONSTRAINT tasks_status_check;
 
 -- Canonicalize legacy PLT-008 task states without manufacturing DONE.
@@ -189,7 +190,11 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_record_task_state_history
+AFTER INSERT OR UPDATE OF status ON tasks
+FOR EACH ROW EXECUTE FUNCTION record_task_state_history();
 
 -- Backfill records that predate history triggers. Keep existing history intact.
 INSERT INTO order_state_history (
