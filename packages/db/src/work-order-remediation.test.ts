@@ -129,6 +129,73 @@ describe("PLT-008 remediation migration", () => {
       await pool.end();
     }
   });
+  it("backfills legacy repositoryless environments when the project has one repository", async () => {
+    const pool = createDatabasePool();
+    const client = await pool.connect();
+    const schema = `plt008_env_${randomUUID().replaceAll("-", "")}`;
+
+    try {
+      await client.query(`CREATE SCHEMA "${schema}"`);
+      await client.query(`SET search_path TO "${schema}", public`);
+
+      for (const file of [
+        "0001_canonical_persistence.sql",
+        "0002_auth_rbac.sql",
+        "0003_queue_worker.sql",
+        "0004_project_registry.sql"
+      ]) {
+        await client.query(await migration(file));
+      }
+
+      const organizationId = randomUUID();
+      const projectId = randomUUID();
+      const repositoryId = randomUUID();
+      const environmentId = randomUUID();
+
+      await client.query(
+        "INSERT INTO organizations (id, name) VALUES ($1, 'Legacy Environment Org')",
+        [organizationId]
+      );
+      await client.query(
+        "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Legacy Environment Project')",
+        [projectId, organizationId]
+      );
+      await client.query(
+        `INSERT INTO repositories (
+           id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+         ) VALUES ($1, $2, 'novo34/legacy-environment', 'backend', TRUE, 'main', 'staging')`,
+        [repositoryId, projectId]
+      );
+      await client.query(
+        `INSERT INTO environments (
+           id, project_id, repository_id, kind, name, url
+         ) VALUES ($1, $2, NULL, 'staging', 'Legacy Staging', 'https://legacy.example.test')`,
+        [environmentId, projectId]
+      );
+
+      await client.query(await migration("0005_work_order_task_lifecycle.sql"));
+      await client.query(await migration("0006_work_order_task_review_remediation.sql"));
+
+      const environment = await client.query(
+        "SELECT repository_id FROM environments WHERE id = $1",
+        [environmentId]
+      );
+      expect(environment.rows[0].repository_id).toBe(repositoryId);
+
+      await expect(
+        client.query(
+          "UPDATE environments SET repository_id = NULL WHERE id = $1",
+          [environmentId]
+        )
+      ).rejects.toMatchObject({ code: "23502" });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      client.release();
+      await pool.end();
+    }
+  });
+
   it("repairs legacy cross-project repository IDs and enforces project-scoped repository ownership", async () => {
     const pool = createDatabasePool();
     const client = await pool.connect();
