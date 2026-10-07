@@ -190,7 +190,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_record_task_state_history
 AFTER INSERT OR UPDATE OF status ON tasks
