@@ -139,6 +139,13 @@ describe("WorkOrderService", () => {
       cause: "operator advancement",
       evidence: { source: "test" }
     });
+
+    await expect(
+      service.transitionTask(task.id, "DONE", {
+        actorType: "SYSTEM",
+        cause: "promotion not implemented"
+      })
+    ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
   });
 
   it("rejects illegal transitions in both the service and PostgreSQL", async () => {
