@@ -726,6 +726,137 @@ describe("WorkOrderService", () => {
     expect(task.status).toBe("CHANGES_REQUESTED");
   });
 
+  it("stales non-staging approval when a staging environment is later added", async () => {
+    const dynamicProjectId = randomUUID();
+    const dynamicRepositoryId = randomUUID();
+
+    await pool.query(
+      "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Late Staging Project')",
+      [dynamicProjectId, organizationId]
+    );
+    await pool.query(
+      `INSERT INTO repositories (
+         id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+       ) VALUES ($1, $2, 'novo34/late-staging', 'backend', TRUE, 'main', 'staging')`,
+      [dynamicRepositoryId, dynamicProjectId]
+    );
+
+    const dynamicService = new WorkOrderService(pool);
+    const order = await dynamicService.createOrder({
+      projectId: dynamicProjectId,
+      objective: "Late staging requirement"
+    });
+    let task = await dynamicService.createTask({
+      projectId: dynamicProjectId,
+      orderId: order.id,
+      repositoryId: dynamicRepositoryId,
+      title: "Late staging task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "late staging test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING", "AWAITING_HUMAN"] as const) {
+      task = await dynamicService.transitionTask(task.id, status, context);
+    }
+
+    const approval = await pool.query<{ id: string }>(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-before-staging', '1010101010101010',
+                 'https://github.com/novo34/example/pull/late-staging',
+                 '{"verified":true}'::jsonb)
+       RETURNING id`,
+      [task.id, userId]
+    );
+    task = await dynamicService.transitionTask(task.id, "APPROVED", context);
+    expect(task.status).toBe("APPROVED");
+
+    await pool.query(
+      `INSERT INTO environments (
+         project_id, repository_id, kind, name, url
+       ) VALUES ($1, $2, 'staging', 'Late Staging', 'https://late-staging.example.test')`,
+      [dynamicProjectId, dynamicRepositoryId]
+    );
+
+    const persisted = await pool.query(
+      "SELECT stale FROM approvals WHERE id = $1",
+      [approval.rows[0].id]
+    );
+    expect(persisted.rows[0].stale).toBe(true);
+  });
+
+  it("stales non-staging approval when an existing environment becomes staging", async () => {
+    const dynamicProjectId = randomUUID();
+    const dynamicRepositoryId = randomUUID();
+    const dynamicEnvironmentId = randomUUID();
+
+    await pool.query(
+      "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Converted Staging Project')",
+      [dynamicProjectId, organizationId]
+    );
+    await pool.query(
+      `INSERT INTO repositories (
+         id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+       ) VALUES ($1, $2, 'novo34/converted-staging', 'backend', TRUE, 'main', 'staging')`,
+      [dynamicRepositoryId, dynamicProjectId]
+    );
+    await pool.query(
+      `INSERT INTO environments (
+         id, project_id, repository_id, kind, name, url
+       ) VALUES ($1, $2, $3, 'production', 'Production-like', 'https://converted.example.test')`,
+      [dynamicEnvironmentId, dynamicProjectId, dynamicRepositoryId]
+    );
+
+    const dynamicService = new WorkOrderService(pool);
+    const order = await dynamicService.createOrder({
+      projectId: dynamicProjectId,
+      objective: "Converted staging requirement"
+    });
+    let task = await dynamicService.createTask({
+      projectId: dynamicProjectId,
+      orderId: order.id,
+      repositoryId: dynamicRepositoryId,
+      title: "Converted staging task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "converted staging test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING", "AWAITING_HUMAN"] as const) {
+      task = await dynamicService.transitionTask(task.id, status, context);
+    }
+
+    const approval = await pool.query<{ id: string }>(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-before-conversion', '2020202020202020',
+                 'https://github.com/novo34/example/pull/converted-staging',
+                 '{"verified":true}'::jsonb)
+       RETURNING id`,
+      [task.id, userId]
+    );
+    task = await dynamicService.transitionTask(task.id, "APPROVED", context);
+    expect(task.status).toBe("APPROVED");
+
+    await pool.query(
+      "UPDATE environments SET kind = 'staging' WHERE id = $1",
+      [dynamicEnvironmentId]
+    );
+
+    const persisted = await pool.query(
+      "SELECT stale FROM approvals WHERE id = $1",
+      [approval.rows[0].id]
+    );
+    expect(persisted.rows[0].stale).toBe(true);
+  });
+
   it("does not stale the current approval when an older deployment is edited", async () => {
     const order = await service.createOrder({ projectId, objective: "Historical deployment edit" });
     let task = await service.createTask({
