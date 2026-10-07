@@ -98,6 +98,24 @@ ALTER TABLE tasks
 CREATE UNIQUE INDEX idx_repositories_project_id_id
   ON repositories(project_id, id);
 
+CREATE OR REPLACE FUNCTION protect_task_scope()
+RETURNS TRIGGER AS $taskscope$
+BEGIN
+  IF OLD.project_id IS DISTINCT FROM NEW.project_id
+     OR OLD.repository_id IS DISTINCT FROM NEW.repository_id THEN
+    RAISE EXCEPTION
+      'task project/repository scope is immutable; create a new task for a new target'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$taskscope$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_protect_task_scope
+BEFORE UPDATE OF project_id, repository_id ON tasks
+FOR EACH ROW EXECUTE FUNCTION protect_task_scope();
+
 ALTER TABLE tasks
   ADD CONSTRAINT tasks_project_repository_fk
   FOREIGN KEY (project_id, repository_id)
