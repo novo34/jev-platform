@@ -342,15 +342,6 @@ El gateway deberá soportar fallback permitido.
 Cada adapter deberá soportar timeout.
 
 ### REQ-MDL-010
-Un usuario ADMIN autorizado deberá poder configurar, rotar, eliminar y probar credenciales de provider mediante una API backend consumible por la UI.
-
-### REQ-MDL-011
-Las credenciales de provider no deberán almacenarse en el repositorio ni devolverse al cliente después de su envío; el material secreto deberá permanecer cifrado del lado servidor.
-
-### REQ-MDL-012
-La metadata visible de una credencial podrá incluir provider, estado configurado, fecha de actualización y últimos cuatro caracteres, pero nunca el secreto completo.
-
-### REQ-MDL-010
 Cada adapter deberá soportar retry policy.
 
 ### REQ-MDL-011
@@ -361,6 +352,15 @@ El gateway deberá implementar circuit breaker/health behavior.
 
 ### REQ-MDL-013
 DeepSeek/OpenAI/Qwen/GLM no deberán marcarse implementados hasta funcionar contra sus APIs reales.
+
+### REQ-MDL-014
+Un usuario ADMIN autorizado deberá poder configurar, rotar, eliminar y probar credenciales de provider mediante una API backend consumible por la UI.
+
+### REQ-MDL-015
+Las credenciales de provider no deberán almacenarse en el repositorio ni devolverse al cliente después de su envío; el material secreto deberá permanecer cifrado del lado servidor.
+
+### REQ-MDL-016
+La metadata visible de una credencial podrá incluir provider, estado configurado, fecha de actualización y últimos cuatro caracteres, pero nunca el secreto completo.
 
 ---
 
