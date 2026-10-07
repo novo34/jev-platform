@@ -55,6 +55,43 @@ beforeAll(async () => {
   );
 });
 
+async function advanceToHumanReview(taskId: string): Promise<void> {
+  const context = {
+    actorType: "USER" as const,
+    actorId: userId,
+    cause: "prepare approval test"
+  };
+
+  for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING"] as const) {
+    await service.transitionTask(taskId, status, context);
+  }
+
+  const deployment = await pool.query<{ id: string }>(
+    `INSERT INTO deployments (
+       project_id, repository_id, environment_id, task_id,
+       provider, revision, status, url
+     ) VALUES ($1, $2, $3, $4, 'test', $5, 'READY', $6)
+     RETURNING id`,
+    [
+      projectId,
+      repositoryId,
+      environmentId,
+      taskId,
+      `rev-approval-${taskId}`,
+      `https://staging.example.test/approval-${taskId}`
+    ]
+  );
+
+  await service.transitionTask(taskId, "AWAITING_HUMAN", {
+    ...context,
+    evidence: {
+      stagingDeploymentId: deployment.rows[0].id,
+      revision: `rev-approval-${taskId}`,
+      url: `https://staging.example.test/approval-${taskId}`
+    }
+  });
+}
+
 afterAll(async () => {
   // Test-only cleanup: production approval rows are append-only and reject DELETE.
   // TRUNCATE does not weaken the row-level contract installed by the migration.
@@ -1009,6 +1046,8 @@ describe("WorkOrderService", () => {
       title: "Immutable approval task"
     });
 
+    await advanceToHumanReview(task.id);
+
     const approval = await pool.query<{ id: string }>(
       `INSERT INTO approvals (
          task_id, actor_user_id, decision, revision, commit_sha,
@@ -1058,6 +1097,8 @@ describe("WorkOrderService", () => {
       title: "Append-only approval delete task"
     });
 
+    await advanceToHumanReview(task.id);
+
     const approval = await pool.query<{ id: string }>(
       `INSERT INTO approvals (
          task_id, actor_user_id, decision, revision, commit_sha,
@@ -1084,6 +1125,8 @@ describe("WorkOrderService", () => {
       repositoryId,
       title: "Approval actor task"
     });
+
+    await advanceToHumanReview(task.id);
 
     await pool.query(
       "INSERT INTO organizations (id, name) VALUES ($1, 'Unauthorized Approval Org')",
