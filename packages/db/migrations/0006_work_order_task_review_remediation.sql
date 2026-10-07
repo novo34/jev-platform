@@ -237,7 +237,7 @@ ALTER TABLE tasks
   );
 
 CREATE OR REPLACE FUNCTION validate_task_deployment_scope()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $deploy$
 BEGIN
   IF TG_OP = 'UPDATE' AND OLD.created_at IS DISTINCT FROM NEW.created_at THEN
     RAISE EXCEPTION
@@ -266,8 +266,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
-
+$deploy$deploy$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_validate_task_deployment_scope
 BEFORE INSERT OR UPDATE OF project_id, repository_id, environment_id, task_id, created_at
 ON deployments
