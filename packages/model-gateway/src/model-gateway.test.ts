@@ -241,6 +241,67 @@ describe("ModelGateway", () => {
     });
   });
 
+  it("rejects cross-tenant entity ownership before contacting a provider", async () => {
+    const otherOrganizationId = randomUUID();
+    const otherProjectId = randomUUID();
+    const otherTaskId = randomUUID();
+    let calls = 0;
+
+    await pool.query(
+      "INSERT INTO organizations (id, name) VALUES ($1, 'Other Org')",
+      [otherOrganizationId]
+    );
+    await pool.query(
+      "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Other Project')",
+      [otherProjectId, otherOrganizationId]
+    );
+    await pool.query(
+      "INSERT INTO tasks (id, project_id, title) VALUES ($1, $2, 'Other Task')",
+      [otherTaskId, otherProjectId]
+    );
+
+    const registry = new ProviderRegistry().register({
+      provider: "openai",
+      async execute() {
+        calls += 1;
+        return {
+          content: "must-not-run",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+        };
+      },
+      async health() {
+        return { ok: true };
+      }
+    });
+
+    const gateway = new ModelGateway(
+      pool,
+      credentials,
+      registry,
+      new PricingCatalog({
+        "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 }
+      })
+    );
+
+    await expect(
+      gateway.execute({
+        requestId: randomUUID(),
+        organizationId,
+        projectId: otherProjectId,
+        taskId: otherTaskId,
+        agentRole: "DEVELOPER",
+        prompt: "Must be blocked before paid call",
+        targets: [{ provider: "openai", model: "openai-test" }]
+      })
+    ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+
+    expect(calls).toBe(0);
+
+    await pool.query("DELETE FROM tasks WHERE id = $1", [otherTaskId]);
+    await pool.query("DELETE FROM projects WHERE id = $1", [otherProjectId]);
+    await pool.query("DELETE FROM organizations WHERE id = $1", [otherOrganizationId]);
+  });
+
   it("blocks a paid call when pricing is not configured", async () => {
     const registry = new ProviderRegistry().register({
       provider: "openai",
