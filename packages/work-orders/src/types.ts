@@ -21,14 +21,21 @@ export type TaskStatus =
   | "CHANGES_REQUESTED"
   | "REJECTED";
 
-export type TransitionActorType = "USER" | "AGENT" | "SYSTEM";
+export type TransitionContext =
+  | {
+      actorType: "SYSTEM";
+      actorId?: never;
+      cause: string;
+      evidence?: Record<string, unknown>;
+    }
+  | {
+      actorType: "USER" | "AGENT";
+      actorId: string;
+      cause: string;
+      evidence?: Record<string, unknown>;
+    };
 
-export interface TransitionContext {
-  actorType: TransitionActorType;
-  actorId?: string;
-  cause: string;
-  evidence?: Record<string, unknown>;
-}
+export type TransitionActorType = TransitionContext["actorType"];
 
 export interface RequirementInput {
   key: string;
