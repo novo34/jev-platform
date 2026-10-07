@@ -196,7 +196,7 @@ describe("PLT-008 remediation migration", () => {
           "UPDATE tasks SET repository_id = $2 WHERE id = $1",
           [taskA, repoB]
         )
-      ).rejects.toMatchObject({ code: "23503" });
+      ).rejects.toMatchObject({ code: "23514" });
     } finally {
       await client.query("SET search_path TO public");
       await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
