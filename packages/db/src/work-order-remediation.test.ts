@@ -41,6 +41,12 @@ describe("PLT-008 remediation migration", () => {
         [projectId, organizationId]
       );
       await client.query(
+        `INSERT INTO repositories (
+           project_id, full_name, role, primary_repository, default_branch, staging_branch
+         ) VALUES ($1, 'novo34/upgrade-project', 'backend', TRUE, 'main', 'staging')`,
+        [projectId]
+      );
+      await client.query(
         "INSERT INTO orders (id, project_id, objective) VALUES ($1, $2, 'Legacy order')",
         [orderId, projectId]
       );
