@@ -272,6 +272,74 @@ describe("PLT-008 remediation migration", () => {
     }
   });
 
+  it("rejects legacy deployments with mismatched environment scope", async () => {
+    const pool = createDatabasePool();
+    const client = await pool.connect();
+    const schema = `plt008_deploy_scope_${randomUUID().replaceAll("-", "")}`;
+
+    try {
+      await client.query(`CREATE SCHEMA "${schema}"`);
+      await client.query(`SET search_path TO "${schema}", public`);
+
+      for (const file of [
+        "0001_canonical_persistence.sql",
+        "0002_auth_rbac.sql",
+        "0003_queue_worker.sql",
+        "0004_project_registry.sql",
+        "0005_work_order_task_lifecycle.sql"
+      ]) {
+        await client.query(await migration(file));
+      }
+
+      const organizationId = randomUUID();
+      const projectA = randomUUID();
+      const projectB = randomUUID();
+      const repoA = randomUUID();
+      const repoB = randomUUID();
+      const environmentB = randomUUID();
+
+      await client.query(
+        "INSERT INTO organizations (id, name) VALUES ($1, 'Legacy Deployment Scope Org')",
+        [organizationId]
+      );
+      await client.query(
+        `INSERT INTO projects (id, organization_id, name)
+         VALUES ($1, $3, 'Deploy A'), ($2, $3, 'Deploy B')`,
+        [projectA, projectB, organizationId]
+      );
+      await client.query(
+        `INSERT INTO repositories (
+           id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+         ) VALUES
+           ($1, $3, 'novo34/deploy-a', 'backend', TRUE, 'main', 'staging'),
+           ($2, $4, 'novo34/deploy-b', 'backend', TRUE, 'main', 'staging')`,
+        [repoA, repoB, projectA, projectB]
+      );
+      await client.query(
+        `INSERT INTO environments (
+           id, project_id, repository_id, kind, name
+         ) VALUES ($1, $2, $3, 'staging', 'Legacy B')`,
+        [environmentB, projectB, repoB]
+      );
+      await client.query(
+        `INSERT INTO deployments (
+           project_id, repository_id, environment_id,
+           provider, revision, status
+         ) VALUES ($1, $2, $3, 'test', 'legacy-mismatch', 'READY')`,
+        [projectA, repoA, environmentB]
+      );
+
+      await expect(
+        client.query(await migration("0006_work_order_task_review_remediation.sql"))
+      ).rejects.toMatchObject({ code: "23514" });
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      client.release();
+      await pool.end();
+    }
+  });
+
   it("marks every pre-remediation approval stale before enabling the new gate", async () => {
     const pool = createDatabasePool();
     const client = await pool.connect();
