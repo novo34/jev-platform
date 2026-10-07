@@ -80,6 +80,19 @@ async function tokenFor(email: string): Promise<string> {
 }
 
 describe("provider credential API", () => {
+  it("returns 401 when provider metadata is requested without authentication", async () => {
+    const app = buildApi({
+      pool,
+      providerEncryptionKey: encryptionKey,
+      providerRegistry: registry
+    });
+
+    const response = await app.inject({ method: "GET", url: "/providers" });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: "UNAUTHENTICATED" });
+    await app.close();
+  });
+
   it("allows ADMIN lifecycle operations without exposing the secret", async () => {
     const token = await tokenFor("provider-admin@test.local");
     const app = buildApi({
