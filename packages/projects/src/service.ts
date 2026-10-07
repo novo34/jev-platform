@@ -283,6 +283,13 @@ export class ProjectRegistryService {
       return repository;
     }
 
+    if (project.repositories.length === 0) {
+      throw new ProjectRegistryError(
+        "REPOSITORY_NOT_FOUND",
+        "project has no registered repository"
+      );
+    }
+
     if (project.repositories.length > 1) {
       throw new ProjectRegistryError(
         "AMBIGUOUS_REPOSITORY_TARGET",
