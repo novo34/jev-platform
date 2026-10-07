@@ -454,6 +454,17 @@ describe("WorkOrderService", () => {
         [projectId, secondRepositoryId, environmentId, task.id]
       )
     ).rejects.toMatchObject({ code: "23514" });
+
+    await expect(
+      pool.query(
+        `INSERT INTO deployments (
+           project_id, repository_id, environment_id, task_id,
+           provider, revision, status, url
+         ) VALUES ($1, $2, $3, NULL, 'test', 'wrong-env-taskless', 'READY',
+                   'https://staging.example.test/taskless')`,
+        [projectId, secondRepositoryId, environmentId]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
   });
 
   it("invalidates approval when an identical revision/url is redeployed under a new deployment id", async () => {
@@ -647,6 +658,72 @@ describe("WorkOrderService", () => {
 
     task = await noStagingService.transitionTask(task.id, "REJECTED", context);
     expect(task.status).toBe("REJECTED");
+  });
+
+  it("requires a persisted CHANGES_REQUESTED decision when reopening APPROVED work", async () => {
+    const noStagingProjectId = randomUUID();
+    const noStagingRepositoryId = randomUUID();
+
+    await pool.query(
+      "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Approved Rework Project')",
+      [noStagingProjectId, organizationId]
+    );
+    await pool.query(
+      `INSERT INTO repositories (
+         id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+       ) VALUES ($1, $2, 'novo34/approved-rework', 'backend', TRUE, 'main', 'staging')`,
+      [noStagingRepositoryId, noStagingProjectId]
+    );
+
+    const noStagingService = new WorkOrderService(pool);
+    const order = await noStagingService.createOrder({
+      projectId: noStagingProjectId,
+      objective: "Approved work rework gate"
+    });
+    let task = await noStagingService.createTask({
+      projectId: noStagingProjectId,
+      orderId: order.id,
+      repositoryId: noStagingRepositoryId,
+      title: "Approved rework task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "approved rework test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING", "AWAITING_HUMAN"] as const) {
+      task = await noStagingService.transitionTask(task.id, status, context);
+    }
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-approved-rework', 'abababababababab',
+                 'https://github.com/novo34/example/pull/approved-rework',
+                 '{"verified":true}'::jsonb)`,
+      [task.id, userId]
+    );
+    task = await noStagingService.transitionTask(task.id, "APPROVED", context);
+    expect(task.status).toBe("APPROVED");
+
+    await expect(
+      noStagingService.transitionTask(task.id, "CHANGES_REQUESTED", context)
+    ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'CHANGES_REQUESTED', 'rev-approved-rework-2', 'cdcdcdcdcdcdcdcd',
+                 'https://github.com/novo34/example/pull/approved-rework',
+                 '{"reason":"reopen"}'::jsonb)`,
+      [task.id, userId]
+    );
+
+    task = await noStagingService.transitionTask(task.id, "CHANGES_REQUESTED", context);
+    expect(task.status).toBe("CHANGES_REQUESTED");
   });
 
   it("does not stale the current approval when an older deployment is edited", async () => {
