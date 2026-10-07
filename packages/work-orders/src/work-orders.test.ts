@@ -775,6 +775,109 @@ describe("WorkOrderService", () => {
     expect(approval.rows[0].stale).toBe(true);
   });
 
+  it("stales the destination approval when a newer staging deployment is reassigned to that task", async () => {
+    const order = await service.createOrder({ projectId, objective: "Destination approval invalidation" });
+    let destination = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Destination task"
+    });
+    const source = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Source task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "destination invalidation test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING"] as const) {
+      destination = await service.transitionTask(destination.id, status, context);
+    }
+
+    const destinationDeployment = await pool.query<{ id: string }>(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url, created_at
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-destination', 'READY',
+                 'https://staging.example.test/destination',
+                 NOW() - INTERVAL '1 minute')
+       RETURNING id`,
+      [projectId, repositoryId, environmentId, destination.id]
+    );
+
+    destination = await service.transitionTask(destination.id, "AWAITING_HUMAN", {
+      ...context,
+      evidence: {
+        stagingDeploymentId: destinationDeployment.rows[0].id,
+        revision: "rev-destination",
+        url: "https://staging.example.test/destination"
+      }
+    });
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, staging_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-destination', 'dddddddddddddddd',
+                 'https://github.com/novo34/example/pull/9',
+                 'https://staging.example.test/destination',
+                 jsonb_build_object('stagingDeploymentId', $3::text, 'verified', true))`,
+      [destination.id, userId, destinationDeployment.rows[0].id]
+    );
+
+    const moved = await pool.query<{ id: string }>(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-moved', 'READY',
+                 'https://staging.example.test/moved')
+       RETURNING id`,
+      [projectId, repositoryId, environmentId, source.id]
+    );
+
+    await pool.query(
+      "UPDATE deployments SET task_id = $2 WHERE id = $1",
+      [moved.rows[0].id, destination.id]
+    );
+
+    const approval = await pool.query(
+      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-destination'",
+      [destination.id]
+    );
+    expect(approval.rows[0].stale).toBe(true);
+  });
+
+  it("prevents changing the scope of an environment referenced by deployments", async () => {
+    const order = await service.createOrder({ projectId, objective: "Environment scope immutability" });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Environment scope task"
+    });
+
+    await pool.query(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-env-scope', 'READY',
+                 'https://staging.example.test/env-scope')`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    await expect(
+      pool.query(
+        "UPDATE environments SET kind = 'production' WHERE id = $1",
+        [environmentId]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
   it("rejects illegal transitions in both the service and PostgreSQL", async () => {
     const order = await service.createOrder({ projectId, objective: "Reject state jumps" });
     const task = await service.createTask({
