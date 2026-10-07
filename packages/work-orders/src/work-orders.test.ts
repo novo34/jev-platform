@@ -165,8 +165,11 @@ describe("WorkOrderService", () => {
        ) VALUES ($1, $2, 'APPROVED', 'rev-plt008', '0123456789abcdef',
                  'https://github.com/novo34/example/pull/1',
                  'https://staging.example.test',
-                 '{"verified":true}'::jsonb)`,
-      [task.id, userId]
+                 jsonb_build_object(
+                   'verified', true,
+                   'stagingDeploymentId', $3::text
+                 ))`,
+      [task.id, userId, deployment.rows[0].id]
     );
 
     task = await service.transitionTask(task.id, "APPROVED", reviewContext);
@@ -296,6 +299,148 @@ describe("WorkOrderService", () => {
     await expect(
       service.transitionTask(task.id, "AWAITING_HUMAN", context)
     ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
+  });
+
+  it("allows human review without staging when the task repository has no staging environment", async () => {
+    const noStagingProjectId = randomUUID();
+    const noStagingRepositoryId = randomUUID();
+
+    await pool.query(
+      "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'No Staging Project')",
+      [noStagingProjectId, organizationId]
+    );
+    await pool.query(
+      `INSERT INTO repositories (
+         id, project_id, full_name, role, primary_repository, default_branch, staging_branch
+       ) VALUES ($1, $2, 'novo34/no-staging', 'backend', TRUE, 'main', 'staging')`,
+      [noStagingRepositoryId, noStagingProjectId]
+    );
+
+    const noStagingService = new WorkOrderService(pool);
+    const order = await noStagingService.createOrder({
+      projectId: noStagingProjectId,
+      objective: "No staging workflow"
+    });
+    let task = await noStagingService.createTask({
+      projectId: noStagingProjectId,
+      orderId: order.id,
+      repositoryId: noStagingRepositoryId,
+      title: "No staging task"
+    });
+
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "no staging review"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING", "AWAITING_HUMAN"] as const) {
+      task = await noStagingService.transitionTask(task.id, status, context);
+    }
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-no-staging', 'abcdef0123456789',
+                 'https://github.com/novo34/example/pull/2',
+                 '{"verified":true}'::jsonb)`,
+      [task.id, userId]
+    );
+
+    task = await noStagingService.transitionTask(task.id, "APPROVED", context);
+    expect(task.status).toBe("APPROVED");
+
+    await pool.query("DELETE FROM approvals WHERE task_id = $1", [task.id]);
+    await pool.query("DELETE FROM tasks WHERE project_id = $1", [noStagingProjectId]);
+    await pool.query("DELETE FROM orders WHERE project_id = $1", [noStagingProjectId]);
+    await pool.query("DELETE FROM repositories WHERE project_id = $1", [noStagingProjectId]);
+    await pool.query("DELETE FROM projects WHERE id = $1", [noStagingProjectId]);
+  });
+
+  it("rejects deployments whose project or repository does not match the task", async () => {
+    const order = await service.createOrder({ projectId, objective: "Deployment scope" });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Scoped deployment task"
+    });
+
+    await expect(
+      pool.query(
+        `INSERT INTO deployments (
+           project_id, repository_id, environment_id, task_id,
+           provider, revision, status, url
+         ) VALUES ($1, $2, $3, $4, 'test', 'wrong-repo', 'READY',
+                   'https://staging.example.test')`,
+        [projectId, secondRepositoryId, environmentId, task.id]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("invalidates approval when an identical revision/url is redeployed under a new deployment id", async () => {
+    const order = await service.createOrder({ projectId, objective: "Redeploy invalidation" });
+    let task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Redeploy task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "redeploy test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING"] as const) {
+      task = await service.transitionTask(task.id, status, context);
+    }
+
+    const firstDeployment = await pool.query<{ id: string }>(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-same', 'READY',
+                 'https://staging.example.test/same')
+       RETURNING id`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    task = await service.transitionTask(task.id, "AWAITING_HUMAN", {
+      ...context,
+      evidence: {
+        stagingDeploymentId: firstDeployment.rows[0].id,
+        revision: "rev-same",
+        url: "https://staging.example.test/same"
+      }
+    });
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, staging_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-same', 'abcdef0123456789',
+                 'https://github.com/novo34/example/pull/3',
+                 'https://staging.example.test/same',
+                 jsonb_build_object('stagingDeploymentId', $3::text, 'verified', true))`,
+      [task.id, userId, firstDeployment.rows[0].id]
+    );
+
+    await pool.query(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-same', 'READY',
+                 'https://staging.example.test/same')`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    const approval = await pool.query(
+      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-same'",
+      [task.id]
+    );
+    expect(approval.rows[0].stale).toBe(true);
   });
 
   it("rejects illegal transitions in both the service and PostgreSQL", async () => {
