@@ -57,7 +57,15 @@ SET repository_id = (
   ORDER BY r.id
   LIMIT 1
 )
-WHERE t.repository_id IS NULL
+WHERE (
+    t.repository_id IS NULL OR
+    NOT EXISTS (
+      SELECT 1
+      FROM repositories existing_repo
+      WHERE existing_repo.id = t.repository_id
+        AND existing_repo.project_id = t.project_id
+    )
+  )
   AND (
     SELECT COUNT(*)
     FROM repositories r2
@@ -66,9 +74,19 @@ WHERE t.repository_id IS NULL
 
 DO $jev$
 BEGIN
-  IF EXISTS (SELECT 1 FROM tasks WHERE repository_id IS NULL) THEN
+  IF EXISTS (
+    SELECT 1
+    FROM tasks t
+    WHERE t.repository_id IS NULL
+       OR NOT EXISTS (
+         SELECT 1
+         FROM repositories r
+         WHERE r.id = t.repository_id
+           AND r.project_id = t.project_id
+       )
+  ) THEN
     RAISE EXCEPTION
-      'legacy repositoryless tasks require explicit repository remediation'
+      'legacy tasks require explicit project-scoped repository remediation'
       USING ERRCODE = '23514';
   END IF;
 END;
@@ -76,6 +94,14 @@ $jev$;
 
 ALTER TABLE tasks
   ALTER COLUMN repository_id SET NOT NULL;
+
+CREATE UNIQUE INDEX idx_repositories_project_id_id
+  ON repositories(project_id, id);
+
+ALTER TABLE tasks
+  ADD CONSTRAINT tasks_project_repository_fk
+  FOREIGN KEY (project_id, repository_id)
+  REFERENCES repositories(project_id, id);
 
 UPDATE task_state_history
 SET from_status = CASE from_status
@@ -298,64 +324,55 @@ FOR EACH ROW EXECUTE FUNCTION validate_task_status_transition();
 CREATE OR REPLACE FUNCTION invalidate_task_approvals_on_staging_change()
 RETURNS TRIGGER AS $approval$
 DECLARE
-  is_staging BOOLEAN;
-  is_current BOOLEAN := FALSE;
+  new_is_staging BOOLEAN := FALSE;
+  old_is_staging BOOLEAN := FALSE;
 BEGIN
-  SELECT (
-    kind = 'staging'
-    AND project_id = NEW.project_id
-    AND repository_id = NEW.repository_id
-  )
-  INTO is_staging
-  FROM environments
-  WHERE id = NEW.environment_id;
+  IF TG_OP = 'INSERT' THEN
+    SELECT (
+      kind = 'staging'
+      AND project_id = NEW.project_id
+      AND repository_id = NEW.repository_id
+    )
+    INTO new_is_staging
+    FROM environments
+    WHERE id = NEW.environment_id;
 
-  IF NOT is_staging OR NEW.task_id IS NULL THEN
+    IF new_is_staging AND NEW.task_id IS NOT NULL THEN
+      UPDATE approvals a
+      SET stale = TRUE
+      WHERE a.task_id = NEW.task_id
+        AND a.stale = FALSE
+        AND a.evidence->>'stagingDeploymentId' IS DISTINCT FROM NEW.id::text;
+    END IF;
+
     RETURN NEW;
   END IF;
 
-  IF TG_OP = 'INSERT' THEN
-    is_current := TRUE;
-  ELSE
-    SELECT EXISTS (
-      SELECT 1
-      FROM deployments d
-      JOIN environments e ON e.id = d.environment_id
-      WHERE d.task_id = NEW.task_id
-        AND d.project_id = NEW.project_id
-        AND d.repository_id = NEW.repository_id
-        AND e.project_id = NEW.project_id
-        AND e.repository_id = NEW.repository_id
-        AND e.kind = 'staging'
-        AND d.id = NEW.id
-        AND d.id = (
-          SELECT d2.id
-          FROM deployments d2
-          JOIN environments e2 ON e2.id = d2.environment_id
-          WHERE d2.task_id = NEW.task_id
-            AND d2.project_id = NEW.project_id
-            AND d2.repository_id = NEW.repository_id
-            AND e2.project_id = NEW.project_id
-            AND e2.repository_id = NEW.repository_id
-            AND e2.kind = 'staging'
-          ORDER BY d2.created_at DESC, d2.id DESC
-          LIMIT 1
-        )
+  IF OLD.task_id IS NOT NULL THEN
+    SELECT (
+      kind = 'staging'
+      AND project_id = OLD.project_id
+      AND repository_id = OLD.repository_id
     )
-    INTO is_current;
-  END IF;
+    INTO old_is_staging
+    FROM environments
+    WHERE id = OLD.environment_id;
 
-  IF is_current THEN
-    UPDATE approvals a
-    SET stale = TRUE
-    WHERE a.task_id = NEW.task_id
-      AND a.stale = FALSE
-      AND (
-        NEW.status IS DISTINCT FROM 'READY' OR
-        a.evidence->>'stagingDeploymentId' IS DISTINCT FROM NEW.id::text OR
-        a.revision IS DISTINCT FROM NEW.revision OR
-        a.staging_url IS DISTINCT FROM NEW.url
-      );
+    IF old_is_staging AND (
+      OLD.project_id IS DISTINCT FROM NEW.project_id OR
+      OLD.repository_id IS DISTINCT FROM NEW.repository_id OR
+      OLD.environment_id IS DISTINCT FROM NEW.environment_id OR
+      OLD.task_id IS DISTINCT FROM NEW.task_id OR
+      OLD.revision IS DISTINCT FROM NEW.revision OR
+      OLD.url IS DISTINCT FROM NEW.url OR
+      OLD.status IS DISTINCT FROM NEW.status
+    ) THEN
+      UPDATE approvals a
+      SET stale = TRUE
+      WHERE a.task_id = OLD.task_id
+        AND a.stale = FALSE
+        AND a.evidence->>'stagingDeploymentId' = OLD.id::text;
+    END IF;
   END IF;
 
   RETURN NEW;
@@ -363,7 +380,9 @@ END;
 $approval$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_invalidate_task_approvals_on_staging_change
-AFTER INSERT OR UPDATE OF revision, url, status ON deployments
+AFTER INSERT OR UPDATE OF
+  project_id, repository_id, environment_id, task_id, revision, url, status
+ON deployments
 FOR EACH ROW EXECUTE FUNCTION invalidate_task_approvals_on_staging_change();
 
 CREATE OR REPLACE FUNCTION record_order_state_history()
