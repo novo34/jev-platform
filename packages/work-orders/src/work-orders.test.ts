@@ -117,11 +117,23 @@ describe("WorkOrderService", () => {
       "VERIFYING",
       "VERIFIED",
       "STAGING",
-      "AWAITING_HUMAN",
-      "APPROVED"
+      "AWAITING_HUMAN"
     ] as const) {
       task = await service.transitionTask(task.id, status, context);
     }
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, staging_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-plt008', '0123456789abcdef',
+                 'https://github.com/novo34/example/pull/1',
+                 'https://staging.example.test',
+                 '{"verified":true}'::jsonb)`,
+      [task.id, userId]
+    );
+
+    task = await service.transitionTask(task.id, "APPROVED", context);
 
     expect(task.stateHistory.map((entry) => entry.toStatus)).toEqual([
       "PLANNED",
@@ -145,6 +157,32 @@ describe("WorkOrderService", () => {
         actorType: "SYSTEM",
         cause: "promotion not implemented"
       })
+    ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
+  });
+
+  it("rejects APPROVED without a persisted non-stale approval", async () => {
+    const order = await service.createOrder({ projectId, objective: "Approval gate" });
+    let task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Approval-gated task"
+    });
+    const context = { actorType: "USER" as const, actorId: userId, cause: "advance" };
+
+    for (const status of [
+      "READY",
+      "RUNNING",
+      "VERIFYING",
+      "VERIFIED",
+      "STAGING",
+      "AWAITING_HUMAN"
+    ] as const) {
+      task = await service.transitionTask(task.id, status, context);
+    }
+
+    await expect(
+      service.transitionTask(task.id, "APPROVED", context)
     ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
   });
 
