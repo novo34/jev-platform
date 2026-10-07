@@ -575,6 +575,98 @@ describe("WorkOrderService", () => {
     expect(approval.rows[0].stale).toBe(false);
   });
 
+  it("does not stale the current approval when an older deployment is inserted", async () => {
+    const order = await service.createOrder({ projectId, objective: "Historical deployment insert" });
+    let task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Historical insert task"
+    });
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "historical insert test"
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING"] as const) {
+      task = await service.transitionTask(task.id, status, context);
+    }
+
+    const current = await pool.query<{ id: string }>(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-current-insert', 'READY',
+                 'https://staging.example.test/current-insert')
+       RETURNING id`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    task = await service.transitionTask(task.id, "AWAITING_HUMAN", {
+      ...context,
+      evidence: {
+        stagingDeploymentId: current.rows[0].id,
+        revision: "rev-current-insert",
+        url: "https://staging.example.test/current-insert"
+      }
+    });
+
+    await pool.query(
+      `INSERT INTO approvals (
+         task_id, actor_user_id, decision, revision, commit_sha,
+         pull_request_url, staging_url, evidence
+       ) VALUES ($1, $2, 'APPROVED', 'rev-current-insert', 'eeeeeeeeeeeeeeee',
+                 'https://github.com/novo34/example/pull/10',
+                 'https://staging.example.test/current-insert',
+                 jsonb_build_object('stagingDeploymentId', $3::text, 'verified', true))`,
+      [task.id, userId, current.rows[0].id]
+    );
+
+    await pool.query(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url, created_at
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-historical-insert', 'READY',
+                 'https://staging.example.test/historical-insert',
+                 NOW() - INTERVAL '10 minutes')`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    const approval = await pool.query(
+      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-current-insert'",
+      [task.id]
+    );
+    expect(approval.rows[0].stale).toBe(false);
+  });
+
+  it("prevents changing deployment created_at because it defines current evidence", async () => {
+    const order = await service.createOrder({ projectId, objective: "Immutable deployment ordering" });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Immutable deployment timestamp task"
+    });
+
+    const deployment = await pool.query<{ id: string }>(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-created-at', 'READY',
+                 'https://staging.example.test/created-at')
+       RETURNING id`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    await expect(
+      pool.query(
+        "UPDATE deployments SET created_at = created_at + INTERVAL '1 minute' WHERE id = $1",
+        [deployment.rows[0].id]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
   it("stales an approval when its staging deployment is reassigned to another task", async () => {
     const order = await service.createOrder({ projectId, objective: "Deployment reassignment" });
     let task = await service.createTask({
