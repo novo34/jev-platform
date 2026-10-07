@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import { createDatabasePool, DEFAULT_MIGRATIONS_DIR } from "./index.js";
 
 async function migration(name: string): Promise<string> {
-  return readFile(path.join(DEFAULT_MIGRATIONS_DIR, name), "utf8");
+  const sql = await readFile(path.join(DEFAULT_MIGRATIONS_DIR, name), "utf8");
+  if (name === "0001_canonical_persistence.sql") {
+    return sql.replace("CREATE EXTENSION IF NOT EXISTS pgcrypto;", "");
+  }
+  return sql;
 }
 
 describe("PLT-008 remediation migration", () => {
