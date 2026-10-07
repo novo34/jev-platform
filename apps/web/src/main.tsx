@@ -321,7 +321,16 @@ function App() {
     return <Login onLogin={setSession} />;
   }
 
-  return <Settings session={session} onLogout={() => setSession(null)} />;
+  async function logout() {
+    if (!session) return;
+    try {
+      await api("/auth/logout", { method: "POST" }, session.token);
+    } finally {
+      setSession(null);
+    }
+  }
+
+  return <Settings session={session} onLogout={() => void logout()} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
