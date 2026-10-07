@@ -243,6 +243,37 @@ describe("WorkOrderService", () => {
     expect(approval.rows[0].stale).toBe(true);
   });
 
+  it("rejects premature approval decisions before AWAITING_HUMAN", async () => {
+    const order = await service.createOrder({
+      projectId,
+      objective: "Premature approval rejection"
+    });
+    const task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Premature approval task"
+    });
+
+    await expect(
+      pool.query(
+        `INSERT INTO approvals (
+           task_id, actor_user_id, decision, revision, commit_sha,
+           pull_request_url, evidence
+         ) VALUES ($1, $2, 'APPROVED', 'rev-too-early', 'ffffffffffffffff',
+                   'https://github.com/novo34/example/pull/11',
+                   '{"verified":true}'::jsonb)`,
+        [task.id, userId]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+
+    const decisions = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM approvals WHERE task_id = $1",
+      [task.id]
+    );
+    expect(decisions.rows[0].count).toBe(0);
+  });
+
   it("rejects APPROVED without a persisted non-stale approval", async () => {
     const order = await service.createOrder({ projectId, objective: "Approval gate" });
     let task = await service.createTask({
