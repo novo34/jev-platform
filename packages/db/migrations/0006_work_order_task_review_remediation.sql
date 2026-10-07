@@ -262,7 +262,8 @@ BEGIN
     END IF;
   END IF;
 
-  IF OLD.status = 'APPROVED' AND NEW.status = 'CHANGES_REQUESTED' THEN
+  IF OLD.status IN ('APPROVED', 'AWAITING_HUMAN')
+     AND NEW.status = 'CHANGES_REQUESTED' THEN
     UPDATE approvals
     SET stale = TRUE
     WHERE task_id = NEW.id AND stale = FALSE;
@@ -295,9 +296,10 @@ BEFORE UPDATE OF status ON tasks
 FOR EACH ROW EXECUTE FUNCTION validate_task_status_transition();
 
 CREATE OR REPLACE FUNCTION invalidate_task_approvals_on_staging_change()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
 DECLARE
   is_staging BOOLEAN;
+  is_current BOOLEAN := FALSE;
 BEGIN
   SELECT (
     kind = 'staging'
@@ -308,7 +310,42 @@ BEGIN
   FROM environments
   WHERE id = NEW.environment_id;
 
-  IF is_staging AND NEW.task_id IS NOT NULL THEN
+  IF NOT is_staging OR NEW.task_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    is_current := TRUE;
+  ELSE
+    SELECT EXISTS (
+      SELECT 1
+      FROM deployments d
+      JOIN environments e ON e.id = d.environment_id
+      WHERE d.task_id = NEW.task_id
+        AND d.project_id = NEW.project_id
+        AND d.repository_id = NEW.repository_id
+        AND e.project_id = NEW.project_id
+        AND e.repository_id = NEW.repository_id
+        AND e.kind = 'staging'
+        AND d.id = NEW.id
+        AND d.id = (
+          SELECT d2.id
+          FROM deployments d2
+          JOIN environments e2 ON e2.id = d2.environment_id
+          WHERE d2.task_id = NEW.task_id
+            AND d2.project_id = NEW.project_id
+            AND d2.repository_id = NEW.repository_id
+            AND e2.project_id = NEW.project_id
+            AND e2.repository_id = NEW.repository_id
+            AND e2.kind = 'staging'
+          ORDER BY d2.created_at DESC, d2.id DESC
+          LIMIT 1
+        )
+    )
+    INTO is_current;
+  END IF;
+
+  IF is_current THEN
     UPDATE approvals a
     SET stale = TRUE
     WHERE a.task_id = NEW.task_id
@@ -323,7 +360,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_invalidate_task_approvals_on_staging_change
 AFTER INSERT OR UPDATE OF revision, url, status ON deployments
