@@ -54,7 +54,7 @@ function Login({
 }) {
   const [organizationId, setOrganizationId] = useState(DEFAULT_ORGANIZATION_ID);
   const [email, setEmail] = useState("admin@jev.local");
-  const [password, setPassword] = useState("JevLocalAdmin!2026");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
