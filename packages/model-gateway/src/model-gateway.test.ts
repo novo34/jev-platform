@@ -183,6 +183,64 @@ describe("ModelGateway", () => {
     });
   });
 
+  it("continues to a fallback when an earlier provider has no adapter", async () => {
+    await credentials.configure(organizationId, "qwen", "qwen-test-secret-9999", userId);
+
+    const openai: ProviderAdapter = {
+      provider: "openai",
+      async execute() {
+        return {
+          content: "fallback-after-unregistered",
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+        };
+      },
+      async health() {
+        return { ok: true };
+      }
+    };
+    const gateway = new ModelGateway(
+      pool,
+      credentials,
+      new ProviderRegistry().register(openai),
+      new PricingCatalog({
+        "qwen:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 },
+        "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 }
+      })
+    );
+    const requestId = randomUUID();
+
+    const result = await gateway.execute({
+      requestId,
+      organizationId,
+      projectId,
+      orderId,
+      taskId,
+      agentRole: "DEVELOPER",
+      prompt: "Fallback from unsupported adapter",
+      targets: [
+        { provider: "qwen", model: "qwen-test" },
+        { provider: "openai", model: "openai-test" }
+      ]
+    });
+
+    expect(result).toMatchObject({
+      provider: "openai",
+      fallbackFrom: "qwen",
+      content: "fallback-after-unregistered"
+    });
+
+    const blocked = await pool.query(
+      `SELECT outcome, error_code
+         FROM model_provider_calls
+        WHERE request_id = $1 AND provider = 'qwen'`,
+      [requestId]
+    );
+    expect(blocked.rows[0]).toMatchObject({
+      outcome: "BLOCKED",
+      error_code: "PROVIDER_NOT_REGISTERED"
+    });
+  });
+
   it("blocks a paid call when pricing is not configured", async () => {
     const registry = new ProviderRegistry().register({
       provider: "openai",
