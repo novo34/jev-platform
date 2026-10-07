@@ -1,0 +1,202 @@
+-- PLT-008 review remediation.
+-- Never edit 0005 after deployment: evolve the canonical lifecycle here.
+
+ALTER TABLE order_state_history
+  ADD COLUMN actor_type TEXT,
+  ADD COLUMN actor_id TEXT,
+  ADD COLUMN cause TEXT,
+  ADD COLUMN evidence JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE task_state_history
+  ADD COLUMN actor_type TEXT,
+  ADD COLUMN actor_id TEXT,
+  ADD COLUMN cause TEXT,
+  ADD COLUMN evidence JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+UPDATE order_state_history
+SET actor_type = 'SYSTEM',
+    cause = 'legacy_transition'
+WHERE actor_type IS NULL;
+
+UPDATE task_state_history
+SET actor_type = 'SYSTEM',
+    cause = 'legacy_transition'
+WHERE actor_type IS NULL;
+
+-- Canonicalize legacy PLT-008 task states without manufacturing DONE.
+UPDATE tasks
+SET status = CASE status
+  WHEN 'IN_PROGRESS' THEN 'RUNNING'
+  WHEN 'COMPLETED' THEN 'VERIFIED'
+  WHEN 'CANCELLED' THEN 'REJECTED'
+  ELSE status
+END
+WHERE status IN ('IN_PROGRESS', 'COMPLETED', 'CANCELLED');
+
+UPDATE task_state_history
+SET from_status = CASE from_status
+      WHEN 'IN_PROGRESS' THEN 'RUNNING'
+      WHEN 'COMPLETED' THEN 'VERIFIED'
+      WHEN 'CANCELLED' THEN 'REJECTED'
+      ELSE from_status
+    END,
+    to_status = CASE to_status
+      WHEN 'IN_PROGRESS' THEN 'RUNNING'
+      WHEN 'COMPLETED' THEN 'VERIFIED'
+      WHEN 'CANCELLED' THEN 'REJECTED'
+      ELSE to_status
+    END;
+
+ALTER TABLE tasks DROP CONSTRAINT tasks_status_check;
+
+ALTER TABLE tasks
+  ADD CONSTRAINT tasks_status_check
+  CHECK (
+    status IN (
+      'PLANNED',
+      'READY',
+      'RUNNING',
+      'VERIFYING',
+      'VERIFIED',
+      'STAGING',
+      'AWAITING_HUMAN',
+      'APPROVED',
+      'DONE',
+      'BLOCKED',
+      'FAILED',
+      'CHANGES_REQUESTED',
+      'REJECTED'
+    )
+  );
+
+CREATE OR REPLACE FUNCTION validate_task_status_transition()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    RETURN NEW;
+  END IF;
+
+  IF NOT (
+    (OLD.status = 'PLANNED' AND NEW.status IN ('READY', 'BLOCKED', 'REJECTED')) OR
+    (OLD.status = 'READY' AND NEW.status IN ('RUNNING', 'BLOCKED', 'REJECTED')) OR
+    (OLD.status = 'RUNNING' AND NEW.status IN ('VERIFYING', 'BLOCKED', 'FAILED')) OR
+    (OLD.status = 'VERIFYING' AND NEW.status IN ('VERIFIED', 'RUNNING', 'BLOCKED', 'FAILED')) OR
+    (OLD.status = 'VERIFIED' AND NEW.status IN ('STAGING', 'RUNNING', 'CHANGES_REQUESTED')) OR
+    (OLD.status = 'STAGING' AND NEW.status IN ('AWAITING_HUMAN', 'BLOCKED', 'FAILED')) OR
+    (OLD.status = 'AWAITING_HUMAN' AND NEW.status IN ('APPROVED', 'CHANGES_REQUESTED', 'REJECTED')) OR
+    (OLD.status = 'APPROVED' AND NEW.status IN ('DONE', 'CHANGES_REQUESTED')) OR
+    (OLD.status = 'CHANGES_REQUESTED' AND NEW.status IN ('READY', 'RUNNING', 'REJECTED')) OR
+    (OLD.status = 'BLOCKED' AND NEW.status IN ('READY', 'RUNNING', 'REJECTED')) OR
+    (OLD.status = 'FAILED' AND NEW.status IN ('READY', 'RUNNING', 'REJECTED'))
+  ) THEN
+    RAISE EXCEPTION 'illegal task status transition: % -> %', OLD.status, NEW.status
+      USING ERRCODE = '23514';
+  END IF;
+
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION record_order_state_history()
+RETURNS TRIGGER AS $$
+DECLARE
+  transition_actor_type TEXT := COALESCE(
+    NULLIF(current_setting('jev.transition_actor_type', true), ''),
+    'SYSTEM'
+  );
+  transition_actor_id TEXT := NULLIF(
+    current_setting('jev.transition_actor_id', true),
+    ''
+  );
+  transition_cause TEXT := COALESCE(
+    NULLIF(current_setting('jev.transition_cause', true), ''),
+    'unspecified'
+  );
+  transition_evidence JSONB := COALESCE(
+    NULLIF(current_setting('jev.transition_evidence', true), '')::jsonb,
+    '{}'::jsonb
+  );
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO order_state_history (
+      order_id, from_status, to_status, actor_type, actor_id, cause, evidence
+    ) VALUES (
+      NEW.id, NULL, NEW.status, transition_actor_type, transition_actor_id,
+      transition_cause, transition_evidence
+    );
+  ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
+    INSERT INTO order_state_history (
+      order_id, from_status, to_status, actor_type, actor_id, cause, evidence
+    ) VALUES (
+      NEW.id, OLD.status, NEW.status, transition_actor_type, transition_actor_id,
+      transition_cause, transition_evidence
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION record_task_state_history()
+RETURNS TRIGGER AS $$
+DECLARE
+  transition_actor_type TEXT := COALESCE(
+    NULLIF(current_setting('jev.transition_actor_type', true), ''),
+    'SYSTEM'
+  );
+  transition_actor_id TEXT := NULLIF(
+    current_setting('jev.transition_actor_id', true),
+    ''
+  );
+  transition_cause TEXT := COALESCE(
+    NULLIF(current_setting('jev.transition_cause', true), ''),
+    'unspecified'
+  );
+  transition_evidence JSONB := COALESCE(
+    NULLIF(current_setting('jev.transition_evidence', true), '')::jsonb,
+    '{}'::jsonb
+  );
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO task_state_history (
+      task_id, from_status, to_status, actor_type, actor_id, cause, evidence
+    ) VALUES (
+      NEW.id, NULL, NEW.status, transition_actor_type, transition_actor_id,
+      transition_cause, transition_evidence
+    );
+  ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
+    INSERT INTO task_state_history (
+      task_id, from_status, to_status, actor_type, actor_id, cause, evidence
+    ) VALUES (
+      NEW.id, OLD.status, NEW.status, transition_actor_type, transition_actor_id,
+      transition_cause, transition_evidence
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Backfill records that predate history triggers. Keep existing history intact.
+INSERT INTO order_state_history (
+  order_id, from_status, to_status, actor_type, cause, evidence, created_at
+)
+SELECT
+  o.id, NULL, o.status, 'SYSTEM', 'migration_backfill',
+  jsonb_build_object('migration', '0006_work_order_task_review_remediation.sql'),
+  o.created_at
+FROM orders o
+WHERE NOT EXISTS (
+  SELECT 1 FROM order_state_history h WHERE h.order_id = o.id
+);
+
+INSERT INTO task_state_history (
+  task_id, from_status, to_status, actor_type, cause, evidence, created_at
+)
+SELECT
+  t.id, NULL, t.status, 'SYSTEM', 'migration_backfill',
+  jsonb_build_object('migration', '0006_work_order_task_review_remediation.sql'),
+  t.created_at
+FROM tasks t
+WHERE NOT EXISTS (
+  SELECT 1 FROM task_state_history h WHERE h.task_id = t.id
+);
