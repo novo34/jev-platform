@@ -29,4 +29,4 @@ Services:
 npm run check
 ```
 
-This runs type checks, service tests and production builds for the PLT-002 skeleton.
+This runs workspace type checks, PostgreSQL-backed tests and production builds for the current JEV Platform baseline.

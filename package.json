@@ -10,10 +10,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run build -w @jev/shared && npm run build -w @jev/db && npm run build -w @jev/auth && npm run build -w @jev/projects && npm run build -w @jev/control && npm run build -w @jev/queue && concurrently -n web,api,worker \"npm run dev -w @jev/web\" \"npm run dev -w @jev/api\" \"npm run dev -w @jev/worker\"",
-    "build": "npm run build -w @jev/shared && npm run build -w @jev/db && npm run build -w @jev/auth && npm run build -w @jev/projects && npm run build -w @jev/control && npm run build -w @jev/queue && npm run build -w @jev/api && npm run build -w @jev/worker && npm run build -w @jev/web",
-    "typecheck": "npm run build -w @jev/shared && npm run build -w @jev/db && npm run build -w @jev/auth && npm run typecheck -w @jev/projects && npm run build -w @jev/projects && npm run build -w @jev/control && npm run build -w @jev/queue && npm run typecheck -w @jev/api && npm run typecheck -w @jev/worker && npm run typecheck -w @jev/web",
-    "test": "npm run test -w @jev/db && npm run test -w @jev/auth && npm run test -w @jev/projects && npm run test -w @jev/control && npm run test -w @jev/queue && npm run test -w @jev/api && npm run test -w @jev/worker",
+    "dev": "npm run build -w @jev/shared && npm run build -w @jev/db && npm run build -w @jev/auth && npm run build -w @jev/projects && npm run build -w @jev/work-orders && npm run build -w @jev/control && npm run build -w @jev/queue && concurrently -n web,api,worker \"npm run dev -w @jev/web\" \"npm run dev -w @jev/api\" \"npm run dev -w @jev/worker\"",
+    "build": "npm run build -w @jev/shared && npm run build -w @jev/db && npm run build -w @jev/auth && npm run build -w @jev/projects && npm run build -w @jev/work-orders && npm run build -w @jev/control && npm run build -w @jev/queue && npm run build -w @jev/api && npm run build -w @jev/worker && npm run build -w @jev/web",
+    "typecheck": "npm run build -w @jev/shared && npm run build -w @jev/db && npm run build -w @jev/auth && npm run typecheck -w @jev/projects && npm run build -w @jev/projects && npm run typecheck -w @jev/work-orders && npm run build -w @jev/work-orders && npm run build -w @jev/control && npm run build -w @jev/queue && npm run typecheck -w @jev/api && npm run typecheck -w @jev/worker && npm run typecheck -w @jev/web",
+    "test": "npm run test -w @jev/db && npm run test -w @jev/auth && npm run test -w @jev/projects && npm run test -w @jev/work-orders && npm run test -w @jev/control && npm run test -w @jev/queue && npm run test -w @jev/api && npm run test -w @jev/worker",
     "db:migrate": "npm run migrate -w @jev/db",
     "check": "npm run typecheck && npm run test && npm run build"
   },
