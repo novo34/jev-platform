@@ -370,6 +370,56 @@ ALTER TABLE tasks
     )
   );
 
+-- Deployments must be scoped to the same project/repository as both their
+-- environment and, when present, their task. Validate legacy rows before
+-- installing race-safe composite foreign keys.
+DO $deployment_scope_check$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM deployments d
+    JOIN environments e ON e.id = d.environment_id
+    WHERE e.project_id IS DISTINCT FROM d.project_id
+       OR e.repository_id IS DISTINCT FROM d.repository_id
+  ) THEN
+    RAISE EXCEPTION
+      'legacy deployments require explicit environment scope remediation'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM deployments d
+    JOIN tasks t ON t.id = d.task_id
+    WHERE d.task_id IS NOT NULL
+      AND (
+        t.project_id IS DISTINCT FROM d.project_id
+        OR t.repository_id IS DISTINCT FROM d.repository_id
+      )
+  ) THEN
+    RAISE EXCEPTION
+      'legacy deployments require explicit task scope remediation'
+      USING ERRCODE = '23514';
+  END IF;
+END;
+$deployment_scope_check$;
+
+CREATE UNIQUE INDEX idx_environments_project_repository_id
+  ON environments(project_id, repository_id, id);
+
+CREATE UNIQUE INDEX idx_tasks_project_repository_id
+  ON tasks(project_id, repository_id, id);
+
+ALTER TABLE deployments
+  ADD CONSTRAINT deployments_environment_scope_fk
+  FOREIGN KEY (project_id, repository_id, environment_id)
+  REFERENCES environments(project_id, repository_id, id);
+
+ALTER TABLE deployments
+  ADD CONSTRAINT deployments_task_scope_fk
+  FOREIGN KEY (project_id, repository_id, task_id)
+  REFERENCES tasks(project_id, repository_id, id);
+
 CREATE OR REPLACE FUNCTION validate_task_deployment_scope()
 RETURNS TRIGGER AS $deploy$
 BEGIN
