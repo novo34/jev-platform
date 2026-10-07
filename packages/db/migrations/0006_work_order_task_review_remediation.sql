@@ -266,7 +266,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$deploy$deploy$ LANGUAGE plpgsql;
+$deploy$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_validate_task_deployment_scope
 BEFORE INSERT OR UPDATE OF project_id, repository_id, environment_id, task_id, created_at
 ON deployments
