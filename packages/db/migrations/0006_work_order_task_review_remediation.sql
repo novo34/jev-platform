@@ -201,6 +201,32 @@ FROM ranked_approvals ranked
 WHERE a.id = ranked.id
   AND ranked.row_number > 1;
 
+CREATE OR REPLACE FUNCTION protect_persisted_approval()
+RETURNS TRIGGER AS $approval_immutable$
+BEGIN
+  IF OLD.task_id IS DISTINCT FROM NEW.task_id
+     OR OLD.actor_user_id IS DISTINCT FROM NEW.actor_user_id
+     OR OLD.decision IS DISTINCT FROM NEW.decision
+     OR OLD.revision IS DISTINCT FROM NEW.revision
+     OR OLD.commit_sha IS DISTINCT FROM NEW.commit_sha
+     OR OLD.pull_request_url IS DISTINCT FROM NEW.pull_request_url
+     OR OLD.staging_url IS DISTINCT FROM NEW.staging_url
+     OR OLD.evidence IS DISTINCT FROM NEW.evidence
+     OR OLD.created_at IS DISTINCT FROM NEW.created_at
+     OR (OLD.stale = TRUE AND NEW.stale = FALSE) THEN
+    RAISE EXCEPTION
+      'persisted approvals are append-only; only stale false-to-true invalidation is allowed'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$approval_immutable$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_protect_persisted_approval
+BEFORE UPDATE ON approvals
+FOR EACH ROW EXECUTE FUNCTION protect_persisted_approval();
+
 CREATE OR REPLACE FUNCTION supersede_previous_task_approvals()
 RETURNS TRIGGER AS $decision$
 BEGIN
