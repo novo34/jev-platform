@@ -10,6 +10,7 @@ const userId = randomUUID();
 const projectId = randomUUID();
 const repositoryId = randomUUID();
 const secondRepositoryId = randomUUID();
+const environmentId = randomUUID();
 const foreignProjectId = randomUUID();
 const foreignRepositoryId = randomUUID();
 
@@ -37,6 +38,12 @@ beforeAll(async () => {
     [repositoryId, secondRepositoryId, projectId]
   );
   await pool.query(
+    `INSERT INTO environments (
+       id, project_id, repository_id, kind, name, url
+     ) VALUES ($1, $2, $3, 'staging', 'Staging', 'https://staging.example.test')`,
+    [environmentId, projectId, repositoryId]
+  );
+  await pool.query(
     "INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Foreign Project')",
     [foreignProjectId, organizationId]
   );
@@ -50,12 +57,17 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pool.query(
+    "DELETE FROM deployments WHERE task_id IN (SELECT id FROM tasks WHERE project_id IN ($1, $2))",
+    [projectId, foreignProjectId]
+  );
+  await pool.query(
     "DELETE FROM approvals WHERE task_id IN (SELECT id FROM tasks WHERE project_id IN ($1, $2))",
     [projectId, foreignProjectId]
   );
   await pool.query("DELETE FROM tasks WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
   await pool.query("DELETE FROM requirements WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
   await pool.query("DELETE FROM orders WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
+  await pool.query("DELETE FROM environments WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
   await pool.query("DELETE FROM repositories WHERE project_id IN ($1, $2)", [projectId, foreignProjectId]);
   await pool.query("DELETE FROM projects WHERE id IN ($1, $2)", [projectId, foreignProjectId]);
   await pool.query("DELETE FROM users WHERE id = $1", [userId]);
@@ -120,11 +132,21 @@ describe("WorkOrderService", () => {
       "RUNNING",
       "VERIFYING",
       "VERIFIED",
-      "STAGING",
-      "AWAITING_HUMAN"
+      "STAGING"
     ] as const) {
       task = await service.transitionTask(task.id, status, context);
     }
+
+    await pool.query(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-plt008', 'READY',
+                 'https://staging.example.test')`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    task = await service.transitionTask(task.id, "AWAITING_HUMAN", context);
 
     await pool.query(
       `INSERT INTO approvals (
@@ -162,6 +184,21 @@ describe("WorkOrderService", () => {
         cause: "promotion not implemented"
       })
     ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
+
+    await pool.query(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-plt008-new', 'READY',
+                 'https://staging.example.test/new')`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    const approval = await pool.query(
+      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-plt008'",
+      [task.id]
+    );
+    expect(approval.rows[0].stale).toBe(true);
   });
 
   it("rejects APPROVED without a persisted non-stale approval", async () => {
@@ -172,21 +209,59 @@ describe("WorkOrderService", () => {
       repositoryId,
       title: "Approval-gated task"
     });
-    const context = { actorType: "USER" as const, actorId: userId, cause: "advance" };
+    const context = {
+      actorType: "USER" as const,
+      actorId: userId,
+      cause: "advance",
+      evidence: { readiness: true }
+    };
 
     for (const status of [
       "READY",
       "RUNNING",
       "VERIFYING",
       "VERIFIED",
-      "STAGING",
-      "AWAITING_HUMAN"
+      "STAGING"
     ] as const) {
       task = await service.transitionTask(task.id, status, context);
     }
 
+    await pool.query(
+      `INSERT INTO deployments (
+         project_id, repository_id, environment_id, task_id,
+         provider, revision, status, url
+       ) VALUES ($1, $2, $3, $4, 'test', 'rev-no-approval', 'READY',
+                 'https://staging.example.test')`,
+      [projectId, repositoryId, environmentId, task.id]
+    );
+
+    task = await service.transitionTask(task.id, "AWAITING_HUMAN", context);
+
     await expect(
       service.transitionTask(task.id, "APPROVED", context)
+    ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
+  });
+
+  it("rejects human review without a ready staging deployment", async () => {
+    const order = await service.createOrder({ projectId, objective: "Staging gate" });
+    let task = await service.createTask({
+      projectId,
+      orderId: order.id,
+      repositoryId,
+      title: "Staging-gated task"
+    });
+    const context = {
+      actorType: "SYSTEM" as const,
+      cause: "staging readiness",
+      evidence: { readiness: true }
+    };
+
+    for (const status of ["READY", "RUNNING", "VERIFYING", "VERIFIED", "STAGING"] as const) {
+      task = await service.transitionTask(task.id, status, context);
+    }
+
+    await expect(
+      service.transitionTask(task.id, "AWAITING_HUMAN", context)
     ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
   });
 
