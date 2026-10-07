@@ -233,7 +233,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_invalidate_task_approvals_on_staging_change
 AFTER INSERT OR UPDATE OF revision, url, status ON deployments
