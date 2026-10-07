@@ -185,7 +185,11 @@ describe("WorkOrderService", () => {
       actorType: "USER",
       actorId: userId,
       cause: "operator advancement",
-      evidence: { source: "test" }
+      evidence: {
+        stagingDeploymentId: deployment.rows[0].id,
+        revision: "rev-plt008",
+        url: "https://staging.example.test"
+      }
     });
 
     await expect(
