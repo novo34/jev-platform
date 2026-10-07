@@ -103,6 +103,56 @@ ALTER TABLE tasks
   FOREIGN KEY (project_id, repository_id)
   REFERENCES repositories(project_id, id);
 
+DO $envcheck$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM environments e
+    WHERE e.repository_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM repositories r
+        WHERE r.id = e.repository_id
+          AND r.project_id = e.project_id
+      )
+  ) THEN
+    RAISE EXCEPTION
+      'legacy environments require explicit project-scoped repository remediation'
+      USING ERRCODE = '23514';
+  END IF;
+END;
+$envcheck$;
+
+ALTER TABLE environments
+  ADD CONSTRAINT environments_project_repository_fk
+  FOREIGN KEY (project_id, repository_id)
+  REFERENCES repositories(project_id, id);
+
+CREATE OR REPLACE FUNCTION protect_referenced_environment_scope()
+RETURNS TRIGGER AS $environment$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM deployments d
+    WHERE d.environment_id = OLD.id
+  ) AND (
+    OLD.project_id IS DISTINCT FROM NEW.project_id OR
+    OLD.repository_id IS DISTINCT FROM NEW.repository_id OR
+    OLD.kind IS DISTINCT FROM NEW.kind
+  ) THEN
+    RAISE EXCEPTION
+      'cannot change project/repository/kind of an environment referenced by deployments'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$environment$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_protect_referenced_environment_scope
+BEFORE UPDATE OF project_id, repository_id, kind ON environments
+FOR EACH ROW EXECUTE FUNCTION protect_referenced_environment_scope();
+
 UPDATE task_state_history
 SET from_status = CASE from_status
       WHEN 'IN_PROGRESS' THEN 'RUNNING'
@@ -371,6 +421,7 @@ RETURNS TRIGGER AS $approval$
 DECLARE
   new_is_staging BOOLEAN := FALSE;
   old_is_staging BOOLEAN := FALSE;
+  new_is_current BOOLEAN := FALSE;
 BEGIN
   IF TG_OP = 'DELETE' THEN
     IF OLD.task_id IS NOT NULL THEN
@@ -394,16 +445,16 @@ BEGIN
     RETURN OLD;
   END IF;
 
-  IF TG_OP = 'INSERT' THEN
-    SELECT (
-      kind = 'staging'
-      AND project_id = NEW.project_id
-      AND repository_id = NEW.repository_id
-    )
-    INTO new_is_staging
-    FROM environments
-    WHERE id = NEW.environment_id;
+  SELECT (
+    kind = 'staging'
+    AND project_id = NEW.project_id
+    AND repository_id = NEW.repository_id
+  )
+  INTO new_is_staging
+  FROM environments
+  WHERE id = NEW.environment_id;
 
+  IF TG_OP = 'INSERT' THEN
     IF new_is_staging AND NEW.task_id IS NOT NULL THEN
       UPDATE approvals a
       SET stale = TRUE
@@ -439,6 +490,43 @@ BEGIN
       WHERE a.task_id = OLD.task_id
         AND a.stale = FALSE
         AND a.evidence->>'stagingDeploymentId' = OLD.id::text;
+    END IF;
+  END IF;
+
+  IF new_is_staging AND NEW.task_id IS NOT NULL THEN
+    SELECT EXISTS (
+      SELECT 1
+      FROM deployments d
+      JOIN environments e ON e.id = d.environment_id
+      WHERE d.id = NEW.id
+        AND d.task_id = NEW.task_id
+        AND d.project_id = NEW.project_id
+        AND d.repository_id = NEW.repository_id
+        AND e.project_id = NEW.project_id
+        AND e.repository_id = NEW.repository_id
+        AND e.kind = 'staging'
+        AND d.id = (
+          SELECT d2.id
+          FROM deployments d2
+          JOIN environments e2 ON e2.id = d2.environment_id
+          WHERE d2.task_id = NEW.task_id
+            AND d2.project_id = NEW.project_id
+            AND d2.repository_id = NEW.repository_id
+            AND e2.project_id = NEW.project_id
+            AND e2.repository_id = NEW.repository_id
+            AND e2.kind = 'staging'
+          ORDER BY d2.created_at DESC, d2.id DESC
+          LIMIT 1
+        )
+    )
+    INTO new_is_current;
+
+    IF new_is_current THEN
+      UPDATE approvals a
+      SET stale = TRUE
+      WHERE a.task_id = NEW.task_id
+        AND a.stale = FALSE
+        AND a.evidence->>'stagingDeploymentId' IS DISTINCT FROM NEW.id::text;
     END IF;
   END IF;
 
