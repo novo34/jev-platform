@@ -565,10 +565,11 @@ describe("PLT-008 remediation migration", () => {
       let waitingOnTask = false;
       for (let attempt = 0; attempt < 100; attempt++) {
         const state = await setup.query(`SELECT EXISTS (
-          SELECT 1 FROM pg_locks WHERE pid = $1
-            AND locktype = 'advisory' AND classid = 107554 AND objid = 8 AND granted
-        ) AND EXISTS (
-          SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock'
+          SELECT 1
+          FROM pg_stat_activity
+          WHERE pid = $1
+            AND wait_event_type = 'Lock'
+            AND cardinality(pg_blocking_pids(pid)) > 0
         ) AS waiting`, [deploymentPid]);
         if (state.rows[0].waiting) { waitingOnTask = true; break; }
         await new Promise(resolve => setTimeout(resolve, 10));
