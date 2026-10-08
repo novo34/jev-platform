@@ -477,10 +477,15 @@ describe("PLT-008 remediation migration", () => {
       );
       await setup.query(
         `INSERT INTO tasks (
-           id, project_id, order_id, repository_id, title, status
-         ) VALUES ($1, $2, $3, $4, 'Approval lock task', 'AWAITING_HUMAN')`,
+           id, project_id, order_id, repository_id, title
+         ) VALUES ($1, $2, $3, $4, 'Approval lock task')`,
         [taskId, projectId, orderId, repositoryId]
       );
+      // This test isolates approval-row serialization rather than lifecycle promotion.
+      // Move through the legal state machine to the review state.
+      for (const status of ['READY', 'RUNNING', 'VERIFYING', 'VERIFIED', 'STAGING', 'AWAITING_HUMAN']) {
+        await setup.query("UPDATE tasks SET status = $2 WHERE id = $1", [taskId, status]);
+      }
 
       await blocker.query(`SET search_path TO "${schema}", public`);
       await reviewer.query(`SET search_path TO "${schema}", public`);
