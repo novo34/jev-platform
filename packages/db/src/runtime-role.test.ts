@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { Pool } from "pg";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDatabasePool, DEFAULT_MIGRATIONS_DIR } from "./index.js";
+import { assertRestrictedRuntimeRole, createDatabasePool, DEFAULT_MIGRATIONS_DIR } from "./index.js";
 
 describe("restricted deployment writer", () => {
   it("denies direct updates and allows controlled status changes", async () => {
@@ -100,6 +101,8 @@ describe("restricted deployment writer", () => {
         );
         expect(denied.rows[0]).toEqual({ insert_allowed: false, update_allowed: false });
       }
+      // Exercise the same guard used at API/worker startup under the real role.
+      await assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool);
       const cannotUpdateProject = await owner.query(
         "SELECT has_table_privilege(current_user,$1,'UPDATE') AS allowed",
         [schema + ".projects"]
