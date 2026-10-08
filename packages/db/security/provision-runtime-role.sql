@@ -27,6 +27,13 @@ GRANT EXECUTE ON FUNCTION jev_set_deployment_status(uuid, uuid[], text)
   TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_transition_task(uuid, text, text, text, text, jsonb)
   TO jev_runtime;
+-- Only non-guarded service tables receive DML permissions.
+GRANT INSERT ON TABLE projects, repositories, orders, requirements, task_requirements TO jev_runtime;
+GRANT UPDATE ON TABLE orders TO jev_runtime;
+GRANT EXECUTE ON FUNCTION jev_create_task(uuid, uuid, uuid, text, text, jsonb) TO jev_runtime;
+GRANT EXECUTE ON FUNCTION jev_create_environment(uuid, uuid, text, text, text, jsonb) TO jev_runtime;
+-- Approval and Deployment creation are not yet exposed through authorized
+-- writers; direct INSERT on approvals/deployments remains prohibited.
 -- Additional controlled write functions require individual review.
 -- Do not use GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public.
 -- Do not enable this credential for live traffic until those functions exist
