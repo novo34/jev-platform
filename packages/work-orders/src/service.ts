@@ -302,22 +302,12 @@ export class WorkOrderService {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      // Acquire the shared project-scope lock before touching the Task row.
-      // Deployment writers use the same parent-first lock order.
-      const scope = await client.query(
-        `SELECT p.id FROM projects p
-         JOIN tasks t ON t.project_id = p.id
-         WHERE t.id = $1 FOR NO KEY UPDATE OF p`, [taskId]
-      );
-      if (!scope.rows[0]) {
-        throw new WorkOrderError("TASK_NOT_FOUND");
-      }
-      await applyTransitionContext(client, context);
       const result = await client.query(
-        "UPDATE tasks SET status = $2 WHERE id = $1 RETURNING id",
-        [taskId, toStatus]
+        "SELECT jev_transition_task($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::jsonb) AS id",
+        [taskId, toStatus, context.actorType, context.actorId ?? null,
+         context.cause, JSON.stringify(context.evidence ?? {})]
       );
-      if (!result.rows[0]) {
+      if (!result.rows[0]?.id) {
         throw new WorkOrderError("TASK_NOT_FOUND");
       }
       await client.query("COMMIT");
