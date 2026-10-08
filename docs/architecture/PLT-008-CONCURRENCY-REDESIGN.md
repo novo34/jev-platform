@@ -1,10 +1,29 @@
 # PLT-008 — Concurrency redesign decision record (draft, not accepted)
 
-Status: **BLOCKED — implementation and two-session tests required**. Applies to PR #10 only; `main` and migration `0005` are immutable in this work.
+Status: **BLOCKED — critical concurrency and enforcement work remains**. Applies to PR #10 only; `main` and migration `0005` are immutable in this work.
 
-## Confirmed defect
+## Confirmed defect and current remediation state
 
-The current migration `0006` installs a global transaction advisory lock in a deployment BEFORE STATEMENT trigger, followed by Task row locks in deployment BEFORE ROW triggers. Other entry points acquire Task locks first (Task UPDATE and Approval INSERT), then can write deployments. This yields a cyclic wait graph: T1 holds Task(A), requests advisory; T2 holds advisory, requests Task(A). Existing green CI does not test this cycle.
+The original deployment statement-wide advisory lock caused a confirmed
+Task-to-advisory/advisory-to-Task deadlock (SQLSTATE 40P01). Commit `9a6df8e`
+removed that lock; commit `4af11dc` updated the two-session regression
+test to observe PostgreSQL blocking rather than the removed lock. CI passed
+on `4af11dc`, but this proves only that particular cycle is gone.
+
+The independent audit identified additional acceptance blockers:
+- F-01 (P1): approved Tasks can retain stale approvals after staging evidence
+  changes. Commit `413ebcb` adds a conservative rejection for deployment
+  writes targeting APPROVED Tasks; dedicated tests and behavior refinement
+  remain required.
+- F-02 (P1): Environment staging requirement changes can race with Task
+  promotion. No transactional serialization protocol has been implemented.
+- F-03 (P2): bulk deployment operations can acquire Task locks in inconsistent
+  row visitation order. No deterministic bulk preflight is implemented.
+- F-04/F-05 (P2): runtime DB permissions and trusted function search paths
+  are not yet enforced.
+
+Do not merge until the transaction protocol, runtime privileges, concurrent
+tests and independent review satisfy the acceptance gates below.
 
 ## Non-negotiable invariants
 
