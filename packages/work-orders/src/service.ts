@@ -191,6 +191,16 @@ export class WorkOrderService {
 
     try {
       await client.query("BEGIN");
+      // Lock the project before the order and task rows. This matches the
+      // shared project-first protocol used by Task transitions and deployment
+      // mutations, without blocking FK KEY SHARE checks.
+      const projectScope = await client.query(
+        "SELECT id FROM projects WHERE id = $1 FOR NO KEY UPDATE",
+        [input.projectId]
+      );
+      if (!projectScope.rows[0]) {
+        throw new WorkOrderError("INVALID_ORDER", "project not found");
+      }
       const orderResult = await client.query(
         "SELECT id, project_id FROM orders WHERE id = $1 FOR UPDATE",
         [input.orderId]
