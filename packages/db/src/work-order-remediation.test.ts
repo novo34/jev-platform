@@ -776,6 +776,11 @@ describe("PLT-008 remediation migration", () => {
           [first, second]
         );
         expect(persistedBulk.rows[0].count).toBe(2);
+        const statuses = await setup.query(
+          "SELECT status FROM deployments WHERE id IN ($1, $2) ORDER BY id",
+          [first, second]
+        );
+        expect(statuses.rows.map(row => row.status)).toEqual(["READY", "READY"]);
       } finally {
         await scopedPool.end();
       }
