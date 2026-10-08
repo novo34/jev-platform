@@ -614,7 +614,8 @@ describe("PLT-008 remediation migration", () => {
         "0006_work_order_task_review_remediation.sql",
         "0007_staging_requirement_approved_guard.sql",
         "0008_serialize_staging_requirement.sql",
-        "0009_harden_trigger_function_search_path.sql"
+        "0009_harden_trigger_function_search_path.sql",
+        "0010_controlled_deployment_status_writer.sql"
       ]) await setup.query(await migration(file));
 
       const org = randomUUID(), project = randomUUID();
