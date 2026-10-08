@@ -297,7 +297,7 @@ export class WorkOrderService {
       const scope = await client.query(
         `SELECT p.id FROM projects p
          JOIN tasks t ON t.project_id = p.id
-         WHERE t.id = $1 FOR UPDATE OF p`, [taskId]
+         WHERE t.id = $1 FOR NO KEY UPDATE OF p`, [taskId]
       );
       if (!scope.rows[0]) {
         throw new WorkOrderError("TASK_NOT_FOUND");
