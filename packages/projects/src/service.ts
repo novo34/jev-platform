@@ -189,9 +189,7 @@ export class ProjectRegistryService {
         }
 
         await client.query(
-          `INSERT INTO environments (
-             project_id, repository_id, kind, name, url, metadata
-           ) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+          "SELECT jev_create_environment($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::jsonb) AS id",
           [
             projectId,
             repositoryId,
