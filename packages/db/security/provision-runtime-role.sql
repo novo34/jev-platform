@@ -22,8 +22,10 @@ REVOKE ALL ON TABLE tasks, approvals, deployments, environments FROM jev_runtime
 GRANT USAGE ON SCHEMA public TO jev_runtime;
 GRANT SELECT ON TABLE tasks, approvals, deployments, environments TO jev_runtime;
 
--- Required controlled write functions must be granted explicitly, e.g.
--- GRANT EXECUTE ON FUNCTION ... TO jev_runtime;
+-- Only this controlled operation is granted at this stage.
+GRANT EXECUTE ON FUNCTION jev_set_deployment_status(uuid, uuid[], text)
+  TO jev_runtime;
+-- Additional controlled write functions require individual review.
 -- Do not use GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public.
 -- Do not enable this credential for live traffic until those functions exist
 -- and the runtime privilege verifier returns PASS for all guarded tables.
