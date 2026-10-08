@@ -265,6 +265,15 @@ describe("WorkOrderService", () => {
         [projectId, repositoryId, environmentId, task.id])
     ).rejects.toMatchObject({ code: "23514" });
 
+    // RED regression: introducing another staging environment must not
+    // silently invalidate an already approved Task.
+    await expect(
+      pool.query(`INSERT INTO environments (
+        project_id, repository_id, kind, name
+      ) VALUES ($1, $2, 'staging', 'Additional review staging')`,
+        [projectId, repositoryId])
+    ).rejects.toMatchObject({ code: "23514" });
+
     const approval = await pool.query(
       "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-plt008'",
       [task.id]
