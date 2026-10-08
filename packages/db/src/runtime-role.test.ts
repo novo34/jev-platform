@@ -20,9 +20,9 @@ describe("restricted deployment writer", () => {
         "0003_queue_worker.sql",
         "0004_project_registry.sql",
         "0005_work_order_task_lifecycle.sql",
-        "0006_approved_task_deployment_guard.sql",
-        "0007_approved_task_staging_guard.sql",
-        "0008_lock_affected_tasks_on_environment_write.sql",
+        "0006_work_order_task_review_remediation.sql",
+        "0007_staging_requirement_approved_guard.sql",
+        "0008_serialize_staging_requirement.sql",
         "0009_harden_trigger_function_search_path.sql",
         "0010_controlled_deployment_status_writer.sql",
         "0011_scope_controlled_writer_to_schema.sql"
