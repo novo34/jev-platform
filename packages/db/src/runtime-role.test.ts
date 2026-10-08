@@ -38,7 +38,12 @@ describe("restricted deployment writer", () => {
       }
       const organization = randomUUID();
       const project = randomUUID();
+      const userId = randomUUID();
       await owner.query("INSERT INTO organizations(id,name) VALUES($1,'ACL Org')", [organization]);
+      await owner.query(
+        "INSERT INTO users(id,organization_id,email,display_name,role) VALUES ($1,$2,'acl@example.test','ACL User','ADMIN')",
+        [userId, organization]
+      );
       await owner.query("INSERT INTO projects(id,organization_id,name) VALUES($1,$2,'ACL Project')", [project, organization]);
       const repository = (await owner.query(
         "INSERT INTO repositories(project_id,full_name,role) VALUES($1,'acl/test','backend') RETURNING id",
@@ -68,6 +73,11 @@ describe("restricted deployment writer", () => {
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_lock_project_scope(uuid) TO "${role}"`);
       await owner.query(`GRANT INSERT ON TABLE orders, requirements, task_requirements, projects, repositories, order_state_history TO "${role}"`);
       await owner.query(`GRANT UPDATE (status) ON TABLE orders TO "${role}"`);
+      await owner.query(`GRANT INSERT ON TABLE auth_sessions, audit_events TO "${role}"`);
+      await owner.query(`GRANT UPDATE (last_seen_at) ON TABLE auth_sessions TO "${role}"`);
+      await owner.query(`GRANT DELETE ON TABLE auth_sessions TO "${role}"`);
+      await owner.query(`GRANT UPDATE (status,updated_at) ON TABLE projects TO "${role}"`);
+      await owner.query(`GRANT INSERT, UPDATE ON TABLE jobs, worker_instances TO "${role}"`);
 
       await owner.query("BEGIN");
       await owner.query(`SET LOCAL ROLE "${role}"`);
@@ -122,6 +132,34 @@ describe("restricted deployment writer", () => {
         [newOrder.rows[0].id]
       );
       expect(orderHistory.rows.map((x) => x.to_status)).toEqual(["PLANNED", "READY"]);
+      // API login/logout and audit DML remain usable by the runtime identity.
+      const session = await owner.query(
+        "INSERT INTO auth_sessions(user_id,token_hash,expires_at) VALUES($1,'acl-token',NOW()+INTERVAL '1 day') RETURNING id",
+        [userId]
+      );
+      await owner.query("UPDATE auth_sessions SET last_seen_at=NOW() WHERE id=$1", [session.rows[0].id]);
+      await owner.query("DELETE FROM auth_sessions WHERE id=$1", [session.rows[0].id]);
+      await owner.query(
+        "INSERT INTO audit_events(organization_id,project_id,actor_type,action,target_type,result) VALUES($1,$2,'USER','ACL_TEST','PROJECT','SUCCESS')",
+        [organization, project]
+      );
+      // Control API project state mutations remain column-limited.
+      await owner.query("UPDATE projects SET status='PAUSED',updated_at=NOW() WHERE id=$1", [project]);
+      await owner.query("UPDATE projects SET status='ACTIVE',updated_at=NOW() WHERE id=$1", [project]);
+      // Worker registration, queued job claim and state changes require no owner role.
+      const job = await owner.query(
+        "INSERT INTO jobs(job_type,correlation_id,project_id) VALUES('NOOP','acl-correlation',$1) RETURNING id",
+        [project]
+      );
+      await owner.query("UPDATE jobs SET status='RUNNING' WHERE id=$1", [job.rows[0].id]);
+      await owner.query(
+        "INSERT INTO worker_instances(worker_id,status) VALUES('acl-worker','RUNNING')"
+      );
+      await owner.query(
+        "UPDATE worker_instances SET current_job_id=$1,last_heartbeat_at=NOW() WHERE worker_id='acl-worker'",
+        [job.rows[0].id]
+      );
+
       const createdTask = await owner.query(
         "SELECT jev_create_task($1::uuid,$2::uuid,$3::uuid,'ACL task','R0','[]'::jsonb) AS id",
         [project, order, repository]
