@@ -25,7 +25,6 @@ describe("canonical PostgreSQL persistence", () => {
     const requirementId = randomUUID();
     const taskId = randomUUID();
     const taskRunId = randomUUID();
-    const approvalId = randomUUID();
     const auditEventId = randomUUID();
     const costEventId = randomUUID();
     const notificationId = randomUUID();
@@ -118,21 +117,8 @@ describe("canonical PostgreSQL persistence", () => {
          ) VALUES ($1, $2, $3, $4, $5, $6)`,
         [taskRunId, taskId, "RUNNING", "corr-test", "openai", "test-model"]
       );
-      // Persist an approval-shaped record without manufacturing a reviewed task state.
-      // The lifecycle/approval gate itself is covered by PLT-008 work-order tests.
-      await client.query(
-        `INSERT INTO approvals (
-           id, task_id, actor_user_id, decision, revision, commit_sha, stale
-         ) VALUES ($1, $2, $3, $4, $5, $6, TRUE)`,
-        [
-          approvalId,
-          taskId,
-          userId,
-          "APPROVED",
-          "rev-1",
-          "0123456789abcdef"
-        ]
-      );
+      // A canonical persistence graph must not manufacture an approval outside
+      // AWAITING_HUMAN. Approval insertion is exercised by lifecycle tests.
       await client.query(
         `INSERT INTO audit_events (
            id, organization_id, project_id, task_id, actor_type,
@@ -213,7 +199,6 @@ describe("canonical PostgreSQL persistence", () => {
         "requirements",
         "tasks",
         "task_runs",
-        "approvals",
         "audit_events",
         "cost_events",
         "notifications",
