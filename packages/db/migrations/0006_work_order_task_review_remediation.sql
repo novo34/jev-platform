@@ -810,6 +810,22 @@ $approval$ LANGUAGE plpgsql;
 -- Serialize staging evidence mutations with Task status transitions.
 -- The transition trigger locks the Task row; taking the same lock before
 -- changing deployment evidence prevents snapshot races with approval checks.
+-- A row trigger cannot establish ordering across all rows in one statement.
+-- Serialize deployment-writing statements before any per-task row locks are
+-- acquired. The transaction-scoped advisory lock is intentionally coarse:
+-- it prevents opposite row orders in concurrent bulk writes from deadlocking.
+CREATE OR REPLACE FUNCTION serialize_deployment_evidence_statements()
+RETURNS TRIGGER AS $serialize_deployments$
+BEGIN
+  PERFORM pg_advisory_xact_lock(107554, 8);
+  RETURN NULL;
+END;
+$serialize_deployments$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_00_serialize_deployment_evidence_statements
+BEFORE INSERT OR UPDATE OR DELETE ON deployments
+FOR EACH STATEMENT EXECUTE FUNCTION serialize_deployment_evidence_statements();
+
 CREATE OR REPLACE FUNCTION lock_task_for_staging_evidence_change()
 RETURNS TRIGGER AS $lock_staging_task$
 DECLARE
