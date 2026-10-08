@@ -52,6 +52,7 @@ describe("restricted deployment writer", () => {
       await owner.query(`CREATE ROLE "${role}" NOLOGIN NOINHERIT`);
       roleCreated = true;
       await owner.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"`);
+      await owner.query(`GRANT SELECT ON ALL TABLES IN SCHEMA "${schema}" TO "${role}"`);
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_set_deployment_status(uuid,uuid[],text) TO "${role}"`);
 
       await owner.query("BEGIN");
@@ -61,6 +62,8 @@ describe("restricted deployment writer", () => {
         [schema + ".deployments"]
       );
       expect(privilege.rows[0].allowed).toBe(false);
+      const readable = await owner.query("SELECT status FROM deployments WHERE id=$1", [deployment]);
+      expect(readable.rows[0].status).toBe("READY");
       await expect(owner.query(
         "UPDATE deployments SET status = 'FAILED' WHERE id=$1", [deployment]
       )).rejects.toMatchObject({ code: "42501" });
@@ -80,6 +83,7 @@ describe("restricted deployment writer", () => {
       try { await owner.query("ROLLBACK"); } catch {}
       await owner.query("SET search_path TO public");
       if (roleCreated) {
+        await owner.query(`REVOKE ALL ON ALL TABLES IN SCHEMA "${schema}" FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_set_deployment_status(uuid,uuid[],text) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON SCHEMA "${schema}" FROM "${role}"`);
         await owner.query(`DROP ROLE "${role}"`);
