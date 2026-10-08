@@ -253,31 +253,27 @@ describe("WorkOrderService", () => {
       })
     ).rejects.toMatchObject({ code: "ILLEGAL_TRANSITION" });
 
-    await pool.query(
-      "UPDATE deployments SET status = 'FAILED' WHERE id = $1",
-      [deployment.rows[0].id]
-    );
+    await expect(
+      pool.query("UPDATE deployments SET status = 'FAILED' WHERE id = $1", [deployment.rows[0].id])
+    ).rejects.toMatchObject({ code: "23514" });
 
-    let approval = await pool.query(
+    await expect(
+      pool.query(`INSERT INTO deployments (
+        project_id, repository_id, environment_id, task_id,
+        provider, revision, status, url
+      ) VALUES ($1, $2, $3, $4, 'test', 'rev-plt008-new', 'READY',
+                'https://staging.example.test/new')`,
+        [projectId, repositoryId, environmentId, task.id])
+    ).rejects.toMatchObject({ code: "23514" });
+
+    const approval = await pool.query(
       "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-plt008'",
       [task.id]
     );
-    expect(approval.rows[0].stale).toBe(true);
+    expect(approval.rows[0].stale).toBe(false);
+    const persistedTask = await pool.query("SELECT status FROM tasks WHERE id = $1", [task.id]);
+    expect(persistedTask.rows[0].status).toBe("APPROVED");
 
-    await pool.query(
-      `INSERT INTO deployments (
-         project_id, repository_id, environment_id, task_id,
-         provider, revision, status, url
-       ) VALUES ($1, $2, $3, $4, 'test', 'rev-plt008-new', 'READY',
-                 'https://staging.example.test/new')`,
-      [projectId, repositoryId, environmentId, task.id]
-    );
-
-    approval = await pool.query(
-      "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-plt008'",
-      [task.id]
-    );
-    expect(approval.rows[0].stale).toBe(true);
   });
 
   it("rejects premature approval decisions before AWAITING_HUMAN", async () => {
