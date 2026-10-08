@@ -596,4 +596,75 @@ describe("PLT-008 remediation migration", () => {
     }
   });
 
+  it("RED: serializes staging creation against an in-flight Task row lock", async () => {
+    const pool = createDatabasePool();
+    const setup = await pool.connect();
+    const taskWriter = await pool.connect();
+    const environmentWriter = await pool.connect();
+    const schema = `plt008_envrace_${randomUUID().replaceAll("-", "")}`;
+    try {
+      await setup.query(`CREATE SCHEMA "${schema}"`);
+      await setup.query(`SET search_path TO "${schema}", public`);
+      for (const file of [
+        "0001_canonical_persistence.sql",
+        "0002_auth_rbac.sql",
+        "0003_queue_worker.sql",
+        "0004_project_registry.sql",
+        "0005_work_order_task_lifecycle.sql",
+        "0006_work_order_task_review_remediation.sql",
+        "0007_staging_requirement_approved_guard.sql"
+      ]) await setup.query(await migration(file));
+
+      const org = randomUUID(), project = randomUUID();
+      const repository = randomUUID(), order = randomUUID(), task = randomUUID();
+      await setup.query("INSERT INTO organizations (id, name) VALUES ($1, 'Race Org')", [org]);
+      await setup.query("INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Race Project')", [project, org]);
+      await setup.query(`INSERT INTO repositories
+        (id, project_id, full_name, role, primary_repository, default_branch, staging_branch)
+        VALUES ($1, $2, 'novo34/env-race', 'backend', TRUE, 'main', 'staging')`,
+        [repository, project]);
+      await setup.query("INSERT INTO orders (id, project_id, objective) VALUES ($1, $2, 'Race')", [order, project]);
+      await setup.query(`INSERT INTO tasks (id, project_id, order_id, repository_id, title)
+        VALUES ($1, $2, $3, $4, 'Race Task')`, [task, project, order, repository]);
+      for (const client of [taskWriter, environmentWriter]) {
+        await client.query(`SET search_path TO "${schema}", public`);
+        await client.query("SET lock_timeout = '1500ms'");
+      }
+      const pid = Number((await environmentWriter.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      await taskWriter.query("BEGIN");
+      await taskWriter.query("SELECT id FROM tasks WHERE id = $1 FOR UPDATE", [task]);
+      const write = environmentWriter.query(`INSERT INTO environments
+        (project_id, repository_id, kind, name)
+        VALUES ($1, $2, 'staging', 'Concurrent staging')`, [project, repository])
+        .then(() => "completed", (error: { code?: string }) => error.code ?? "unknown");
+      let blocked = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const state = await setup.query(`SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE pid = $1 AND wait_event_type = 'Lock'
+            AND cardinality(pg_blocking_pids(pid)) > 0
+        ) AS waiting`, [pid]);
+        if (state.rows[0].waiting) { blocked = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      await taskWriter.query("COMMIT");
+      expect(blocked).toBe(true);
+      expect(await write).toBe("completed");
+      const persisted = await setup.query(
+        "SELECT COUNT(*)::int AS count FROM environments WHERE project_id = $1 AND kind = 'staging'",
+        [project]
+      );
+      expect(persisted.rows[0].count).toBe(1);
+    } finally {
+      for (const client of [taskWriter, environmentWriter]) {
+        try { await client.query("ROLLBACK"); } catch {}
+        client.release();
+      }
+      await setup.query("SET search_path TO public");
+      await setup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      setup.release();
+      await pool.end();
+    }
+  });
+
 });
