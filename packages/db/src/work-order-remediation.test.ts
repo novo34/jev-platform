@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDatabasePool, DEFAULT_MIGRATIONS_DIR, withDeploymentWriteScopes } from "./index.js";
+import { createDatabasePool, DEFAULT_MIGRATIONS_DIR, setDeploymentStatuses, withDeploymentWriteScopes } from "./index.js";
 
 async function migration(name: string): Promise<string> {
   const sql = await readFile(path.join(DEFAULT_MIGRATIONS_DIR, name), "utf8");
@@ -774,6 +774,7 @@ describe("PLT-008 remediation migration", () => {
           return "second";
         });
         expect((await Promise.all([one, two])).sort()).toEqual(["first", "second"]);
+        expect(await setDeploymentStatuses(scopedPool, project, [first, second], "FAILED")).toBe(2);
         const persistedBulk = await setup.query(
           "SELECT COUNT(*)::int AS count FROM deployments WHERE id IN ($1, $2)",
           [first, second]
