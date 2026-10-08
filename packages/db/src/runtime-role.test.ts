@@ -66,8 +66,8 @@ describe("restricted deployment writer", () => {
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_create_environment(uuid,uuid,text,text,text,jsonb) TO "${role}"`);
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_transition_task(uuid,text,text,text,text,jsonb) TO "${role}"`);
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_lock_project_scope(uuid) TO "${role}"`);
-      await owner.query(`GRANT INSERT ON TABLE orders, requirements, task_requirements, projects, repositories TO "${role}"`);
-      await owner.query(`GRANT UPDATE ON TABLE orders TO "${role}"`);
+      await owner.query(`GRANT INSERT ON TABLE orders, requirements, task_requirements, projects, repositories, order_state_history TO "${role}"`);
+      await owner.query(`GRANT UPDATE (status) ON TABLE orders TO "${role}"`);
 
       await owner.query("BEGIN");
       await owner.query(`SET LOCAL ROLE "${role}"`);
@@ -112,6 +112,16 @@ describe("restricted deployment writer", () => {
         "SELECT jev_lock_project_scope($1::uuid) AS id", [project]
       );
       expect(scopedLock.rows[0].id).toBe(project);
+      // The live order service also needs its non-guarded history trigger.
+      const newOrder = await owner.query(
+        "INSERT INTO orders(project_id,objective) VALUES($1,'Restricted order') RETURNING id", [project]
+      );
+      await owner.query("UPDATE orders SET status='READY' WHERE id=$1", [newOrder.rows[0].id]);
+      const orderHistory = await owner.query(
+        "SELECT to_status FROM order_state_history WHERE order_id=$1 ORDER BY created_at,id",
+        [newOrder.rows[0].id]
+      );
+      expect(orderHistory.rows.map((x) => x.to_status)).toEqual(["PLANNED", "READY"]);
       const createdTask = await owner.query(
         "SELECT jev_create_task($1::uuid,$2::uuid,$3::uuid,'ACL task','R0','[]'::jsonb) AS id",
         [project, order, repository]
