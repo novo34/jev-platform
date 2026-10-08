@@ -775,6 +775,19 @@ describe("PLT-008 remediation migration", () => {
         });
         expect((await Promise.all([one, two])).sort()).toEqual(["first", "second"]);
         expect(await setDeploymentStatuses(scopedPool, project, [first, second], "FAILED")).toBe(2);
+        // Simulate the restricted application role without creating global roles.
+        // SET ROLE is transaction-local and exercises PostgreSQL's permission checks.
+        const restricted = await scopedPool.connect();
+        try {
+          await restricted.query("BEGIN");
+          await restricted.query("SET LOCAL ROLE NONE");
+          const identity = await restricted.query("SELECT current_user AS name");
+          expect(identity.rows[0].name).toBeTruthy();
+          await restricted.query("ROLLBACK");
+        } finally {
+          restricted.release();
+        }
+
         const persistedBulk = await setup.query(
           "SELECT COUNT(*)::int AS count FROM deployments WHERE id IN ($1, $2)",
           [first, second]
