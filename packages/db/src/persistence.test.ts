@@ -232,7 +232,8 @@ describe("canonical PostgreSQL persistence", () => {
       "0004_project_registry.sql",
       "0005_work_order_task_lifecycle.sql",
       "0006_work_order_task_review_remediation.sql",
-      "0007_staging_requirement_approved_guard.sql"
+      "0007_staging_requirement_approved_guard.sql",
+      "0008_serialize_staging_requirement.sql"
     ]);
   });
 });
