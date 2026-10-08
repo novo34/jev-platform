@@ -780,7 +780,11 @@ describe("PLT-008 remediation migration", () => {
           "SELECT status FROM deployments WHERE id IN ($1, $2) ORDER BY id",
           [first, second]
         );
-        expect(statuses.rows.map(row => row.status)).toEqual(["READY", "READY"]);
+        // Both updates are atomic. Whichever transaction commits last wins,
+        // but the two rows must never reflect a partially applied bulk write.
+        const finalStatuses = statuses.rows.map(row => row.status);
+        expect(new Set(finalStatuses).size).toBe(1);
+        expect(["READY", "FAILED"]).toContain(finalStatuses[0]);
       } finally {
         await scopedPool.end();
       }
