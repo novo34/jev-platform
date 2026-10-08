@@ -53,6 +53,28 @@ writer that takes that same project lock and subsequently waits on the
 Task; this would recreate a cycle. Validate the complete transaction
 protocol, including bulk writes and owner/runtime privilege boundaries.
 
+## F-03 bulk deployment deadlock gate
+
+The current `trg_00_lock_task_for_staging_evidence_change` is a
+`BEFORE ROW` trigger. Its per-row `ORDER BY task_id` cannot impose a
+statement-wide lock order: two bulk statements visiting Task A then B
+and Task B then A may each hold one Task lock while waiting for the other.
+A successful single-row concurrency test is **not** evidence of bulk safety.
+
+Required RED regression: create two Tasks and two mutable deployments,
+open two PostgreSQL sessions, and issue opposite-order bulk updates with
+a synchronization barrier after the first Task lock. Assert SQLSTATE
+`40P01` (or an equivalent bounded failure) before redesign. Record
+the resulting transaction state, roll back both sessions, and rerun the
+same schedule against the fix. The GREEN acceptance condition is no
+deadlock, atomic results, and preserved approval invariants.
+
+Do not add a global advisory lock. A future bulk-write API must lock all
+affected Tasks in sorted order **before** acquiring deployment row locks,
+and runtime privileges must prevent bypass through direct table DML.
+Account for PostgreSQL FK locks, UPDATE/DELETE row locks and trigger
+execution order before accepting that protocol.
+
 ## Non-negotiable invariants
 
 1. A Task must not be APPROVED without a current non-stale authorized decision and the required staging evidence.
