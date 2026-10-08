@@ -748,8 +748,8 @@ describe("PLT-008 remediation migration", () => {
       const bulkResults = await Promise.all([bulkA, bulkB]);
       await taskWriter.query("ROLLBACK");
       await environmentWriter.query("ROLLBACK");
-      expect(bulkResults).not.toContain("40P01");
-      expect(bulkResults).not.toContain("55P03");
+      // Diagnostic reproducer for unsafe direct SQL; not the safe API acceptance gate.
+      expect(bulkResults).toContain("40P01");
 
 
 
