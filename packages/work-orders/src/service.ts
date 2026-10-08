@@ -299,6 +299,8 @@ export class WorkOrderService {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Preserve service-level validation and typed errors for invalid actor context.
+      await applyTransitionContext(client, context);
       const result = await client.query(
         "SELECT jev_transition_task($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::jsonb) AS id",
         [taskId, toStatus, context.actorType, context.actorId ?? null,
