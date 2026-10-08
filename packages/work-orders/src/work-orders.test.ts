@@ -1471,6 +1471,24 @@ describe("WorkOrderService", () => {
     expect((await service.getTask(task.id)).status).toBe("PLANNED");
   });
 
+  it("rejects direct task inserts that bypass the PLANNED lifecycle entry", async () => {
+    const order = await service.createOrder({ projectId, objective: "Initial task state guard" });
+
+    await expect(
+      pool.query(
+        `INSERT INTO tasks (project_id, order_id, repository_id, title, status)
+         VALUES ($1, $2, $3, 'Bypass task', 'DONE')`,
+        [projectId, order.id, repositoryId]
+      )
+    ).rejects.toMatchObject({ code: "23514" });
+
+    const persisted = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM tasks WHERE order_id = $1 AND title = 'Bypass task'",
+      [order.id]
+    );
+    expect(persisted.rows[0].count).toBe(0);
+  });
+
   it("rejects illegal transitions in both the service and PostgreSQL", async () => {
     const order = await service.createOrder({ projectId, objective: "Reject state jumps" });
     const task = await service.createTask({
