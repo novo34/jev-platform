@@ -25,7 +25,7 @@ export async function withDeploymentWriteScopes<T>(
     // KEY SHARE checks on projects during child-row inserts.
     for (const projectId of scopes) {
       const result = await client.query(
-        "SELECT id FROM projects WHERE id = $1 FOR NO KEY UPDATE", [projectId]
+        "SELECT jev_lock_project_scope($1::uuid) AS id", [projectId]
       );
       if (result.rowCount !== 1) {
         throw new Error(`Unknown project scope: ${projectId}`);
