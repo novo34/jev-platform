@@ -64,6 +64,7 @@ describe("restricted deployment writer", () => {
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_create_task(uuid,uuid,uuid,text,text,jsonb) TO "${role}"`);
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_create_environment(uuid,uuid,text,text,text,jsonb) TO "${role}"`);
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_transition_task(uuid,text,text,text,text,jsonb) TO "${role}"`);
+      await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_lock_project_scope(uuid) TO "${role}"`);
       await owner.query(`GRANT INSERT ON TABLE orders, requirements, task_requirements, projects, repositories TO "${role}"`);
       await owner.query(`GRANT UPDATE ON TABLE orders TO "${role}"`);
 
@@ -99,6 +100,15 @@ describe("restricted deployment writer", () => {
         );
         expect(denied.rows[0]).toEqual({ insert_allowed: false, update_allowed: false });
       }
+      const cannotUpdateProject = await owner.query(
+        "SELECT has_table_privilege(current_user,$1,'UPDATE') AS allowed",
+        [schema + ".projects"]
+      );
+      expect(cannotUpdateProject.rows[0].allowed).toBe(false);
+      const scopedLock = await owner.query(
+        "SELECT jev_lock_project_scope($1::uuid) AS id", [project]
+      );
+      expect(scopedLock.rows[0].id).toBe(project);
       const createdTask = await owner.query(
         "SELECT jev_create_task($1::uuid,$2::uuid,$3::uuid,'ACL task','R0','[]'::jsonb) AS id",
         [project, order, repository]
@@ -131,6 +141,7 @@ describe("restricted deployment writer", () => {
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_task(uuid,uuid,uuid,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_environment(uuid,uuid,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_transition_task(uuid,text,text,text,text,jsonb) FROM "${role}"`);
+        await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_lock_project_scope(uuid) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON SCHEMA "${schema}" FROM "${role}"`);
         await owner.query(`DROP ROLE "${role}"`);
       }
