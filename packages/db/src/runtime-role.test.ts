@@ -46,6 +46,10 @@ describe("restricted deployment writer", () => {
         "INSERT INTO environments(project_id,repository_id,kind,name) VALUES($1,$2,'production','ACL') RETURNING id",
         [project, repository]
       )).rows[0].id;
+      const order = (await owner.query(
+        "INSERT INTO orders(project_id,objective) VALUES($1,'ACL order') RETURNING id",
+        [project]
+      )).rows[0].id;
       const deployment = (await owner.query(
         "INSERT INTO deployments(project_id,repository_id,environment_id,revision,status) VALUES($1,$2,$3,'acl','READY') RETURNING id",
         [project, repository, environment]
@@ -56,6 +60,11 @@ describe("restricted deployment writer", () => {
       await owner.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"`);
       await owner.query(`GRANT SELECT ON ALL TABLES IN SCHEMA "${schema}" TO "${role}"`);
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_set_deployment_status(uuid,uuid[],text) TO "${role}"`);
+      await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_create_task(uuid,uuid,uuid,text,text,jsonb) TO "${role}"`);
+      await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_create_environment(uuid,uuid,text,text,text,jsonb) TO "${role}"`);
+      await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_transition_task(uuid,text,text,text,text,jsonb) TO "${role}"`);
+      await owner.query(`GRANT INSERT ON TABLE orders, requirements, task_requirements, projects, repositories TO "${role}"`);
+      await owner.query(`GRANT UPDATE ON TABLE orders TO "${role}"`);
 
       await owner.query("BEGIN");
       await owner.query(`SET LOCAL ROLE "${role}"`);
@@ -79,6 +88,37 @@ describe("restricted deployment writer", () => {
       );
       expect(result.rows[0].updated).toBe(1);
       await owner.query("COMMIT");
+      // Real restricted role can create and transition Tasks without table DML.
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      for (const table of ["tasks", "environments", "approvals", "deployments"]) {
+        const denied = await owner.query(
+          "SELECT has_table_privilege(current_user,$1,'INSERT') AS insert_allowed, has_table_privilege(current_user,$1,'UPDATE') AS update_allowed",
+          [schema + "." + table]
+        );
+        expect(denied.rows[0]).toEqual({ insert_allowed: false, update_allowed: false });
+      }
+      const createdTask = await owner.query(
+        "SELECT jev_create_task($1::uuid,$2::uuid,$3::uuid,'ACL task','R0','[]'::jsonb) AS id",
+        [project, order, repository]
+      );
+      const taskId = createdTask.rows[0].id as string;
+      const transitioned = await owner.query(
+        "SELECT jev_transition_task($1::uuid,'READY','SYSTEM',NULL,'role-test','{}'::jsonb) AS id",
+        [taskId]
+      );
+      expect(transitioned.rows[0].id).toBe(taskId);
+      const createdEnv = await owner.query(
+        "SELECT jev_create_environment($1::uuid,$2::uuid,'staging','ACL staging',NULL,'{}'::jsonb) AS id",
+        [project, repository]
+      );
+      expect(createdEnv.rows[0].id).toBeTruthy();
+      await owner.query("COMMIT");
+      const persistedTask = await owner.query("SELECT status FROM tasks WHERE id=$1", [taskId]);
+      expect(persistedTask.rows[0].status).toBe("READY");
+      const persistedEnv = await owner.query("SELECT kind FROM environments WHERE id=$1", [createdEnv.rows[0].id]);
+      expect(persistedEnv.rows[0].kind).toBe("staging");
+
       const persisted = await owner.query("SELECT status FROM deployments WHERE id=$1", [deployment]);
       expect(persisted.rows[0].status).toBe("FAILED");
     } finally {
@@ -87,6 +127,9 @@ describe("restricted deployment writer", () => {
       if (roleCreated) {
         await owner.query(`REVOKE ALL ON ALL TABLES IN SCHEMA "${schema}" FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_set_deployment_status(uuid,uuid[],text) FROM "${role}"`);
+        await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_task(uuid,uuid,uuid,text,text,jsonb) FROM "${role}"`);
+        await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_environment(uuid,uuid,text,text,text,jsonb) FROM "${role}"`);
+        await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_transition_task(uuid,text,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON SCHEMA "${schema}" FROM "${role}"`);
         await owner.query(`DROP ROLE "${role}"`);
       }
