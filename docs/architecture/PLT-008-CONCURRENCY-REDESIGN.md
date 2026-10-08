@@ -25,6 +25,34 @@ The independent audit identified additional acceptance blockers:
 Do not merge until the transaction protocol, runtime privileges, concurrent
 tests and independent review satisfy the acceptance gates below.
 
+## F-02 concurrency reproduction specification (must fail before fix)
+
+Set up one project/repository with a Task in AWAITING_HUMAN, a valid
+non-stale APPROVED decision, and **no** staging Environment. Use three
+independent PostgreSQL sessions: two writers and one observer.
+
+1. T1 begins, promotes the Task to APPROVED and retains its transaction.
+2. T2 begins while T1 remains open, inserts a staging Environment for the
+   same project/repository and attempts to commit.
+3. Observe the blocked or completed writer from a third session; do not
+   assume that an approval UPDATE is equivalent to locking the Task.
+4. Commit T1, then finish T2. Assert the persisted Task status, decision
+   staleness, Environment and staging Deployment after both commits.
+5. Repeat with T2 acquiring its lock first, and with UPDATE of an existing
+   non-staging Environment to staging. Use bounded statement/lock timeouts,
+   finally/ROLLBACK cleanup and independent connections.
+6. A valid fix must reject one conflicting operation or produce a final
+   state satisfying the approved-evidence invariant. In particular, it
+   must never commit APPROVED with a stale approval or missing required
+   staging evidence.
+
+**Design gate:** Before implementing an Environment locking trigger, map
+implicit row locks acquired by INSERT/UPDATE and FK checks. A project-level
+lock taken after a Task row lock must not be paired with an Environment
+writer that takes that same project lock and subsequently waits on the
+Task; this would recreate a cycle. Validate the complete transaction
+protocol, including bulk writes and owner/runtime privilege boundaries.
+
 ## Non-negotiable invariants
 
 1. A Task must not be APPROVED without a current non-stale authorized decision and the required staging evidence.
