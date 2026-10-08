@@ -519,4 +519,80 @@ describe("PLT-008 remediation migration", () => {
     }
   });
 
+
+  it("regresses the Task-to-deployment versus deployment-to-Task lock inversion", async () => {
+    const pool = createDatabasePool();
+    const setup = await pool.connect();
+    const taskFirst = await pool.connect();
+    const deploymentFirst = await pool.connect();
+    const schema = `plt008_cycle_${randomUUID().replaceAll("-", "")}`;
+    try {
+      await setup.query(`CREATE SCHEMA "${schema}"`);
+      await setup.query(`SET search_path TO "${schema}", public`);
+      for (const file of [
+        "0001_canonical_persistence.sql",
+        "0002_auth_rbac.sql",
+        "0003_queue_worker.sql",
+        "0004_project_registry.sql",
+        "0005_work_order_task_lifecycle.sql",
+        "0006_work_order_task_review_remediation.sql"
+      ]) await setup.query(await migration(file));
+
+      const org = randomUUID(), project = randomUUID(), repository = randomUUID();
+      const order = randomUUID(), task = randomUUID(), environment = randomUUID();
+      await setup.query("INSERT INTO organizations (id, name) VALUES ($1, 'Cycle Org')", [org]);
+      await setup.query("INSERT INTO projects (id, organization_id, name) VALUES ($1, $2, 'Cycle Project')", [project, org]);
+      await setup.query(`INSERT INTO repositories
+        (id, project_id, full_name, role, primary_repository, default_branch, staging_branch)
+        VALUES ($1, $2, 'novo34/cycle', 'backend', TRUE, 'main', 'staging')`, [repository, project]);
+      await setup.query("INSERT INTO orders (id, project_id, objective) VALUES ($1, $2, 'Cycle')", [order, project]);
+      await setup.query(`INSERT INTO tasks (id, project_id, order_id, repository_id, title)
+        VALUES ($1, $2, $3, $4, 'Cycle Task')`, [task, project, order, repository]);
+      await setup.query(`INSERT INTO environments (id, project_id, repository_id, kind, name)
+        VALUES ($1, $2, $3, 'staging', 'cycle')`, [environment, project, repository]);
+      for (const client of [taskFirst, deploymentFirst]) {
+        await client.query(`SET search_path TO "${schema}", public`);
+        await client.query("SET lock_timeout = '1500ms'");
+      }
+      const deploymentPid = Number((await deploymentFirst.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      await taskFirst.query("BEGIN");
+      await deploymentFirst.query("BEGIN");
+      await taskFirst.query("SELECT id FROM tasks WHERE id = $1 FOR UPDATE", [task]);
+      const blockedWrite = deploymentFirst.query(`INSERT INTO deployments
+        (project_id, repository_id, environment_id, task_id, revision, status)
+        VALUES ($1, $2, $3, $4, 'cycle-rev', 'READY')`, [project, repository, environment, task])
+        .then(() => "completed", (error: { code?: string }) => error.code ?? "unknown");
+      let waitingOnTask = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const state = await setup.query(`SELECT EXISTS (
+          SELECT 1 FROM pg_locks WHERE pid = $1
+            AND locktype = 'advisory' AND classid = 107554 AND objid = 8 AND granted
+        ) AND EXISTS (
+          SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock'
+        ) AS waiting`, [deploymentPid]);
+        if (state.rows[0].waiting) { waitingOnTask = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waitingOnTask).toBe(true);
+      // This unrelated deployment has no task_id; a correct lock protocol
+      // must not make it wait behind another task's blocked deployment.
+      await expect(taskFirst.query(`INSERT INTO deployments
+        (project_id, repository_id, environment_id, revision, status)
+        VALUES ($1, $2, $3, 'unrelated-rev', 'READY')`, [project, repository, environment]))
+        .resolves.toBeDefined();
+      await taskFirst.query("COMMIT");
+      expect(await blockedWrite).toBe("completed");
+      await deploymentFirst.query("COMMIT");
+    } finally {
+      for (const client of [taskFirst, deploymentFirst]) {
+        try { await client.query("ROLLBACK"); } catch {}
+        client.release();
+      }
+      await setup.query("SET search_path TO public");
+      await setup.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      setup.release();
+      await pool.end();
+    }
+  });
+
 });
