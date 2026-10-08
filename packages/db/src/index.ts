@@ -15,9 +15,9 @@ export function createDatabasePool(config?: PoolConfig): Pool {
 
 /**
  * Fail closed when an application starts with schema-owner credentials.
- * Set JEV_ENFORCE_RUNTIME_ROLE=1 in deployed API/worker processes.
+ * Enforced by default for production API/worker processes.
  * Migrations deliberately use a separate privileged connection and must not
- * set this flag. This is a startup guard, not a replacement for SQL GRANTs.
+ * call this runtime startup check. This is a startup guard, not a replacement for SQL GRANTs.
  */
 export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
   const result = await pool.query<{
@@ -56,7 +56,7 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
 }
 
 export async function checkDatabase(pool: Pool): Promise<void> {
-  if (process.env.JEV_ENFORCE_RUNTIME_ROLE === "1") {
+  if (process.env.NODE_ENV === "production" || process.env.JEV_ENFORCE_RUNTIME_ROLE === "1") {
     await assertRestrictedRuntimeRole(pool);
   }
   await pool.query("SELECT 1");
