@@ -656,6 +656,18 @@ describe("PLT-008 remediation migration", () => {
         [project]
       );
       expect(persisted.rows[0].count).toBe(1);
+      // Opposite ordering: an Environment write that has committed must
+      // become visible to a later Task transaction on a fresh connection.
+      await taskWriter.query("BEGIN");
+      const visibleRequirement = await taskWriter.query(
+        `SELECT EXISTS (
+          SELECT 1 FROM environments
+          WHERE project_id = $1 AND repository_id = $2 AND kind = 'staging'
+        ) AS required`, [project, repository]
+      );
+      expect(visibleRequirement.rows[0].required).toBe(true);
+      await taskWriter.query("COMMIT");
+
     } finally {
       for (const client of [taskWriter, environmentWriter]) {
         try { await client.query("ROLLBACK"); } catch {}
