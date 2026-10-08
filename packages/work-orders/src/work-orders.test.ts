@@ -747,7 +747,7 @@ describe("WorkOrderService", () => {
     expect(task.status).toBe("CHANGES_REQUESTED");
   });
 
-  it("stales non-staging approval when a staging environment is later added", async () => {
+  it("rejects staging creation after a non-staging approval", async () => {
     const dynamicProjectId = randomUUID();
     const dynamicRepositoryId = randomUUID();
 
@@ -796,21 +796,21 @@ describe("WorkOrderService", () => {
     task = await dynamicService.transitionTask(task.id, "APPROVED", context);
     expect(task.status).toBe("APPROVED");
 
-    await pool.query(
+    await expect(pool.query(
       `INSERT INTO environments (
          project_id, repository_id, kind, name, url
        ) VALUES ($1, $2, 'staging', 'Late Staging', 'https://late-staging.example.test')`,
       [dynamicProjectId, dynamicRepositoryId]
-    );
+    )).rejects.toMatchObject({ code: "23514" });
 
     const persisted = await pool.query(
       "SELECT stale FROM approvals WHERE id = $1",
       [approval.rows[0].id]
     );
-    expect(persisted.rows[0].stale).toBe(true);
+    expect(persisted.rows[0].stale).toBe(false);
   });
 
-  it("stales non-staging approval when an existing environment becomes staging", async () => {
+  it("rejects staging conversion after a non-staging approval", async () => {
     const dynamicProjectId = randomUUID();
     const dynamicRepositoryId = randomUUID();
     const dynamicEnvironmentId = randomUUID();
@@ -866,16 +866,16 @@ describe("WorkOrderService", () => {
     task = await dynamicService.transitionTask(task.id, "APPROVED", context);
     expect(task.status).toBe("APPROVED");
 
-    await pool.query(
+    await expect(pool.query(
       "UPDATE environments SET kind = 'staging' WHERE id = $1",
       [dynamicEnvironmentId]
-    );
+    )).rejects.toMatchObject({ code: "23514" });
 
     const persisted = await pool.query(
       "SELECT stale FROM approvals WHERE id = $1",
       [approval.rows[0].id]
     );
-    expect(persisted.rows[0].stale).toBe(true);
+    expect(persisted.rows[0].stale).toBe(false);
   });
 
   it("does not stale the current approval when an older deployment is edited", async () => {
