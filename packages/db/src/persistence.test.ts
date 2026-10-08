@@ -110,7 +110,7 @@ describe("canonical PostgreSQL persistence", () => {
         `INSERT INTO tasks (
            id, project_id, order_id, repository_id, title, status, risk
          ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [taskId, projectId, orderId, repositoryId, "Task", "AWAITING_HUMAN", "R2"]
+        [taskId, projectId, orderId, repositoryId, "Task", "PLANNED", "R2"]
       );
       await client.query(
         `INSERT INTO task_runs (
@@ -118,10 +118,12 @@ describe("canonical PostgreSQL persistence", () => {
          ) VALUES ($1, $2, $3, $4, $5, $6)`,
         [taskRunId, taskId, "RUNNING", "corr-test", "openai", "test-model"]
       );
+      // Persist an approval-shaped record without manufacturing a reviewed task state.
+      // The lifecycle/approval gate itself is covered by PLT-008 work-order tests.
       await client.query(
         `INSERT INTO approvals (
-           id, task_id, actor_user_id, decision, revision, commit_sha
-         ) VALUES ($1, $2, $3, $4, $5, $6)`,
+           id, task_id, actor_user_id, decision, revision, commit_sha, stale
+         ) VALUES ($1, $2, $3, $4, $5, $6, TRUE)`,
         [
           approvalId,
           taskId,
