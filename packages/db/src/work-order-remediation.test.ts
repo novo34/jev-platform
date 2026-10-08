@@ -627,6 +627,13 @@ describe("PLT-008 remediation migration", () => {
       await setup.query("INSERT INTO orders (id, project_id, objective) VALUES ($1, $2, 'Race')", [order, project]);
       await setup.query(`INSERT INTO tasks (id, project_id, order_id, repository_id, title)
         VALUES ($1, $2, $3, $4, 'Race Task')`, [task, project, order, repository]);
+      // Multiple Tasks in the same scope must participate in the same
+      // staging requirement serialization protocol.
+      const secondTask = randomUUID();
+      await setup.query(`INSERT INTO tasks
+        (id, project_id, order_id, repository_id, title)
+        VALUES ($1, $2, $3, $4, 'Second race Task')`,
+        [secondTask, project, order, repository]);
       for (const client of [taskWriter, environmentWriter]) {
         await client.query(`SET search_path TO "${schema}", public`);
         await client.query("SET lock_timeout = '1500ms'");
@@ -690,6 +697,29 @@ describe("PLT-008 remediation migration", () => {
         [project, repository]
       );
       expect(environments.rows[0].count).toBe(2);
+      // A staging change must also wait for a lock on a *different* Task
+      // within the same scope, not only the Task used above.
+      await taskWriter.query("BEGIN");
+      await taskWriter.query("SELECT id FROM tasks WHERE id = $1 FOR UPDATE", [secondTask]);
+      const thirdWrite = environmentWriter.query(`INSERT INTO environments
+        (project_id, repository_id, kind, name)
+        VALUES ($1, $2, 'staging', 'Third concurrent staging')`,
+        [project, repository])
+        .then(() => "completed", (error: { code?: string }) => error.code ?? "unknown");
+      let blockedOnSecondTask = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const state = await setup.query(`SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE pid = $1 AND wait_event_type = 'Lock'
+            AND cardinality(pg_blocking_pids(pid)) > 0
+        ) AS waiting`, [pid]);
+        if (state.rows[0].waiting) { blockedOnSecondTask = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      await taskWriter.query("COMMIT");
+      expect(blockedOnSecondTask).toBe(true);
+      expect(await thirdWrite).toBe("completed");
+
 
     } finally {
       for (const client of [taskWriter, environmentWriter]) {
