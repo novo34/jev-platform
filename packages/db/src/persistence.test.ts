@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabasePool } from "./index.js";
+import { assertRestrictedRuntimeRole, createDatabasePool } from "./index.js";
 import { migrate } from "./migrations.js";
 
 const pool = createDatabasePool();
@@ -14,6 +14,12 @@ afterAll(async () => {
 });
 
 describe("canonical PostgreSQL persistence", () => {
+  it("rejects the migration owner as a restricted application runtime", async () => {
+    await expect(assertRestrictedRuntimeRole(pool)).rejects.toThrow(
+      "Unsafe JEV runtime database role"
+    );
+  });
+
   it("creates the canonical tables and persists one connected record graph", async () => {
     const organizationId = randomUUID();
     const userId = randomUUID();
