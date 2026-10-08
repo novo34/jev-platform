@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDatabasePool, DEFAULT_MIGRATIONS_DIR, withDeploymentWriteScopes } from "./index.js";
+import { createDatabasePool, DEFAULT_MIGRATIONS_DIR, setDeploymentStatuses, withDeploymentWriteScopes } from "./index.js";
 
 async function migration(name: string): Promise<string> {
   const sql = await readFile(path.join(DEFAULT_MIGRATIONS_DIR, name), "utf8");
@@ -752,6 +752,13 @@ describe("PLT-008 remediation migration", () => {
       await environmentWriter.query("ROLLBACK");
       // Diagnostic reproducer for unsafe direct SQL; not the safe API acceptance gate.
       expect(bulkResults).toContain("40P01");
+      // The controlled SQL function is the future restricted-runtime entry point.
+      // In the isolated schema, qualify the function through the session path.
+      // The function is installed by migration 0010 and rejects PUBLIC EXECUTE.
+      const controlled = await setup.query(
+        "SELECT has_function_privilege('public', 'jev_set_deployment_status(uuid,uuid[],text)', 'EXECUTE') AS allowed"
+      );
+      expect(controlled.rows[0].allowed).toBe(false);
       // GREEN: the new entry point serializes conflicting bulk writes before
       // either session acquires a deployment row lock.
       const scopedPool = createDatabasePool({ options: `-c search_path=${schema},public` });
