@@ -807,6 +807,37 @@ BEGIN
 END;
 $approval$ LANGUAGE plpgsql;
 
+-- Serialize staging evidence mutations with Task status transitions.
+-- The transition trigger locks the Task row; taking the same lock before
+-- changing deployment evidence prevents snapshot races with approval checks.
+CREATE OR REPLACE FUNCTION lock_task_for_staging_evidence_change()
+RETURNS TRIGGER AS $lock_staging_task$
+DECLARE
+  affected_task_id UUID;
+BEGIN
+  FOR affected_task_id IN
+    SELECT DISTINCT task_id
+    FROM (
+      SELECT CASE WHEN TG_OP <> 'INSERT' THEN OLD.task_id END AS task_id
+      UNION ALL
+      SELECT CASE WHEN TG_OP <> 'DELETE' THEN NEW.task_id END AS task_id
+    ) affected
+    WHERE task_id IS NOT NULL
+    ORDER BY task_id
+  LOOP
+    PERFORM 1 FROM tasks WHERE id = affected_task_id FOR UPDATE;
+  END LOOP;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$lock_staging_task$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_00_lock_task_for_staging_evidence_change
+BEFORE INSERT OR DELETE OR UPDATE OF
+  project_id, repository_id, environment_id, task_id, revision, url, status
+ON deployments
+FOR EACH ROW EXECUTE FUNCTION lock_task_for_staging_evidence_change();
+
 CREATE TRIGGER trg_invalidate_task_approvals_on_staging_change
 AFTER INSERT OR DELETE OR UPDATE OF
   project_id, repository_id, environment_id, task_id, revision, url, status
