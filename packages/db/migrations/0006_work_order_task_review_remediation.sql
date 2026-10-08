@@ -826,6 +826,17 @@ BEGIN
     ORDER BY task_id
   LOOP
     PERFORM 1 FROM tasks WHERE id = affected_task_id FOR UPDATE;
+    -- An approved Task must never silently lose its reviewed deployment
+    -- evidence. Reject mutations until a legitimate review transition
+    -- has moved the Task out of APPROVED.
+    IF EXISTS (
+      SELECT 1 FROM tasks
+      WHERE id = affected_task_id AND status = 'APPROVED'
+    ) THEN
+      RAISE EXCEPTION
+        'cannot mutate deployment evidence while its task is APPROVED'
+        USING ERRCODE = '23514';
+    END IF;
   END LOOP;
   IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
