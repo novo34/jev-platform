@@ -554,13 +554,7 @@ BEGIN
          AND a.evidence->>'stagingDeploymentId' = d.id::text
         JOIN environments e ON e.id = d.environment_id
         WHERE a.task_id = NEW.id
-          AND a.id = (
-            SELECT latest.id
-            FROM approvals latest
-            WHERE latest.task_id = NEW.id
-            ORDER BY latest.created_at DESC, latest.id DESC
-            LIMIT 1
-          )
+          AND a.stale = FALSE
           AND a.decision = 'APPROVED'
           AND a.stale = FALSE
           AND a.revision IS NOT NULL
@@ -596,13 +590,7 @@ BEGIN
         SELECT 1
         FROM approvals a
         WHERE a.task_id = NEW.id
-          AND a.id = (
-            SELECT latest.id
-            FROM approvals latest
-            WHERE latest.task_id = NEW.id
-            ORDER BY latest.created_at DESC, latest.id DESC
-            LIMIT 1
-          )
+          AND a.stale = FALSE
           AND a.decision = 'APPROVED'
           AND a.stale = FALSE
           AND a.revision IS NOT NULL
@@ -629,13 +617,7 @@ BEGIN
       SELECT 1
       FROM approvals a
       WHERE a.task_id = NEW.id
-        AND a.id = (
-          SELECT latest.id
-          FROM approvals latest
-          WHERE latest.task_id = NEW.id
-          ORDER BY latest.created_at DESC, latest.id DESC
-          LIMIT 1
-        )
+        AND a.stale = FALSE
         AND a.decision = NEW.status
         AND a.stale = FALSE
     ) THEN
@@ -657,7 +639,7 @@ BEGIN
     (OLD.status = 'READY' AND NEW.status IN ('RUNNING', 'BLOCKED', 'REJECTED')) OR
     (OLD.status = 'RUNNING' AND NEW.status IN ('VERIFYING', 'BLOCKED', 'FAILED')) OR
     (OLD.status = 'VERIFYING' AND NEW.status IN ('VERIFIED', 'RUNNING', 'BLOCKED', 'FAILED')) OR
-    (OLD.status = 'VERIFIED' AND NEW.status IN ('STAGING', 'RUNNING', 'CHANGES_REQUESTED')) OR
+    (OLD.status = 'VERIFIED' AND NEW.status IN ('STAGING', 'RUNNING')) OR
     (OLD.status = 'STAGING' AND NEW.status IN ('AWAITING_HUMAN', 'BLOCKED', 'FAILED')) OR
     (OLD.status = 'AWAITING_HUMAN' AND NEW.status IN ('APPROVED', 'CHANGES_REQUESTED', 'REJECTED')) OR
     (OLD.status = 'APPROVED' AND NEW.status = 'CHANGES_REQUESTED') OR
