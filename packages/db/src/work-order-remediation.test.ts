@@ -752,7 +752,7 @@ describe("PLT-008 remediation migration", () => {
       expect(bulkResults).toContain("40P01");
       // GREEN: the new entry point serializes conflicting bulk writes before
       // either session acquires a deployment row lock.
-      const scopedPool = createDatabasePool();
+      const scopedPool = createDatabasePool({ options: `-c search_path=${schema},public` });
       try {
         const one = withDeploymentWriteScopes(scopedPool, [project], async client => {
           await client.query(`SET LOCAL search_path TO "${schema}", public`);
