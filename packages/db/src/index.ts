@@ -18,3 +18,4 @@ export async function checkDatabase(pool: Pool): Promise<void> {
 }
 
 export { migrate, DEFAULT_MIGRATIONS_DIR } from "./migrations.js";
+export { withDeploymentWriteScopes } from "./deployment-write.js";
