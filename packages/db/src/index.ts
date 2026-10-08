@@ -25,9 +25,16 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
     elevated: boolean;
     owns_guarded: boolean;
     can_write_guarded: boolean;
+    guarded_table_count: number;
   }>(`
     SELECT current_user AS role_name,
-           (r.rolsuper OR r.rolcreaterole OR r.rolbypassrls) AS elevated,
+           (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolbypassrls) AS elevated,
+           (SELECT COUNT(*)::int FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = current_schema()
+               AND c.relkind IN ('r','p')
+               AND c.relname IN ('tasks','approvals','deployments','environments')
+           ) AS guarded_table_count,
            EXISTS (
              SELECT 1 FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -47,7 +54,7 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
     FROM pg_roles r WHERE r.rolname = current_user
   `);
   const role = result.rows[0];
-  if (!role || role.elevated || role.owns_guarded || role.can_write_guarded) {
+  if (!role || role.guarded_table_count !== 4 || role.elevated || role.owns_guarded || role.can_write_guarded) {
     throw new Error(
       `Unsafe JEV runtime database role: ${role?.role_name ?? "unknown"}; ` +
       "use a restricted application credential, not the migration owner"
