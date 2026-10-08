@@ -719,6 +719,38 @@ describe("PLT-008 remediation migration", () => {
       await taskWriter.query("COMMIT");
       expect(blockedOnSecondTask).toBe(true);
       expect(await thirdWrite).toBe("completed");
+      // F-03 RED: two bulk statements with pre-held opposing deployment
+      // row locks must not deadlock. This currently exposes the absence of
+      // statement-wide deterministic lock acquisition.
+      const deployments = await setup.query<{ id: string; task_id: string }>(
+        `INSERT INTO deployments
+         (project_id, repository_id, environment_id, task_id, provider, revision, status)
+         VALUES
+         ($1, $2, (SELECT id FROM environments WHERE project_id = $1 ORDER BY id LIMIT 1),
+          $3, 'test', 'bulk-a', 'READY'),
+         ($1, $2, (SELECT id FROM environments WHERE project_id = $1 ORDER BY id LIMIT 1),
+          $4, 'test', 'bulk-b', 'READY')
+         RETURNING id, task_id`,
+        [project, repository, task, secondTask]
+      );
+      const first = deployments.rows.find(row => row.task_id === task)!.id;
+      const second = deployments.rows.find(row => row.task_id === secondTask)!.id;
+      await taskWriter.query("BEGIN");
+      await environmentWriter.query("BEGIN");
+      await taskWriter.query("UPDATE deployments SET status = 'FAILED' WHERE id = $1", [first]);
+      await environmentWriter.query("UPDATE deployments SET status = 'FAILED' WHERE id = $1", [second]);
+      const bulkA = taskWriter.query(
+        "UPDATE deployments SET status = 'READY' WHERE id IN ($1, $2)", [first, second]
+      ).then(() => "ok", (error: { code?: string }) => error.code ?? "unknown");
+      const bulkB = environmentWriter.query(
+        "UPDATE deployments SET status = 'READY' WHERE id IN ($1, $2)", [second, first]
+      ).then(() => "ok", (error: { code?: string }) => error.code ?? "unknown");
+      const bulkResults = await Promise.all([bulkA, bulkB]);
+      await taskWriter.query("ROLLBACK");
+      await environmentWriter.query("ROLLBACK");
+      expect(bulkResults).not.toContain("40P01");
+      expect(bulkResults).not.toContain("55P03");
+
 
 
     } finally {
