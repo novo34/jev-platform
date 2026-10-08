@@ -370,6 +370,24 @@ ALTER TABLE tasks
     )
   );
 
+-- A Task must always enter the lifecycle at PLANNED. Transition and
+-- promotion gates only run after insertion, so accepting a caller-supplied
+-- terminal/intermediate initial state would bypass those invariants.
+CREATE OR REPLACE FUNCTION validate_initial_task_status()
+RETURNS TRIGGER AS $initial_task_status$
+BEGIN
+  IF NEW.status <> 'PLANNED' THEN
+    RAISE EXCEPTION 'new tasks must start in PLANNED, got %', NEW.status
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$initial_task_status$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_initial_task_status
+BEFORE INSERT ON tasks
+FOR EACH ROW EXECUTE FUNCTION validate_initial_task_status();
+
 -- Deployments must be scoped to the same project/repository as both their
 -- environment and, when present, their task. Validate legacy rows before
 -- installing race-safe composite foreign keys.
