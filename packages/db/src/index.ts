@@ -56,9 +56,7 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
 }
 
 export async function checkDatabase(pool: Pool): Promise<void> {
-  if (process.env.JEV_ENFORCE_RUNTIME_ROLE === "1") {
-    await assertRestrictedRuntimeRole(pool);
-  }
+  await assertRestrictedRuntimeRole(pool);
   await pool.query("SELECT 1");
 }
 
