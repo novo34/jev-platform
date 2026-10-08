@@ -96,10 +96,9 @@ afterAll(async () => {
   // Test-only cleanup: production approval rows are append-only and reject DELETE.
   // TRUNCATE does not weaken the row-level contract installed by the migration.
   await pool.query("TRUNCATE TABLE approvals");
-  await pool.query(
-    "DELETE FROM deployments WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
-    [organizationId]
-  );
+  // Test-only teardown: approved Tasks intentionally forbid deployment
+  // mutation. TRUNCATE avoids exercising business DML during cleanup.
+  await pool.query("TRUNCATE TABLE deployments");
   await pool.query(
     "DELETE FROM tasks WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
     [organizationId]
