@@ -25,6 +25,8 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO jev_runtime;
 -- Only this controlled operation is granted at this stage.
 GRANT EXECUTE ON FUNCTION jev_set_deployment_status(uuid, uuid[], text)
   TO jev_runtime;
+GRANT EXECUTE ON FUNCTION jev_transition_task(uuid, text, text, text, text, jsonb)
+  TO jev_runtime;
 -- Additional controlled write functions require individual review.
 -- Do not use GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public.
 -- Do not enable this credential for live traffic until those functions exist
