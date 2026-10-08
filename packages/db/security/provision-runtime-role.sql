@@ -31,6 +31,14 @@ GRANT EXECUTE ON FUNCTION jev_transition_task(uuid, text, text, text, text, json
 GRANT INSERT ON TABLE projects, repositories, orders, requirements, task_requirements,
   order_state_history TO jev_runtime;
 GRANT UPDATE (status) ON TABLE orders TO jev_runtime;
+-- API authentication and audit paths; no guarded-table privileges.
+GRANT INSERT ON TABLE auth_sessions, audit_events TO jev_runtime;
+GRANT UPDATE (last_seen_at) ON TABLE auth_sessions TO jev_runtime;
+GRANT DELETE ON TABLE auth_sessions TO jev_runtime;
+-- Control API changes only project operational state.
+GRANT UPDATE (status, updated_at) ON TABLE projects TO jev_runtime;
+-- Queue workers need to claim jobs and record worker heartbeats.
+GRANT INSERT, UPDATE ON TABLE jobs, worker_instances TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_task(uuid, uuid, uuid, text, text, jsonb) TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_environment(uuid, uuid, text, text, text, jsonb) TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_lock_project_scope(uuid) TO jev_runtime;
