@@ -41,3 +41,24 @@ export async function withDeploymentWriteScopes<T>(
     client.release();
   }
 }
+
+/**
+ * Runtime-safe deployment status mutation. The database function owns locking,
+ * scope validation and the atomic update. Unlike withDeploymentWriteScopes,
+ * this entry point requires no direct UPDATE privilege on deployments.
+ */
+export async function setDeploymentStatuses(
+  pool: Pool,
+  projectId: string,
+  deploymentIds: readonly string[],
+  status: "READY" | "RUNNING" | "VERIFYING" | "VERIFIED" | "BLOCKED" | "FAILED" | "REJECTED"
+): Promise<number> {
+  if (!projectId || deploymentIds.length === 0) {
+    throw new Error("Project ID and at least one deployment ID are required");
+  }
+  const result = await pool.query<{ updated_count: number }>(
+    "SELECT jev_set_deployment_status($1::uuid, $2::uuid[], $3::text) AS updated_count",
+    [projectId, [...new Set(deploymentIds)].sort(), status]
+  );
+  return result.rows[0].updated_count;
+}
