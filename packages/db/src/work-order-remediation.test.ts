@@ -596,7 +596,7 @@ describe("PLT-008 remediation migration", () => {
     }
   });
 
-  it("RED: serializes staging creation against an in-flight Task row lock", async () => {
+  it("serializes staging creation and Task transitions in both lock directions", async () => {
     const pool = createDatabasePool();
     const setup = await pool.connect();
     const taskWriter = await pool.connect();
@@ -656,17 +656,33 @@ describe("PLT-008 remediation migration", () => {
         [project]
       );
       expect(persisted.rows[0].count).toBe(1);
-      // Opposite ordering: an Environment write that has committed must
-      // become visible to a later Task transaction on a fresh connection.
-      await taskWriter.query("BEGIN");
-      const visibleRequirement = await taskWriter.query(
-        `SELECT EXISTS (
-          SELECT 1 FROM environments
-          WHERE project_id = $1 AND repository_id = $2 AND kind = 'staging'
-        ) AS required`, [project, repository]
+      // Reverse lock order: the Environment writer locks affected Tasks,
+      // and a real Task transition must wait until that writer commits.
+      await environmentWriter.query("BEGIN");
+      await environmentWriter.query(`INSERT INTO environments
+        (project_id, repository_id, kind, name)
+        VALUES ($1, $2, 'staging', 'Second concurrent staging')`, [project, repository]);
+      const taskPid = Number((await taskWriter.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      const taskTransition = taskWriter.query(
+        "UPDATE tasks SET status = 'READY' WHERE id = $1", [task]
+      ).then(() => "completed", (error: { code?: string }) => error.code ?? "unknown");
+      let taskBlocked = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const state = await setup.query(`SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE pid = $1 AND wait_event_type = 'Lock'
+            AND cardinality(pg_blocking_pids(pid)) > 0
+        ) AS waiting`, [taskPid]);
+        if (state.rows[0].waiting) { taskBlocked = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      await environmentWriter.query("COMMIT");
+      expect(taskBlocked).toBe(true);
+      expect(await taskTransition).toBe("completed");
+      const finalState = await setup.query(
+        "SELECT status FROM tasks WHERE id = $1", [task]
       );
-      expect(visibleRequirement.rows[0].required).toBe(true);
-      await taskWriter.query("COMMIT");
+      expect(finalState.rows[0].status).toBe("READY");
 
     } finally {
       for (const client of [taskWriter, environmentWriter]) {
