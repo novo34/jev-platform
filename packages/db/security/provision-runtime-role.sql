@@ -20,7 +20,7 @@ $jev_role$;
 
 REVOKE ALL ON TABLE tasks, approvals, deployments, environments FROM jev_runtime;
 GRANT USAGE ON SCHEMA public TO jev_runtime;
-GRANT SELECT ON TABLE tasks, approvals, deployments, environments TO jev_runtime;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO jev_runtime;
 
 -- Only this controlled operation is granted at this stage.
 GRANT EXECUTE ON FUNCTION jev_set_deployment_status(uuid, uuid[], text)
