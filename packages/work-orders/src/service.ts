@@ -231,10 +231,7 @@ export class WorkOrderService {
       }
 
       const taskResult = await client.query(
-        `INSERT INTO tasks (
-           project_id, order_id, repository_id, title, status, risk, acceptance_criteria
-         ) VALUES ($1, $2, $3, $4, 'PLANNED', $5, $6::jsonb)
-         RETURNING id`,
+        "SELECT jev_create_task($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::jsonb) AS id",
         [
           input.projectId,
           input.orderId,
