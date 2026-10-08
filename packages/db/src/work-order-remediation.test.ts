@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDatabasePool, DEFAULT_MIGRATIONS_DIR } from "./index.js";
+import { createDatabasePool, DEFAULT_MIGRATIONS_DIR, withDeploymentWriteScopes } from "./index.js";
 
 async function migration(name: string): Promise<string> {
   const sql = await readFile(path.join(DEFAULT_MIGRATIONS_DIR, name), "utf8");
@@ -750,6 +750,36 @@ describe("PLT-008 remediation migration", () => {
       await environmentWriter.query("ROLLBACK");
       // Diagnostic reproducer for unsafe direct SQL; not the safe API acceptance gate.
       expect(bulkResults).toContain("40P01");
+      // GREEN: the new entry point serializes conflicting bulk writes before
+      // either session acquires a deployment row lock.
+      const scopedPool = createDatabasePool();
+      try {
+        const one = withDeploymentWriteScopes(scopedPool, [project], async client => {
+          await client.query(`SET LOCAL search_path TO "${schema}", public`);
+          await client.query(
+            "UPDATE deployments SET status = 'FAILED' WHERE id IN ($1, $2)",
+            [first, second]
+          );
+          return "first";
+        });
+        const two = withDeploymentWriteScopes(scopedPool, [project], async client => {
+          await client.query(`SET LOCAL search_path TO "${schema}", public`);
+          await client.query(
+            "UPDATE deployments SET status = 'READY' WHERE id IN ($1, $2)",
+            [second, first]
+          );
+          return "second";
+        });
+        expect((await Promise.all([one, two])).sort()).toEqual(["first", "second"]);
+        const persistedBulk = await setup.query(
+          "SELECT COUNT(*)::int AS count FROM deployments WHERE id IN ($1, $2)",
+          [first, second]
+        );
+        expect(persistedBulk.rows[0].count).toBe(2);
+      } finally {
+        await scopedPool.end();
+      }
+
 
 
 
