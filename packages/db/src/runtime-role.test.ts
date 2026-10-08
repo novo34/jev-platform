@@ -118,7 +118,7 @@ describe("restricted deployment writer", () => {
       );
       await owner.query("UPDATE orders SET status='READY' WHERE id=$1", [newOrder.rows[0].id]);
       const orderHistory = await owner.query(
-        "SELECT to_status FROM order_state_history WHERE order_id=$1 ORDER BY created_at,id",
+        "SELECT to_status FROM order_state_history WHERE order_id=$1 ORDER BY (from_status IS NOT NULL),created_at,id",
         [newOrder.rows[0].id]
       );
       expect(orderHistory.rows.map((x) => x.to_status)).toEqual(["PLANNED", "READY"]);
