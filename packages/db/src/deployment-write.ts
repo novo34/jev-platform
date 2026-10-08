@@ -21,10 +21,10 @@ export async function withDeploymentWriteScopes<T>(
   try {
     await client.query("BEGIN");
     // A project row is the stable parent of its repositories, environments,
-    // tasks and deployments. Lock it before any child-row mutation.
+    // tasks and deployments. NO KEY UPDATE avoids conflicting with FK\n    // KEY SHARE checks on projects during child-row inserts.
     for (const projectId of scopes) {
       const result = await client.query(
-        "SELECT id FROM projects WHERE id = $1 FOR UPDATE", [projectId]
+        "SELECT id FROM projects WHERE id = $1 FOR NO KEY UPDATE", [projectId]
       );
       if (result.rowCount !== 1) {
         throw new Error(`Unknown project scope: ${projectId}`);
