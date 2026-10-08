@@ -274,6 +274,23 @@ describe("WorkOrderService", () => {
         [projectId, repositoryId])
     ).rejects.toMatchObject({ code: "23514" });
 
+    // Changing a non-staging Environment into staging is equivalent to
+    // introducing a new staging requirement and must be rejected as well.
+    const otherEnvironment = await pool.query<{ id: string }>(
+      `INSERT INTO environments (project_id, repository_id, kind, name)
+       VALUES ($1, $2, 'production', 'Promotion target') RETURNING id`,
+      [projectId, repositoryId]
+    );
+    await expect(
+      pool.query("UPDATE environments SET kind = 'staging' WHERE id = $1",
+        [otherEnvironment.rows[0].id])
+    ).rejects.toMatchObject({ code: "23514" });
+    const unchangedEnvironment = await pool.query(
+      "SELECT kind FROM environments WHERE id = $1",
+      [otherEnvironment.rows[0].id]
+    );
+    expect(unchangedEnvironment.rows[0].kind).toBe("production");
+
     const approval = await pool.query(
       "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-plt008'",
       [task.id]
