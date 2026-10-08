@@ -683,6 +683,13 @@ describe("PLT-008 remediation migration", () => {
         "SELECT status FROM tasks WHERE id = $1", [task]
       );
       expect(finalState.rows[0].status).toBe("READY");
+      // The second Environment is committed and visible alongside the first.
+      // Neither writer should leave a partially persisted staging requirement.
+      const environments = await setup.query(
+        "SELECT COUNT(*)::int AS count FROM environments WHERE project_id = $1 AND repository_id = $2 AND kind = 'staging'",
+        [project, repository]
+      );
+      expect(environments.rows[0].count).toBe(2);
 
     } finally {
       for (const client of [taskWriter, environmentWriter]) {
