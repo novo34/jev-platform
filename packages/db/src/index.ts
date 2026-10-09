@@ -25,6 +25,7 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
     elevated: boolean;
     owns_guarded: boolean;
     can_write_guarded: boolean;
+    can_switch_roles: boolean;
     guarded_table_count: number;
   }>(`
     SELECT current_user AS role_name,
@@ -43,18 +44,35 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
                AND pg_has_role(current_user, c.relowner, 'MEMBER')
            ) AS owns_guarded,
            EXISTS (
+             SELECT 1 FROM pg_roles accessible
+             WHERE accessible.rolname <> current_user
+               AND pg_has_role(current_user, accessible.oid, 'SET')
+           ) AS can_switch_roles,
+           EXISTS (
              SELECT 1 FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = current_schema()
+               AND c.relkind IN ('r', 'p')
                AND c.relname IN ('tasks', 'approvals', 'deployments', 'environments')
-               AND (has_table_privilege(c.oid, 'INSERT')
+               AND (
+                 has_table_privilege(c.oid, 'INSERT')
                  OR has_table_privilege(c.oid, 'UPDATE')
-                 OR has_table_privilege(c.oid, 'DELETE'))
+                 OR has_table_privilege(c.oid, 'DELETE')
+                 OR EXISTS (
+                   SELECT 1 FROM pg_attribute a
+                   WHERE a.attrelid = c.oid
+                     AND a.attnum > 0 AND NOT a.attisdropped
+                     AND (
+                       has_column_privilege(c.oid, a.attnum, 'INSERT')
+                       OR has_column_privilege(c.oid, a.attnum, 'UPDATE')
+                     )
+                 )
+               )
            ) AS can_write_guarded
     FROM pg_roles r WHERE r.rolname = current_user
   `);
   const role = result.rows[0];
-  if (!role || role.guarded_table_count !== 4 || role.elevated || role.owns_guarded || role.can_write_guarded) {
+  if (!role || role.guarded_table_count !== 4 || role.elevated || role.owns_guarded || role.can_switch_roles || role.can_write_guarded) {
     throw new Error(
       `Unsafe JEV runtime database role: ${role?.role_name ?? "unknown"}; ` +
       "use a restricted application credential, not the migration owner"
