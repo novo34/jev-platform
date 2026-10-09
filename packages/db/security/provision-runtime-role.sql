@@ -13,12 +13,50 @@ BEGIN
 END;
 $jev_role$;
 
+-- Fail closed for pre-existing dangerous role attributes or membership.
+-- NOINHERIT does not prevent SET ROLE in PostgreSQL 16.
+ALTER ROLE jev_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOINHERIT NOREPLICATION NOBYPASSRLS;
+DO $jev_memberships$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_auth_members m
+    JOIN pg_catalog.pg_roles r ON r.oid = m.member
+    WHERE r.rolname = 'jev_runtime'
+  ) THEN
+    RAISE EXCEPTION
+      'jev_runtime must have no role memberships; revoke them before provisioning'
+      USING ERRCODE = '42501';
+  END IF;
+END;
+$jev_memberships$;
+
 -- Never embed a password here. Provision credentials using a secret manager.
 -- Do not grant jev_runtime membership in the schema-owner or migrator role.
 -- In PostgreSQL 16, NOINHERIT alone does not prevent SET ROLE: membership
 -- grants must also exclude SET privileges.
 
 REVOKE ALL ON TABLE tasks, approvals, deployments, environments FROM jev_runtime;
+-- Table REVOKE does NOT revoke historical column-level INSERT/UPDATE grants.
+DO $jev_revoke_cols$
+DECLARE c record;
+BEGIN
+  FOR c IN
+    SELECT t.relname AS table_name, a.attname AS column_name
+    FROM pg_catalog.pg_class t
+    JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid
+    WHERE n.nspname = 'public' AND t.relkind IN ('r','p')
+      AND t.relname IN ('tasks','approvals','deployments','environments')
+      AND a.attnum > 0 AND NOT a.attisdropped
+  LOOP
+    EXECUTE format(
+      'REVOKE INSERT (%I), UPDATE (%I), REFERENCES (%I) ON TABLE public.%I FROM jev_runtime',
+      c.column_name, c.column_name, c.column_name, c.table_name
+    );
+  END LOOP;
+END;
+$jev_revoke_cols$;
 GRANT USAGE ON SCHEMA public TO jev_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO jev_runtime;
 
