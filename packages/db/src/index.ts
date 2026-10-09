@@ -19,9 +19,19 @@ export function createDatabasePool(config?: PoolConfig): Pool {
  * Migrations deliberately use a separate privileged connection and must not
  * call this runtime startup check. This is a startup guard, not a replacement for SQL GRANTs.
  */
-export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
+export async function assertRestrictedRuntimeRole(
+  pool: Pool,
+  applicationSchema = "public"
+): Promise<void> {
+  // The deployment role is provisioned for the canonical application schema.
+  // Never infer the security boundary from search_path/current_schema().
+  // Passing another schema is reserved for isolated migration/test fixtures.
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(applicationSchema)) {
+    throw new Error("Invalid JEV application schema");
+  }
   const result = await pool.query<{
     role_name: string;
+    active_schema: string | null;
     elevated: boolean;
     owns_guarded: boolean;
     can_write_guarded: boolean;
@@ -29,17 +39,18 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
     guarded_table_count: number;
   }>(`
     SELECT current_user AS role_name,
+           current_schema() AS active_schema,
            (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolbypassrls OR r.rolreplication) AS elevated,
            (SELECT COUNT(*)::int FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE n.nspname = current_schema()
+             WHERE n.nspname = $1::text
                AND c.relkind IN ('r','p')
                AND c.relname IN ('tasks','approvals','deployments','environments')
            ) AS guarded_table_count,
            EXISTS (
              SELECT 1 FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE n.nspname = current_schema()
+             WHERE n.nspname = $1::text
                AND c.relname IN ('tasks', 'approvals', 'deployments', 'environments')
                AND pg_has_role(current_user, c.relowner, 'MEMBER')
            ) AS owns_guarded,
@@ -51,7 +62,7 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
            EXISTS (
              SELECT 1 FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE n.nspname = current_schema()
+             WHERE n.nspname = $1::text
                AND c.relkind IN ('r', 'p')
                AND c.relname IN ('tasks', 'approvals', 'deployments', 'environments')
                AND (
@@ -72,9 +83,9 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
                )
            ) AS can_write_guarded
     FROM pg_roles r WHERE r.rolname = current_user
-  `);
+  `, [applicationSchema]);
   const role = result.rows[0];
-  if (!role || role.guarded_table_count !== 4 || role.elevated || role.owns_guarded || role.has_role_memberships || role.can_write_guarded) {
+  if (!role || role.active_schema !== applicationSchema || role.guarded_table_count !== 4 || role.elevated || role.owns_guarded || role.has_role_memberships || role.can_write_guarded) {
     throw new Error(
       `Unsafe JEV runtime database role: ${role?.role_name ?? "unknown"}; ` +
       "use a restricted application credential, not the migration owner"
