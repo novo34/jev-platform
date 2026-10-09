@@ -19,7 +19,20 @@ checks AS (
          pg_catalog.has_table_privilege(oid, 'INSERT') AS can_insert,
          pg_catalog.has_table_privilege(oid, 'UPDATE') AS can_update,
          pg_catalog.has_table_privilege(oid, 'DELETE') AS can_delete,
-         (SELECT r.rolsuper OR r.rolbypassrls OR r.rolcreaterole
+         EXISTS (
+           SELECT 1 FROM pg_catalog.pg_attribute a
+           WHERE a.attrelid = oid AND a.attnum > 0 AND NOT a.attisdropped
+             AND (
+               pg_catalog.has_column_privilege(oid, a.attnum, 'INSERT')
+               OR pg_catalog.has_column_privilege(oid, a.attnum, 'UPDATE')
+             )
+         ) AS can_write_columns,
+         EXISTS (
+           SELECT 1 FROM pg_catalog.pg_roles switchable
+           WHERE switchable.rolname <> current_user
+             AND pg_catalog.pg_has_role(current_user, switchable.oid, 'SET')
+         ) AS can_set_role,
+         (SELECT r.rolsuper OR r.rolcreatedb OR r.rolbypassrls OR r.rolcreaterole
             FROM pg_catalog.pg_roles r WHERE r.rolname = current_user) AS elevated_role
   FROM guarded_tables
 )
@@ -28,6 +41,7 @@ SELECT *,
                  OR inherits_owner_membership
                  OR elevated_role
                  OR can_insert OR can_update OR can_delete
+                 OR can_write_columns OR can_set_role
             THEN 'FAIL'
             ELSE 'PASS'
        END AS direct_dml_boundary
