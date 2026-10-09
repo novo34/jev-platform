@@ -33,7 +33,8 @@ describe("restricted deployment writer", () => {
         "0013_controlled_task_environment_writers.sql",
         "0014_controlled_project_scope_lock.sql",
         "0015_controlled_approval_deployment_creation.sql",
-        "0016_deployment_order_and_approval_references.sql"
+        "0016_deployment_order_and_approval_references.sql",
+        "0017_atomic_approved_task_rework.sql"
       ];
       for (const file of files) {
         let sql = await readFile(path.join(DEFAULT_MIGRATIONS_DIR, file), "utf8");
