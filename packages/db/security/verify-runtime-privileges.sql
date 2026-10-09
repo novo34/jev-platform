@@ -19,6 +19,8 @@ checks AS (
          pg_catalog.has_table_privilege(oid, 'INSERT') AS can_insert,
          pg_catalog.has_table_privilege(oid, 'UPDATE') AS can_update,
          pg_catalog.has_table_privilege(oid, 'DELETE') AS can_delete,
+         pg_catalog.has_table_privilege(oid, 'TRUNCATE') AS can_truncate,
+         pg_catalog.has_table_privilege(oid, 'TRIGGER') AS can_create_trigger,
          EXISTS (
            SELECT 1 FROM pg_catalog.pg_attribute a
            WHERE a.attrelid = oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -42,6 +44,7 @@ SELECT *,
                  OR elevated_role
                  OR can_insert OR can_update OR can_delete
                  OR can_write_columns OR can_set_role
+                 OR can_truncate OR can_create_trigger
             THEN 'FAIL'
             ELSE 'PASS'
        END AS direct_dml_boundary
