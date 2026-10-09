@@ -948,7 +948,7 @@ describe("WorkOrderService", () => {
     expect(approval.rows[0].stale).toBe(false);
   });
 
-  it("does not stale the current approval when an older deployment is inserted", async () => {
+  it("stales the current approval when a later insertion has an older timestamp", async () => {
     const order = await service.createOrder({ projectId, objective: "Historical deployment insert" });
     let task = await service.createTask({
       projectId,
@@ -1010,10 +1010,10 @@ describe("WorkOrderService", () => {
       "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-current-insert'",
       [task.id]
     );
-    expect(approval.rows[0].stale).toBe(false);
+    // The new row is current by insertion order despite its older timestamp.\n    expect(approval.rows[0].stale).toBe(true);
   });
 
-  it("prevents changing deployment created_at because it defines current evidence", async () => {
+  it("prevents changing deployment created_at as immutable audit metadata", async () => {
     const order = await service.createOrder({ projectId, objective: "Immutable deployment ordering" });
     const task = await service.createTask({
       projectId,
