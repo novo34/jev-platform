@@ -1,8 +1,8 @@
 -- PLT-008 F-04: privilege verification, read-only diagnostic.
 -- Run with the SAME credentials used by the production application.
--- Canonical production schema is public. Do not trust current_schema() to select
+-- Canonical production schema is public. Do not trust pg_catalog.current_schema() to select
 -- protected relations: an earlier search_path entry can shadow all four tables.
--- A non-public current_schema() must cause FAIL even if public has safe ACLs.
+-- A non-public pg_catalog.current_schema() must cause FAIL even if public has safe ACLs.
 -- A row marked FAIL means the runtime role can bypass or modify a guarded
 -- table directly. The migration/owner credential must NOT be used for this check.
 WITH guarded_tables AS (
@@ -17,6 +17,7 @@ WITH guarded_tables AS (
 checks AS (
   SELECT table_name,
          current_user AS runtime_role,
+         pg_catalog.has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_schema,
          pg_catalog.pg_get_userbyid(relowner) AS owner_role,
          pg_catalog.pg_has_role(current_user, relowner, 'MEMBER') AS inherits_owner_membership,
          pg_catalog.has_table_privilege(oid, 'INSERT') AS can_insert,
@@ -42,13 +43,13 @@ checks AS (
   FROM guarded_tables
 )
 SELECT *,
-       CASE WHEN current_schema() IS DISTINCT FROM 'public'
+       CASE WHEN pg_catalog.current_schema() IS DISTINCT FROM 'public'
                  OR runtime_role = owner_role
                  OR inherits_owner_membership
                  OR elevated_role
                  OR can_insert OR can_update OR can_delete
                  OR can_write_columns OR has_role_memberships
-                 OR can_truncate OR can_create_trigger
+                 OR can_truncate OR can_create_trigger OR can_create_schema
             THEN 'FAIL'
             ELSE 'PASS'
        END AS direct_dml_boundary
