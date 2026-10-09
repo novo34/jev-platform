@@ -510,6 +510,35 @@ describe("restricted deployment writer", () => {
       expect(escalated.rows[0].allowed).toBe(true);
       await owner.query("ROLLBACK");
 
+      // Codex P1: recording CHANGES_REQUESTED for an APPROVED Task must
+      // atomically revoke the Task's approved status. The caller invokes
+      // only ONE controlled writer, with no follow-up transition call.
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      const rework = await owner.query(
+        "SELECT jev_create_approval($1::uuid,$2::uuid,$3::uuid,'CHANGES_REQUESTED',$4::text,$5::text,$6::text,$7::text,$8::jsonb) AS id",
+        [project, taskId, userId, revision, "b".repeat(40),
+         "https://github.com/example/review/pull/2", stagingUrl,
+         JSON.stringify({reason:"needs revised implementation"})]
+      );
+      expect(rework.rows[0].id).toBeTruthy();
+      await owner.query("COMMIT");
+      const afterRework = await owner.query(
+        "SELECT status FROM tasks WHERE id=$1", [taskId]
+      );
+      expect(afterRework.rows[0].status).toBe("CHANGES_REQUESTED");
+      const invalidatedApproval = await owner.query(
+        "SELECT stale FROM approvals WHERE id=$1", [approval.rows[0].id]
+      );
+      expect(invalidatedApproval.rows[0].stale).toBe(true);
+      const reworkHistory = await owner.query(
+        "SELECT actor_type,actor_id,cause FROM task_state_history WHERE task_id=$1 AND to_status='CHANGES_REQUESTED' ORDER BY created_at DESC,id DESC LIMIT 1",
+        [taskId]
+      );
+      expect(reworkHistory.rows[0]).toEqual({
+        actor_type:"USER", actor_id:userId, cause:"human_review_rework"
+      });
+
       const persisted = await owner.query("SELECT status FROM deployments WHERE id=$1", [deployment]);
       expect(persisted.rows[0].status).toBe("FAILED");
     } finally {
