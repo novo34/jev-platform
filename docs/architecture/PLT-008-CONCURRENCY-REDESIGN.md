@@ -13,7 +13,7 @@ Task-to-advisory/advisory-to-Task deadlock. The current protocol is:
    `jev_lock_project_scope` or the dedicated SECURITY DEFINER writer.
 2. Task/Approval/Deployment/Environment writes follow that lock; where multiple
    Tasks are affected, they are acquired deterministically.
-3. The runtime has **no direct DML grants** on Tasks, Approvals, Deployments
+3. The runtime has **no direct DML, TRUNCATE or TRIGGER grants** on Tasks, Approvals, Deployments
    or Environments. The startup guard rejects table and column grants,
    role ownership/elevation and any SET ROLE-capable membership.
 4. Authorized writers: `jev_create_task`, `jev_transition_task`,
