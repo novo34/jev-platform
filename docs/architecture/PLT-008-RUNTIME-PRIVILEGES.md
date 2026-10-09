@@ -52,16 +52,26 @@ A green CI using a superuser database does not validate this security boundary.
   Production runtime refuses a migration owner, elevated role, missing guarded
   tables or any direct DML permission on the four protected tables.
 * API auth, audit, control and worker queues receive explicit DML grants only
-  on their **non-guarded** tables. Approval and Deployment INSERT operations
-  remain prohibited to the runtime role until an individually reviewed writer
-  exists; no blanket grant to bypass this boundary.
+  on their **non-guarded** tables. Controlled creation of staging Deployments
+  and human Approvals is now provided by `jev_create_deployment` and
+  `jev_create_approval` (`0015`), with project-before-Task locking,
+  scope/reviewer validation and narrow EXECUTE rights. The TypeScript
+  `createDeployment` and `createApproval` functions expose these writers.
+  Upstream authorization must bind the approval actor to the authenticated
+  principal; arbitrary client-supplied actor IDs are forbidden.
+* Direct single-row and bulk INSERT/UPDATE/DELETE on guarded tables remains
+  disallowed to the runtime role. A privileged DBA session can still bypass
+  the runtime protocol and must never serve application traffic.
 
 ## Verifiable evidence and outstanding operational step
 
 The `runtime-role.test.ts` integration test runs against a real PostgreSQL
 role: direct guarded-table DML is denied; authorized Task, Environment,
 Deployment, project locks, order history, auth sessions, audit events,
-control writes and worker DML are exercised. The full CI must pass at the
+control writes and worker DML are exercised. Tests additionally cover
+staging Deployment creation, human Approval insertion and the
+`AWAITING_HUMAN -> APPROVED` transition, plus detection of column-grant and
+SET ROLE privilege escalation. The full CI must pass at the
 **final HEAD**, not just on an ancestor commit.
 
 **Actual deployment still needs its own evidence**: distinct runtime and
@@ -69,3 +79,15 @@ migrator credentials provisioned via secrets, runtime diagnostic reporting
 four PASS rows, successful API/worker startup with the restricted role,
 rejection of startup with migration credentials, and operator-approved
 rollback procedure. The repository alone cannot attest live database grants.
+
+## Privilege escalation protections (2026-10-09)
+
+* `REVOKE ALL ON TABLE` does not clear historical column-level INSERT/UPDATE
+  grants. The provisioning script explicitly revokes them; the runtime
+  startup guard and verifier inspect each guarded column.
+* PostgreSQL 16 `NOINHERIT` does not preclude `SET ROLE` privilege
+  escalation. Provisioning refuses pre-existing role memberships, and
+  startup refuses **any** reachable role switch (stricter fail-closed policy).
+* DB ownership inherently permits bypass of app-level ACLs; use migration
+  credentials only in controlled administrative operations. The runtime is
+  required to use the controlled database functions for all guarded writes.
