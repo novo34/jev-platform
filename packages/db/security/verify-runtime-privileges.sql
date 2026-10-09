@@ -32,9 +32,9 @@ checks AS (
          EXISTS (
            SELECT 1 FROM pg_catalog.pg_roles switchable
            WHERE switchable.rolname <> current_user
-             AND pg_catalog.pg_has_role(current_user, switchable.oid, 'SET')
-         ) AS can_set_role,
-         (SELECT r.rolsuper OR r.rolcreatedb OR r.rolbypassrls OR r.rolcreaterole
+             AND pg_catalog.pg_has_role(current_user, switchable.oid, 'MEMBER')
+         ) AS has_role_memberships,
+         (SELECT r.rolsuper OR r.rolcreatedb OR r.rolbypassrls OR r.rolcreaterole OR r.rolreplication
             FROM pg_catalog.pg_roles r WHERE r.rolname = current_user) AS elevated_role
   FROM guarded_tables
 )
@@ -43,7 +43,7 @@ SELECT *,
                  OR inherits_owner_membership
                  OR elevated_role
                  OR can_insert OR can_update OR can_delete
-                 OR can_write_columns OR can_set_role
+                 OR can_write_columns OR has_role_memberships
                  OR can_truncate OR can_create_trigger
             THEN 'FAIL'
             ELSE 'PASS'
