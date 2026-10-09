@@ -356,6 +356,38 @@ describe("restricted deployment writer", () => {
       await owner.query("ROLLBACK");
       await owner.query(`ALTER ROLE "${role}" NOREPLICATION`);
 
+      // Codex P1: a read-only shadow schema must never satisfy the
+      // production ACL check when the actual migrated tables are writable.
+      // The test configures the fixture's canonical schema explicitly,
+      // exactly as the production guard uses the fixed public schema.
+      const shadow = "jev_shadow_" + randomUUID().replaceAll("-", "");
+      await owner.query(`CREATE SCHEMA "${shadow}"`);
+      try {
+        for (const table of ["tasks","approvals","deployments","environments"]) {
+          await owner.query(`CREATE TABLE "${shadow}"."${table}" (id uuid)`);
+        }
+        await owner.query(`GRANT USAGE ON SCHEMA "${shadow}" TO "${role}"`);
+        await owner.query(`GRANT SELECT ON ALL TABLES IN SCHEMA "${shadow}" TO "${role}"`);
+        await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${role}"`);
+        await owner.query("BEGIN");
+        await owner.query(`SET LOCAL ROLE "${role}"`);
+        await owner.query(`SET LOCAL search_path TO "${shadow}", "${schema}", public`);
+        const proof = await owner.query(
+          "SELECT current_schema() AS active, has_column_privilege(current_user,$1,'status','UPDATE') AS privileged",
+          [schema + ".tasks"]
+        );
+        expect(proof.rows[0]).toEqual({active:shadow, privileged:true});
+        await expect(
+          assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool, schema)
+        ).rejects.toThrow("Unsafe JEV runtime database role");
+        await owner.query("ROLLBACK");
+        await owner.query(`REVOKE UPDATE (status) ON TABLE "${schema}".tasks FROM "${role}"`);
+      } finally {
+        await owner.query(`REVOKE ALL ON ALL TABLES IN SCHEMA "${shadow}" FROM "${role}"`);
+        await owner.query(`REVOKE USAGE ON SCHEMA "${shadow}" FROM "${role}"`);
+        await owner.query(`DROP SCHEMA "${shadow}" CASCADE`);
+      }
+
       // Proof for Codex P1 #1: column-only grants enable direct DML while
       // has_table_privilege remains false. The startup guard must refuse.
       await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${role}"`);
