@@ -1,5 +1,8 @@
 -- PLT-008 F-04: privilege verification, read-only diagnostic.
 -- Run with the SAME credentials used by the production application.
+-- Canonical production schema is public. Do not trust current_schema() to select
+-- protected relations: an earlier search_path entry can shadow all four tables.
+-- A non-public current_schema() must cause FAIL even if public has safe ACLs.
 -- A row marked FAIL means the runtime role can bypass or modify a guarded
 -- table directly. The migration/owner credential must NOT be used for this check.
 WITH guarded_tables AS (
@@ -7,7 +10,7 @@ WITH guarded_tables AS (
          c.relowner, c.relrowsecurity
   FROM pg_catalog.pg_class c
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = current_schema()
+  WHERE n.nspname = 'public'
     AND c.relname IN ('tasks', 'approvals', 'deployments', 'environments')
     AND c.relkind IN ('r', 'p')
 ),
@@ -39,7 +42,8 @@ checks AS (
   FROM guarded_tables
 )
 SELECT *,
-       CASE WHEN runtime_role = owner_role
+       CASE WHEN current_schema() IS DISTINCT FROM 'public'
+                 OR runtime_role = owner_role
                  OR inherits_owner_membership
                  OR elevated_role
                  OR can_insert OR can_update OR can_delete
