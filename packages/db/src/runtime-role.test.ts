@@ -84,6 +84,25 @@ describe("restricted deployment writer", () => {
       await owner.query(`GRANT UPDATE (status,updated_at) ON TABLE projects TO "${role}"`);
       await owner.query(`GRANT INSERT, UPDATE ON TABLE jobs, worker_instances TO "${role}"`);
 
+      // Exercise the ACTUAL provisioning template against a disposable role
+      // and schema. It must revoke a dangerous pre-existing column grant.
+      await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${role}"`);
+      const provisionScript = await readFile(
+        path.join(DEFAULT_MIGRATIONS_DIR, "..", "security", "provision-runtime-role.sql"), "utf8"
+      );
+      // Fixture identifiers are generated from UUIDs (safe SQL identifiers).
+      await owner.query(
+        provisionScript.replaceAll("jev_runtime", role).replaceAll("public", schema)
+      );
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      const removedColumnGrant = await owner.query(
+        "SELECT has_column_privilege(current_user,$1,'status','UPDATE') AS allowed",
+        [schema + ".tasks"]
+      );
+      expect(removedColumnGrant.rows[0].allowed).toBe(false);
+      await owner.query("ROLLBACK");
+
       await owner.query("BEGIN");
       await owner.query(`SET LOCAL ROLE "${role}"`);
       const privilege = await owner.query(
