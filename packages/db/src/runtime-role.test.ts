@@ -88,6 +88,7 @@ describe("restricted deployment writer", () => {
       // and schema. It must revoke a dangerous pre-existing column grant.
       await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${role}"`);
       await owner.query(`GRANT TRUNCATE, TRIGGER ON TABLE "${schema}".approvals TO PUBLIC`);
+      await owner.query(`ALTER ROLE "${role}" REPLICATION`);
       const provisionScript = await readFile(
         path.join(DEFAULT_MIGRATIONS_DIR, "..", "security", "provision-runtime-role.sql"), "utf8"
       );
@@ -95,6 +96,10 @@ describe("restricted deployment writer", () => {
       await owner.query(
         provisionScript.replaceAll("jev_runtime", role).replaceAll("public", schema)
       );
+      const sanitizedRole = await owner.query(
+        "SELECT rolreplication AS replication FROM pg_roles WHERE rolname=$1", [role]
+      );
+      expect(sanitizedRole.rows[0].replication).toBe(false);
       await owner.query("BEGIN");
       await owner.query(`SET LOCAL ROLE "${role}"`);
       const removedColumnGrant = await owner.query(
@@ -329,6 +334,22 @@ describe("restricted deployment writer", () => {
       ).rejects.toThrow("Unsafe JEV runtime database role");
       await owner.query("ROLLBACK");
       await owner.query(`REVOKE TRIGGER ON TABLE "${schema}".approvals FROM PUBLIC`);
+
+      // A runtime with REPLICATION can bypass ordinary table ACLs through
+      // replication endpoints when PostgreSQL host authentication permits it.
+      // The guard must reject the capability even if direct DML is absent.
+      await owner.query(`ALTER ROLE "${role}" REPLICATION`);
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      const replicationEnabled = await owner.query(
+        "SELECT rolreplication AS enabled FROM pg_roles WHERE rolname=current_user"
+      );
+      expect(replicationEnabled.rows[0].enabled).toBe(true);
+      await expect(
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+      ).rejects.toThrow("Unsafe JEV runtime database role");
+      await owner.query("ROLLBACK");
+      await owner.query(`ALTER ROLE "${role}" NOREPLICATION`);
 
       // Proof for Codex P1 #1: column-only grants enable direct DML while
       // has_table_privilege remains false. The startup guard must refuse.
