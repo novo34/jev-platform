@@ -148,8 +148,13 @@ describe("restricted deployment writer", () => {
         );
         expect(denied.rows[0]).toEqual({ insert_allowed: false, update_allowed: false });
       }
+      // An isolated test schema must be explicitly selected by the checker;
+      // the application default stays pinned to public.
+      await expect(
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+      ).rejects.toThrow("Unsafe JEV runtime database role");
       // Exercise the same guard used at API/worker startup under the real role.
-      await assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool);
+      await assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool, schema);
       const cannotUpdateProject = await owner.query(
         "SELECT has_table_privilege(current_user,$1,'UPDATE') AS allowed",
         [schema + ".projects"]
@@ -319,7 +324,7 @@ describe("restricted deployment writer", () => {
       );
       expect(truncateGrant.rows[0].allowed).toBe(true);
       await expect(
-        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool, schema)
       ).rejects.toThrow("Unsafe JEV runtime database role");
       // This is deliberately rolled back. No fixture is permanently erased.
       await owner.query("TRUNCATE approvals");
@@ -330,7 +335,7 @@ describe("restricted deployment writer", () => {
       await owner.query("BEGIN");
       await owner.query(`SET LOCAL ROLE "${role}"`);
       await expect(
-        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool, schema)
       ).rejects.toThrow("Unsafe JEV runtime database role");
       await owner.query("ROLLBACK");
       await owner.query(`REVOKE TRIGGER ON TABLE "${schema}".approvals FROM PUBLIC`);
@@ -346,7 +351,7 @@ describe("restricted deployment writer", () => {
       );
       expect(replicationEnabled.rows[0].enabled).toBe(true);
       await expect(
-        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool, schema)
       ).rejects.toThrow("Unsafe JEV runtime database role");
       await owner.query("ROLLBACK");
       await owner.query(`ALTER ROLE "${role}" NOREPLICATION`);
@@ -363,7 +368,7 @@ describe("restricted deployment writer", () => {
       expect(colGrant.rows[0]).toEqual({table_allowed:false,column_allowed:true});
       await owner.query("UPDATE tasks SET status=status WHERE id=$1", [taskId]);
       await expect(
-        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool, schema)
       ).rejects.toThrow("Unsafe JEV runtime database role");
       await owner.query("ROLLBACK");
       await owner.query(`REVOKE UPDATE (status) ON TABLE "${schema}".tasks FROM "${role}"`);
@@ -383,7 +388,7 @@ describe("restricted deployment writer", () => {
       );
       expect(hiddenGrant.rows[0].allowed).toBe(false);
       await expect(
-        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool, schema)
       ).rejects.toThrow("Unsafe JEV runtime database role");
       await owner.query(`SET LOCAL ROLE "${switchRole}"`);
       const escalated = await owner.query(
