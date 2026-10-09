@@ -80,6 +80,10 @@ GRANT INSERT, UPDATE ON TABLE jobs, worker_instances TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_task(uuid, uuid, uuid, text, text, jsonb) TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_environment(uuid, uuid, text, text, text, jsonb) TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_lock_project_scope(uuid) TO jev_runtime;
+GRANT EXECUTE ON FUNCTION jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)
+  TO jev_runtime;
+GRANT EXECUTE ON FUNCTION jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)
+  TO jev_runtime;
 -- Approval and Deployment creation are not yet exposed through authorized
 -- writers; direct INSERT on approvals/deployments remains prohibited.
 -- Additional controlled write functions require individual review.
