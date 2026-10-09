@@ -1,29 +1,43 @@
 # PLT-008 — Concurrency redesign decision record (draft, not accepted)
 
-Status: **BLOCKED — critical concurrency and enforcement work remains**. Applies to PR #10 only; `main` and migration `0005` are immutable in this work.
+Status: **REVIEW HOLD — CI remediation applied, independent and operational gates remain**.
+The application-role protocol is implemented on PR #10 in migrations 0006–0015.
+Do not merge or resume PLT-009 without accepting all R3 gates.
 
-## Confirmed defect and current remediation state
+## Implementation checkpoint — 2026-10-09
 
-The original deployment statement-wide advisory lock caused a confirmed
-Task-to-advisory/advisory-to-Task deadlock (SQLSTATE 40P01). Commit `9a6df8e`
-removed that lock; commit `4af11dc` updated the two-session regression
-test to observe PostgreSQL blocking rather than the removed lock. CI passed
-on `4af11dc`, but this proves only that particular cycle is gone.
+The original global advisory lock was removed after a confirmed
+Task-to-advisory/advisory-to-Task deadlock. The current protocol is:
 
-The independent audit identified additional acceptance blockers:
-- F-01 (P1): approved Tasks can retain stale approvals after staging evidence
-  changes. Commit `413ebcb` adds a conservative rejection for deployment
-  writes targeting APPROVED Tasks; dedicated tests and behavior refinement
-  remain required.
-- F-02 (P1): Environment staging requirement changes can race with Task
-  promotion. No transactional serialization protocol has been implemented.
-- F-03 (P2): bulk deployment operations can acquire Task locks in inconsistent
-  row visitation order. No deterministic bulk preflight is implemented.
-- F-04/F-05 (P2): runtime DB permissions and trusted function search paths
-  are not yet enforced.
+1. Runtime transactions acquire a **project row** lock first, using
+   `jev_lock_project_scope` or the dedicated SECURITY DEFINER writer.
+2. Task/Approval/Deployment/Environment writes follow that lock; where multiple
+   Tasks are affected, they are acquired deterministically.
+3. The runtime has **no direct DML grants** on Tasks, Approvals, Deployments
+   or Environments. The startup guard rejects table and column grants,
+   role ownership/elevation and any SET ROLE-capable membership.
+4. Authorized writers: `jev_create_task`, `jev_transition_task`,
+   `jev_create_environment`, `jev_create_deployment`,
+   `jev_create_approval`, `jev_set_deployment_status`.
+   Existing triggers retain final review/scope/evidence enforcement.
+5. API and Worker enforce role safety before startup; production migrations
+   require separate credentials. Real PostgreSQL 16 integration tests exercise
+   controlled creation, staging readiness, human review, approval, project
+   lock contention, column-grant and SET ROLE rejection.
 
-Do not merge until the transaction protocol, runtime privileges, concurrent
-tests and independent review satisfy the acceptance gates below.
+Original findings F-01/F-02/F-04/F-05 have code-level mitigations and
+integration coverage; an independent review must still verify completeness.
+F-03 has a safe controlled **runtime bulk status update** path, and
+direct bulk INSERT/UPDATE/DELETE are rejected for the runtime role.
+
+**Known boundary:** the preexisting privileged-owner diagnostic still
+reproduces SQLSTATE `40P01` when arbitrary raw bulk deployment DML
+is deliberately issued outside the approved writer APIs. This is not
+safe for application traffic; the privileged credential must be restricted
+to controlled migrations. Whether remaining privileged SQL exposure is
+acceptable is an explicit F-03 review decision — it is not hidden by
+green CI. Production role/secret/rollback evidence is a separate R3
+release gate and has not been demonstrated by repository tests alone.
 
 ## F-02 concurrency reproduction specification (must fail before fix)
 
@@ -79,7 +93,8 @@ execution order before accepting that protocol.
 
 1. A Task must not be APPROVED without a current non-stale authorized decision and the required staging evidence.
 2. A staging deployment mutation (INSERT, UPDATE, DELETE, including bulk statements) must atomically invalidate impacted approvals or be rejected if it would invalidate an already APPROVED Task.
-3. Environment INSERT/UPDATE/DELETE (especially staging kind, project, repository and scope changes) must serialize with Task promotion and approval invalidation; APPROVED must never survive with stale approval or missing required staging evidence.\n4. Direct SQL callers and service callers must satisfy the same database rules.
+3. Environment INSERT/UPDATE/DELETE (especially staging kind, project, repository and scope changes) must serialize with Task promotion and approval invalidation; APPROVED must never survive with stale approval or missing required staging evidence.
+4. Direct SQL callers and service callers must satisfy the same database rules.
 5. Operations spanning multiple Tasks must not rely on row execution order for lock ordering.
 6. No trigger may acquire a global lock *after* a Task row lock can already have been acquired in the same transaction.
 7. Failed concurrent operations must roll back atomically; no partial approval/evidence history.
@@ -95,7 +110,8 @@ The design must explicitly address concurrent Task→Environment, Environment→
 - Reproduce the Task-row-then-deployment versus deployment-then-Task inversion, with bounded `lock_timeout`/`deadlock_timeout`; after redesign both transactions must terminate without SQLSTATE 40P01 and invariants must hold.
 - Concurrent opposite-order multi-row deployment INSERT, UPDATE and DELETE for Tasks A and B: no deadlock, no stale evidence retained as approved. Include bulk reassignment where both OLD and NEW task IDs must be locked in deterministic order.
 - Approval insertion racing with replacement/deletion/status downgrade of its staging deployment: either serializable success with valid evidence or explicit rejection.
-- Concurrent Task promotion to APPROVED versus staging evidence mutation: cannot commit an APPROVED Task with stale/missing evidence.\n- Concurrent AWAITING_HUMAN → APPROVED versus Environment INSERT or UPDATE of kind/project/repository/scope, including a transition from non-staging to staging: the committed Task must never be APPROVED with a stale approval or newly required but absent staging evidence. Include Environment DELETE if supported by foreign keys.\n- Privilege matrix: enumerate the actual runtime role(s), schema ownership, inherited grants, direct INSERT/UPDATE/DELETE permissions on tasks, approvals, deployments and environments, and EXECUTE rights for every approved write API. In integration tests, SET ROLE to each runtime role and prove direct single-row and bulk DML are rejected while each approved API succeeds; owner-only tests are insufficient.
+- Concurrent Task promotion to APPROVED versus staging evidence mutation: cannot commit an APPROVED Task with stale/missing evidence.
+- Concurrent AWAITING_HUMAN → APPROVED versus Environment INSERT or UPDATE of kind/project/repository/scope, including a transition from non-staging to staging: the committed Task must never be APPROVED with a stale approval or newly required but absent staging evidence. Include Environment DELETE if supported by foreign keys.\n- Privilege matrix: enumerate the actual runtime role(s), schema ownership, inherited grants, direct INSERT/UPDATE/DELETE permissions on tasks, approvals, deployments and environments, and EXECUTE rights for every approved write API. In integration tests, SET ROLE to each runtime role and prove direct single-row and bulk DML are rejected while each approved API succeeds; owner-only tests are insufficient.
 - Verify transaction rollback and retries; tests must assert final persisted rows, not only absence of errors.
 
 ## Delivery gates
