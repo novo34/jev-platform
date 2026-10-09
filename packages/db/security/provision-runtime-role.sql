@@ -36,6 +36,10 @@ $jev_memberships$;
 -- In PostgreSQL 16, NOINHERIT alone does not prevent SET ROLE: membership
 -- grants must also exclude SET privileges.
 
+-- PUBLIC grants also apply to jev_runtime, even if its own grants are revoked.
+-- TRUNCATE can erase immutable human decisions; TRIGGER allows DDL.
+REVOKE TRUNCATE, TRIGGER ON TABLE tasks, approvals, deployments, environments
+  FROM PUBLIC;
 REVOKE ALL ON TABLE tasks, approvals, deployments, environments FROM jev_runtime;
 -- Table REVOKE does NOT revoke historical column-level INSERT/UPDATE grants.
 DO $jev_revoke_cols$
