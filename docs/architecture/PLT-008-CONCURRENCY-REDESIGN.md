@@ -39,6 +39,33 @@ acceptable is an explicit F-03 review decision — it is not hidden by
 green CI. Production role/secret/rollback evidence is a separate R3
 release gate and has not been demonstrated by repository tests alone.
 
+## R3 review correction — stable staging evidence and approval references
+
+Migration `0016_deployment_order_and_approval_references.sql` corrects the
+remaining approval/staging evidence ordering flaw:
+
+* `NOW()` stores a transaction-start timestamp, **not** the insertion or
+  commit order. UUIDs cannot disambiguate same-transaction rows. Every new
+  Deployment now receives a monotonic `insertion_seq` from a PostgreSQL
+  sequence. The controlled writer acquires the project lock before INSERT,
+  making insertion order deterministic for application writers.
+* Existing Deployments are backfilled using the previous observable order
+  (`created_at, id`), preserving upgrade compatibility without rewriting
+  earlier migrations. All four current-deployment selection queries in the
+  Task review and approval invalidation triggers now order by
+  `insertion_seq DESC`.
+* The regression starts a transaction **before** a preceding Deployment's
+  transaction but inserts later, proving that the later insertion is current
+  despite the earlier `created_at`, and rejects the superseded evidence.
+* `APPROVED` decisions must contain trimmed nonempty `revision`,
+  `commit_sha`, and `pull_request_url`; blank references cannot activate
+  a review. Ambiguous preexisting approved-state data forces explicit
+  human migration remediation rather than silent corruption.
+
+Operational role/secret/rollback checks are separately tracked in
+https://github.com/novo34/jev-platform/issues/11 and remain release-blocking
+without preventing code integration after independent zero-findings review.
+
 ## F-02 concurrency reproduction specification (must fail before fix)
 
 Set up one project/repository with a Task in AWAITING_HUMAN, a valid
