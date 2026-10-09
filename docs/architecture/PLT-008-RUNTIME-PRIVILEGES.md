@@ -89,9 +89,14 @@ rollback procedure. The repository alone cannot attest live database grants.
   bypass lifecycle immutability or enable unsafe DDL despite role-specific
   REVOKE. Provisioning removes both PUBLIC grants; startup and diagnostic
   reject either one. A rollback-only PostgreSQL test reproduces the bypass.
+* The `REPLICATION` role attribute can expose WAL/base-backup data even
+  without ordinary DML privileges when replication connections are allowed.
+  Provisioning enforces `NOREPLICATION`, and both startup and SQL diagnostics
+  explicitly reject `rolreplication`.
 * PostgreSQL 16 `NOINHERIT` does not preclude `SET ROLE` privilege
   escalation. Provisioning refuses pre-existing role memberships, and
-  startup refuses **any** reachable role switch (stricter fail-closed policy).
+  startup refuses **any** role membership, including INHERIT-only and
+  SET FALSE memberships (stricter fail-closed policy).
 * DB ownership inherently permits bypass of app-level ACLs; use migration
   credentials only in controlled administrative operations. The runtime is
   required to use the controlled database functions for all guarded writes.
