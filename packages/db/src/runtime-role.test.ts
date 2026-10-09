@@ -11,7 +11,9 @@ describe("restricted deployment writer", () => {
     const owner = await pool.connect();
     const schema = "jev_acl_" + randomUUID().replaceAll("-", "");
     const role = "jev_acl_role_" + randomUUID().replaceAll("-", "");
+    const switchRole = "jev_acl_writer_" + randomUUID().replaceAll("-", "");
     let roleCreated = false;
+    let switchRoleCreated = false;
     try {
       await owner.query(`CREATE SCHEMA "${schema}"`);
       await owner.query(`SET search_path TO "${schema}", public`);
@@ -72,6 +74,8 @@ describe("restricted deployment writer", () => {
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_create_environment(uuid,uuid,text,text,text,jsonb) TO "${role}"`);
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_transition_task(uuid,text,text,text,text,jsonb) TO "${role}"`);
       await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_lock_project_scope(uuid) TO "${role}"`);
+      await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb) TO "${role}"`);
+      await owner.query(`GRANT EXECUTE ON FUNCTION "${schema}".jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb) TO "${role}"`);
       await owner.query(`GRANT INSERT ON TABLE orders, requirements, task_requirements, projects, repositories, order_state_history TO "${role}"`);
       await owner.query(`GRANT UPDATE (status) ON TABLE orders TO "${role}"`);
       await owner.query(`GRANT INSERT ON TABLE auth_sessions, audit_events TO "${role}"`);
@@ -182,18 +186,111 @@ describe("restricted deployment writer", () => {
       const persistedEnv = await owner.query("SELECT kind FROM environments WHERE id=$1", [createdEnv.rows[0].id]);
       expect(persistedEnv.rows[0].kind).toBe("staging");
 
+      // End-to-end human review under runtime: staging deployment, review
+      // decision and approval. Direct guarded-table INSERT stays prohibited.
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      for (const status of ["RUNNING","VERIFYING","VERIFIED","STAGING"]) {
+        await owner.query(
+          "SELECT jev_transition_task($1::uuid,$2::text,'SYSTEM',NULL,'runtime-workflow','{}'::jsonb)",
+          [taskId, status]
+        );
+      }
+      const stagingUrl = "https://acl-stage.example.test";
+      const revision = "runtime-revision-001";
+      const newDeployment = await owner.query(
+        "SELECT jev_create_deployment($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::text,'READY',$6::text,'ci','{}'::jsonb) AS id",
+        [project, repository, createdEnv.rows[0].id, taskId, revision, stagingUrl]
+      );
+      const reviewEvidence = {
+        stagingDeploymentId: newDeployment.rows[0].id,
+        revision,
+        url: stagingUrl
+      };
+      await owner.query(
+        "SELECT jev_transition_task($1::uuid,'AWAITING_HUMAN','SYSTEM',NULL,'ready-for-review',$2::jsonb)",
+        [taskId, JSON.stringify(reviewEvidence)]
+      );
+      const approval = await owner.query(
+        "SELECT jev_create_approval($1::uuid,$2::uuid,$3::uuid,'APPROVED',$4::text,$5::text,$6::text,$7::text,$8::jsonb) AS id",
+        [project, taskId, userId, revision, "a".repeat(40), "https://github.com/example/review/pull/1", stagingUrl, JSON.stringify(reviewEvidence)]
+      );
+      expect(approval.rows[0].id).toBeTruthy();
+      await owner.query(
+        "SELECT jev_transition_task($1::uuid,'APPROVED','USER',$2::text,'human-approved',$3::jsonb)",
+        [taskId, userId, JSON.stringify(reviewEvidence)]
+      );
+      await owner.query("COMMIT");
+      const approvedTask = await owner.query("SELECT status FROM tasks WHERE id=$1", [taskId]);
+      expect(approvedTask.rows[0].status).toBe("APPROVED");
+      const approvalPersisted = await owner.query(
+        "SELECT decision,stale FROM approvals WHERE id=$1", [approval.rows[0].id]
+      );
+      expect(approvalPersisted.rows[0]).toEqual({decision:"APPROVED",stale:false});
+
+      // Proof for Codex P1 #1: column-only grants enable direct DML while
+      // has_table_privilege remains false. The startup guard must refuse.
+      await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${role}"`);
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      const colGrant = await owner.query(
+        "SELECT has_table_privilege(current_user,$1,'UPDATE') AS table_allowed, has_column_privilege(current_user,$1,'status','UPDATE') AS column_allowed",
+        [schema + ".tasks"]
+      );
+      expect(colGrant.rows[0]).toEqual({table_allowed:false,column_allowed:true});
+      await owner.query("UPDATE tasks SET status=status WHERE id=$1", [taskId]);
+      await expect(
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+      ).rejects.toThrow("Unsafe JEV runtime database role");
+      await owner.query("ROLLBACK");
+      await owner.query(`REVOKE UPDATE (status) ON TABLE "${schema}".tasks FROM "${role}"`);
+
+      // Proof for Codex P1 #2: NOINHERIT can hide a grant that SET ROLE
+      // makes reachable; fail startup even before the role switch occurs.
+      await owner.query(`CREATE ROLE "${switchRole}" NOLOGIN NOINHERIT`);
+      switchRoleCreated = true;
+      await owner.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${switchRole}"`);
+      await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${switchRole}"`);
+      await owner.query(`GRANT "${switchRole}" TO "${role}"`);
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      const hiddenGrant = await owner.query(
+        "SELECT has_column_privilege(current_user,$1,'status','UPDATE') AS allowed",
+        [schema + ".tasks"]
+      );
+      expect(hiddenGrant.rows[0].allowed).toBe(false);
+      await expect(
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+      ).rejects.toThrow("Unsafe JEV runtime database role");
+      await owner.query(`SET LOCAL ROLE "${switchRole}"`);
+      const escalated = await owner.query(
+        "SELECT has_column_privilege(current_user,$1,'status','UPDATE') AS allowed",
+        [schema + ".tasks"]
+      );
+      expect(escalated.rows[0].allowed).toBe(true);
+      await owner.query("ROLLBACK");
+
       const persisted = await owner.query("SELECT status FROM deployments WHERE id=$1", [deployment]);
       expect(persisted.rows[0].status).toBe("FAILED");
     } finally {
       try { await owner.query("ROLLBACK"); } catch {}
       await owner.query("SET search_path TO public");
+      if (switchRoleCreated) {
+        await owner.query(`REVOKE "${switchRole}" FROM "${role}"`);
+        await owner.query(`REVOKE UPDATE (status) ON TABLE "${schema}".tasks FROM "${switchRole}"`);
+        await owner.query(`REVOKE USAGE ON SCHEMA "${schema}" FROM "${switchRole}"`);
+        await owner.query(`DROP ROLE "${switchRole}"`);
+      }
       if (roleCreated) {
+        await owner.query(`REVOKE UPDATE (status) ON TABLE "${schema}".tasks FROM "${role}"`);
         await owner.query(`REVOKE ALL ON ALL TABLES IN SCHEMA "${schema}" FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_set_deployment_status(uuid,uuid[],text) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_task(uuid,uuid,uuid,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_environment(uuid,uuid,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_transition_task(uuid,text,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_lock_project_scope(uuid) FROM "${role}"`);
+        await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb) FROM "${role}"`);
+        await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON SCHEMA "${schema}" FROM "${role}"`);
         await owner.query(`DROP ROLE "${role}"`);
       }
