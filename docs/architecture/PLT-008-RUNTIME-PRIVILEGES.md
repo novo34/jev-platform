@@ -85,6 +85,10 @@ rollback procedure. The repository alone cannot attest live database grants.
 * `REVOKE ALL ON TABLE` does not clear historical column-level INSERT/UPDATE
   grants. The provisioning script explicitly revokes them; the runtime
   startup guard and verifier inspect each guarded column.
+* A `PUBLIC` grant of `TRUNCATE` or `TRIGGER` on a guarded table can
+  bypass lifecycle immutability or enable unsafe DDL despite role-specific
+  REVOKE. Provisioning removes both PUBLIC grants; startup and diagnostic
+  reject either one. A rollback-only PostgreSQL test reproduces the bypass.
 * PostgreSQL 16 `NOINHERIT` does not preclude `SET ROLE` privilege
   escalation. Provisioning refuses pre-existing role memberships, and
   startup refuses **any** reachable role switch (stricter fail-closed policy).
