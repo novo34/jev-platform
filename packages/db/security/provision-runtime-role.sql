@@ -61,6 +61,10 @@ BEGIN
   END LOOP;
 END;
 $jev_revoke_cols$;
+-- A schema-CREATE grant allows shadowing catalog relations if search_path
+-- is manipulated; deny it both through PUBLIC and directly to the runtime.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+REVOKE CREATE ON SCHEMA public FROM jev_runtime;
 GRANT USAGE ON SCHEMA public TO jev_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO jev_runtime;
 
