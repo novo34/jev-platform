@@ -1010,7 +1010,8 @@ describe("WorkOrderService", () => {
       "SELECT stale FROM approvals WHERE task_id = $1 AND revision = 'rev-current-insert'",
       [task.id]
     );
-    // The new row is current by insertion order despite its older timestamp.\n    expect(approval.rows[0].stale).toBe(true);
+    // The new row is current by insertion order despite its older timestamp.
+    expect(approval.rows[0].stale).toBe(true);
   });
 
   it("prevents changing deployment created_at as immutable audit metadata", async () => {
