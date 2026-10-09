@@ -88,6 +88,7 @@ describe("restricted deployment writer", () => {
       // and schema. It must revoke a dangerous pre-existing column grant.
       await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${role}"`);
       await owner.query(`GRANT TRUNCATE, TRIGGER ON TABLE "${schema}".approvals TO PUBLIC`);
+      await owner.query(`GRANT CREATE ON SCHEMA "${schema}" TO PUBLIC`);
       await owner.query(`ALTER ROLE "${role}" REPLICATION`);
       const provisionScript = await readFile(
         path.join(DEFAULT_MIGRATIONS_DIR, "..", "security", "provision-runtime-role.sql"), "utf8"
@@ -114,6 +115,11 @@ describe("restricted deployment writer", () => {
       expect(removedPublicGrant.rows[0]).toEqual({
         truncate_allowed:false, trigger_allowed:false
       });
+      const removedSchemaCreate = await owner.query(
+        "SELECT has_schema_privilege(current_user,$1,'CREATE') AS allowed",
+        [schema]
+      );
+      expect(removedSchemaCreate.rows[0].allowed).toBe(false);
       await owner.query("ROLLBACK");
 
       await owner.query("BEGIN");
@@ -387,6 +393,26 @@ describe("restricted deployment writer", () => {
         await owner.query(`REVOKE USAGE ON SCHEMA "${shadow}" FROM "${role}"`);
         await owner.query(`DROP SCHEMA "${shadow}" CASCADE`);
       }
+
+      // Codex P1 catalog-shadowing: a schema CREATE grant must not survive
+      // provisioning or pass startup, even with pg_catalog after the schema.
+      await owner.query(`GRANT CREATE ON SCHEMA "${schema}" TO "${role}"`);
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      await owner.query(`SET LOCAL search_path TO "${schema}", pg_catalog`);
+      const createAllowed = await owner.query(
+        "SELECT pg_catalog.has_schema_privilege(current_user,$1,'CREATE') AS allowed", [schema]
+      );
+      expect(createAllowed.rows[0].allowed).toBe(true);
+      // This view would shadow an unqualified pg_class catalog reference.
+      await owner.query(
+        "CREATE VIEW pg_class AS SELECT * FROM pg_catalog.pg_class WHERE false"
+      );
+      await expect(
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool, schema)
+      ).rejects.toThrow("Unsafe JEV runtime database role");
+      await owner.query("ROLLBACK");
+      await owner.query(`REVOKE CREATE ON SCHEMA "${schema}" FROM "${role}"`);
 
       // Proof for Codex P1 #1: column-only grants enable direct DML while
       // has_table_privilege remains false. The startup guard must refuse.
