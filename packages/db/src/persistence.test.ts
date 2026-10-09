@@ -246,7 +246,8 @@ describe("canonical PostgreSQL persistence", () => {
       "0012_controlled_task_transition.sql",
       "0013_controlled_task_environment_writers.sql",
       "0014_controlled_project_scope_lock.sql",
-      "0015_controlled_approval_deployment_creation.sql"
+      "0015_controlled_approval_deployment_creation.sql",
+      "0016_deployment_order_and_approval_references.sql"
     ]);
   });
 });
