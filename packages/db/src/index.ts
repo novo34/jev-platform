@@ -58,6 +58,8 @@ export async function assertRestrictedRuntimeRole(pool: Pool): Promise<void> {
                  has_table_privilege(c.oid, 'INSERT')
                  OR has_table_privilege(c.oid, 'UPDATE')
                  OR has_table_privilege(c.oid, 'DELETE')
+                 OR has_table_privilege(c.oid, 'TRUNCATE')
+                 OR has_table_privilege(c.oid, 'TRIGGER')
                  OR EXISTS (
                    SELECT 1 FROM pg_attribute a
                    WHERE a.attrelid = c.oid
