@@ -82,6 +82,17 @@ rollback procedure. The repository alone cannot attest live database grants.
 
 ## Privilege escalation protections (2026-10-09)
 
+* The runtime startup guard resolves **all four protected tables by explicit
+  application-schema name** (currently `public`, the same schema targeted
+  by provision-runtime-role.sql); it refuses connections with an active
+  schema different from that configured target. The production SQL diagnostic
+  is hard-pinned to `public` and fails on shadow `search_path` entries.
+  A PostgreSQL integration test constructs read-only decoy tables alongside
+  genuine guarded tables with column-level UPDATE privileges and verifies
+  startup rejection. The isolated test uses an explicit schema parameter;
+  production startup always defaults to `public`.
+
+
 * `REVOKE ALL ON TABLE` does not clear historical column-level INSERT/UPDATE
   grants. The provisioning script explicitly revokes them; the runtime
   startup guard and verifier inspect each guarded column.
