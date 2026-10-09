@@ -89,3 +89,5 @@ export async function checkDatabase(pool: Pool): Promise<void> {
 
 export { migrate, DEFAULT_MIGRATIONS_DIR } from "./migrations.js";
 export { withDeploymentWriteScopes, setDeploymentStatuses } from "./deployment-write.js";
+export { createApproval, createDeployment } from "./review-write.js";
+export type { CreateApprovalInput, CreateDeploymentInput } from "./review-write.js";
