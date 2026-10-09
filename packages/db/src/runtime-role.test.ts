@@ -216,17 +216,65 @@ describe("restricted deployment writer", () => {
         [project, taskId, userId, revision, "a".repeat(40), "https://github.com/example/review/pull/1", stagingUrl, JSON.stringify(reviewEvidence)]
       );
       expect(approval.rows[0].id).toBeTruthy();
-      await owner.query(
-        "SELECT jev_transition_task($1::uuid,'APPROVED','USER',$2::text,'human-approved',$3::jsonb)",
-        [taskId, userId, JSON.stringify(reviewEvidence)]
-      );
-      await owner.query("COMMIT");
+      // A concurrent staging change must wait at the project lock; it may
+      // not acquire the Task first and deadlock against this Approval writer.
+      const contender = await pool.connect();
+      const observer = await pool.connect();
+      try {
+        await contender.query(`SET search_path TO "${schema}", public`);
+        await contender.query("BEGIN");
+        await contender.query(`SET LOCAL ROLE "${role}"`);
+        await contender.query("SET LOCAL lock_timeout = '5000ms'");
+        const pid = Number((await contender.query(
+          "SELECT pg_backend_pid() AS pid"
+        )).rows[0].pid);
+        const concurrentEnvironment = contender.query(
+          "SELECT jev_create_environment($1::uuid,$2::uuid,'staging','Concurrent staging',NULL,'{}'::jsonb)",
+          [project, repository]
+        ).then(() => "created", (error: {code?: string}) => error.code ?? "unknown");
+        let blocked = false;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const state = await observer.query(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock' AND cardinality(pg_blocking_pids(pid))>0) AS waiting",
+            [pid]
+          );
+          if (state.rows[0].waiting) { blocked = true; break; }
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        expect(blocked).toBe(true);
+        await owner.query(
+          "SELECT jev_transition_task($1::uuid,'APPROVED','USER',$2::text,'human-approved',$3::jsonb)",
+          [taskId, userId, JSON.stringify(reviewEvidence)]
+        );
+        await owner.query("COMMIT");
+        // The staging change must be rejected because the Task is APPROVED.
+        expect(await concurrentEnvironment).toBe("23514");
+      } finally {
+        await contender.query("ROLLBACK").catch(() => undefined);
+        contender.release();
+        observer.release();
+      }
       const approvedTask = await owner.query("SELECT status FROM tasks WHERE id=$1", [taskId]);
       expect(approvedTask.rows[0].status).toBe("APPROVED");
       const approvalPersisted = await owner.query(
         "SELECT decision,stale FROM approvals WHERE id=$1", [approval.rows[0].id]
       );
       expect(approvalPersisted.rows[0]).toEqual({decision:"APPROVED",stale:false});
+      // Direct bulk/single-row DML is not an authorized runtime protocol.
+      // Denying every mutation type prevents the privileged SQL 40P01
+      // diagnostic from becoming an actual runtime bypass.
+      const directWrites = [
+        ["UPDATE deployments SET status='FAILED' WHERE id = ANY($1::uuid[])", [[deployment, newDeployment.rows[0].id]]],
+        ["DELETE FROM deployments WHERE id = ANY($1::uuid[])", [[newDeployment.rows[0].id]]],
+        ["INSERT INTO deployments(project_id,repository_id,environment_id,revision,status) VALUES($1,$2,$3,'bypass','READY')", [project,repository,createdEnv.rows[0].id]],
+        ["INSERT INTO approvals(task_id,actor_user_id,decision) VALUES($1,$2,'APPROVED')", [taskId,userId]]
+      ] as const;
+      for (const [sql, args] of directWrites) {
+        await owner.query("BEGIN");
+        await owner.query(`SET LOCAL ROLE "${role}"`);
+        await expect(owner.query(sql, [...args])).rejects.toMatchObject({code:"42501"});
+        await owner.query("ROLLBACK");
+      }
 
       // Proof for Codex P1 #1: column-only grants enable direct DML while
       // has_table_privilege remains false. The startup guard must refuse.
