@@ -82,6 +82,14 @@ rollback procedure. The repository alone cannot attest live database grants.
 
 ## Privilege escalation protections (2026-10-09)
 
+* All catalog relations (`pg_class`, `pg_namespace`, `pg_attribute`,
+  `pg_roles`) and privilege functions are explicitly qualified under
+  `pg_catalog` so application objects cannot impersonate system catalogs.
+  The role cannot CREATE objects in the canonical application schema:
+  provisioning revokes `CREATE ON SCHEMA public` from both `PUBLIC` and
+  `jev_runtime`; startup and SQL diagnostic reject effective schema-CREATE.
+  PostgreSQL regression exercises catalog-object shadowing under
+  `search_path = <app-schema>, pg_catalog`.
 * The runtime startup guard resolves **all four protected tables by explicit
   application-schema name** (currently `public`, the same schema targeted
   by provision-runtime-role.sql); it refuses connections with an active
