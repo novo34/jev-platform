@@ -230,22 +230,66 @@ describe("restricted deployment writer", () => {
       const persistedEnv = await owner.query("SELECT kind FROM environments WHERE id=$1", [createdEnv.rows[0].id]);
       expect(persistedEnv.rows[0].kind).toBe("staging");
 
-      // End-to-end human review under runtime: staging deployment, review
-      // decision and approval. Direct guarded-table INSERT stays prohibited.
+      // A transaction opened BEFORE the first deployment inserts a newer
+      // deployment AFTER its commit. PostgreSQL NOW() makes the later insert
+      // carry an earlier created_at; insertion_seq must still increase.
+      const delayedWriter = await pool.connect();
+      let firstDeploymentId: string;
+      let laterDeploymentId: string;
+      const stagingUrl = "https://acl-stage.example.test";
+      const revision = "runtime-revision-002";
+      try {
+        await delayedWriter.query(`SET search_path TO "${schema}", public`);
+        await delayedWriter.query("BEGIN");
+        await delayedWriter.query(`SET LOCAL ROLE "${role}"`);
+        await delayedWriter.query("SELECT now()");
+
+        await owner.query("BEGIN");
+        await owner.query(`SET LOCAL ROLE "${role}"`);
+        for (const status of ["RUNNING","VERIFYING","VERIFIED","STAGING"]) {
+          await owner.query(
+            "SELECT jev_transition_task($1::uuid,$2::text,'SYSTEM',NULL,'runtime-workflow','{}'::jsonb)",
+            [taskId, status]
+          );
+        }
+        const first = await owner.query(
+          "SELECT jev_create_deployment($1::uuid,$2::uuid,$3::uuid,$4::uuid,'runtime-revision-001','READY',$5::text,'ci','{}'::jsonb) AS id",
+          [project, repository, createdEnv.rows[0].id, taskId, stagingUrl]
+        );
+        firstDeploymentId = first.rows[0].id;
+        await owner.query("COMMIT");
+
+        const later = await delayedWriter.query(
+          "SELECT jev_create_deployment($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::text,'READY',$6::text,'ci','{}'::jsonb) AS id",
+          [project, repository, createdEnv.rows[0].id, taskId, revision, stagingUrl]
+        );
+        laterDeploymentId = later.rows[0].id;
+        await delayedWriter.query("COMMIT");
+      } finally {
+        await delayedWriter.query("ROLLBACK").catch(() => undefined);
+        delayedWriter.release();
+      }
+
+      const insertionOrder = await owner.query(
+        "SELECT id, created_at, insertion_seq FROM deployments WHERE id=ANY($1::uuid[]) ORDER BY insertion_seq ASC",
+        [[firstDeploymentId!, laterDeploymentId!]]
+      );
+      expect(insertionOrder.rows.map(row => row.id)).toEqual([firstDeploymentId!, laterDeploymentId!]);
+      expect(new Date(insertionOrder.rows[1].created_at).getTime()).toBeLessThanOrEqual(
+        new Date(insertionOrder.rows[0].created_at).getTime()
+      );
+      const newDeployment = { rows: [{ id: laterDeploymentId! }] };
+
       await owner.query("BEGIN");
       await owner.query(`SET LOCAL ROLE "${role}"`);
-      for (const status of ["RUNNING","VERIFYING","VERIFIED","STAGING"]) {
-        await owner.query(
-          "SELECT jev_transition_task($1::uuid,$2::text,'SYSTEM',NULL,'runtime-workflow','{}'::jsonb)",
-          [taskId, status]
-        );
-      }
-      const stagingUrl = "https://acl-stage.example.test";
-      const revision = "runtime-revision-001";
-      const newDeployment = await owner.query(
-        "SELECT jev_create_deployment($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::text,'READY',$6::text,'ci','{}'::jsonb) AS id",
-        [project, repository, createdEnv.rows[0].id, taskId, revision, stagingUrl]
-      );
+      await owner.query("SAVEPOINT old_deployment");
+      await expect(owner.query(
+        "SELECT jev_transition_task($1::uuid,'AWAITING_HUMAN','SYSTEM',NULL,'old-evidence',$2::jsonb)",
+        [taskId, JSON.stringify({
+          stagingDeploymentId:firstDeploymentId, revision:"runtime-revision-001", url:stagingUrl
+        })]
+      )).rejects.toMatchObject({code:"23514"});
+      await owner.query("ROLLBACK TO SAVEPOINT old_deployment");
       const reviewEvidence = {
         stagingDeploymentId: newDeployment.rows[0].id,
         revision,
@@ -255,6 +299,14 @@ describe("restricted deployment writer", () => {
         "SELECT jev_transition_task($1::uuid,'AWAITING_HUMAN','SYSTEM',NULL,'ready-for-review',$2::jsonb)",
         [taskId, JSON.stringify(reviewEvidence)]
       );
+      // Non-staging approvals must also carry meaningful revision/commit/PR
+      // references. The constraint rejects blanks for every APPROVED decision.
+      await owner.query("SAVEPOINT blank_approval");
+      await expect(owner.query(
+        "SELECT jev_create_approval($1::uuid,$2::uuid,$3::uuid,'APPROVED','  ',' ','  ',NULL,'{}'::jsonb)",
+        [project, taskId, userId]
+      )).rejects.toMatchObject({code:"23514"});
+      await owner.query("ROLLBACK TO SAVEPOINT blank_approval");
       const approval = await owner.query(
         "SELECT jev_create_approval($1::uuid,$2::uuid,$3::uuid,'APPROVED',$4::text,$5::text,$6::text,$7::text,$8::jsonb) AS id",
         [project, taskId, userId, revision, "a".repeat(40), "https://github.com/example/review/pull/1", stagingUrl, JSON.stringify(reviewEvidence)]
