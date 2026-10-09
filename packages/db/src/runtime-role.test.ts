@@ -87,6 +87,7 @@ describe("restricted deployment writer", () => {
       // Exercise the ACTUAL provisioning template against a disposable role
       // and schema. It must revoke a dangerous pre-existing column grant.
       await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${role}"`);
+      await owner.query(`GRANT TRUNCATE, TRIGGER ON TABLE "${schema}".approvals TO PUBLIC`);
       const provisionScript = await readFile(
         path.join(DEFAULT_MIGRATIONS_DIR, "..", "security", "provision-runtime-role.sql"), "utf8"
       );
@@ -101,6 +102,13 @@ describe("restricted deployment writer", () => {
         [schema + ".tasks"]
       );
       expect(removedColumnGrant.rows[0].allowed).toBe(false);
+      const removedPublicGrant = await owner.query(
+        "SELECT has_table_privilege(current_user,$1,'TRUNCATE') AS truncate_allowed, has_table_privilege(current_user,$1,'TRIGGER') AS trigger_allowed",
+        [schema + ".approvals"]
+      );
+      expect(removedPublicGrant.rows[0]).toEqual({
+        truncate_allowed:false, trigger_allowed:false
+      });
       await owner.query("ROLLBACK");
 
       await owner.query("BEGIN");
@@ -294,6 +302,33 @@ describe("restricted deployment writer", () => {
         await expect(owner.query(sql, [...args])).rejects.toMatchObject({code:"42501"});
         await owner.query("ROLLBACK");
       }
+
+      // Reproduce the PUBLIC TRUNCATE bypass. The old guard silently allowed
+      // deleting append-only Approvals; now startup must refuse this grant.
+      await owner.query(`GRANT TRUNCATE ON TABLE "${schema}".approvals TO PUBLIC`);
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      const truncateGrant = await owner.query(
+        "SELECT has_table_privilege(current_user,$1,'TRUNCATE') AS allowed",
+        [schema + ".approvals"]
+      );
+      expect(truncateGrant.rows[0].allowed).toBe(true);
+      await expect(
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+      ).rejects.toThrow("Unsafe JEV runtime database role");
+      // This is deliberately rolled back. No fixture is permanently erased.
+      await owner.query("TRUNCATE approvals");
+      await owner.query("ROLLBACK");
+      await owner.query(`REVOKE TRUNCATE ON TABLE "${schema}".approvals FROM PUBLIC`);
+
+      await owner.query(`GRANT TRIGGER ON TABLE "${schema}".approvals TO PUBLIC`);
+      await owner.query("BEGIN");
+      await owner.query(`SET LOCAL ROLE "${role}"`);
+      await expect(
+        assertRestrictedRuntimeRole({ query: owner.query.bind(owner) } as unknown as Pool)
+      ).rejects.toThrow("Unsafe JEV runtime database role");
+      await owner.query("ROLLBACK");
+      await owner.query(`REVOKE TRIGGER ON TABLE "${schema}".approvals FROM PUBLIC`);
 
       // Proof for Codex P1 #1: column-only grants enable direct DML while
       // has_table_privilege remains false. The startup guard must refuse.
