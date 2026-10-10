@@ -90,6 +90,8 @@ describe("restricted deployment writer", () => {
       // and schema. It must revoke a dangerous pre-existing column grant.
       await owner.query(`GRANT UPDATE (status) ON TABLE "${schema}".tasks TO "${role}"`);
       await owner.query(`GRANT TRUNCATE, TRIGGER ON TABLE "${schema}".approvals TO PUBLIC`);
+      await owner.query(`GRANT REFERENCES ON TABLE "${schema}".approvals TO PUBLIC`);
+      await owner.query(`GRANT REFERENCES (id) ON TABLE "${schema}".tasks TO PUBLIC`);
       await owner.query(`GRANT CREATE ON SCHEMA "${schema}" TO PUBLIC`);
       await owner.query(`ALTER ROLE "${role}" REPLICATION`);
       const provisionScript = await readFile(
@@ -116,6 +118,13 @@ describe("restricted deployment writer", () => {
       );
       expect(removedPublicGrant.rows[0]).toEqual({
         truncate_allowed:false, trigger_allowed:false
+      });
+      const removedReferences = await owner.query(
+        "SELECT pg_catalog.has_table_privilege(current_user,$1,'REFERENCES') AS table_allowed, pg_catalog.has_column_privilege(current_user,$2,'id','REFERENCES') AS column_allowed",
+        [schema + ".approvals", schema + ".tasks"]
+      );
+      expect(removedReferences.rows[0]).toEqual({
+        table_allowed:false, column_allowed:false
       });
       const removedSchemaCreate = await owner.query(
         "SELECT has_schema_privilege(current_user,$1,'CREATE') AS allowed",
