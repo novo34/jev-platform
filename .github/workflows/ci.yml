@@ -45,6 +45,11 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: Verify restricted production-mode API and Worker on PostgreSQL 16
+        env:
+          JEV_DB_SMOKE: "1"
+        run: npm run smoke:restricted-runtime
+
       - name: Smoke local development
         shell: bash
         run: |
