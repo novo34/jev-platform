@@ -190,6 +190,54 @@ try {
     runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
   });
 
+  // Codex P1: a legacy owner-privileged helper not in the seven audited
+  // writers must make the live gate fail, even if all seven remain valid.
+  const rogueDefiner = "public.jev_unreviewed_owner_writer()";
+  await admin.query(`
+    CREATE FUNCTION ${rogueDefiner} RETURNS integer
+    LANGUAGE sql SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS $ SELECT 1 $
+  `);
+  try {
+    await assert.rejects(
+      verify(),
+      /unapproved SECURITY DEFINER function exists outside the controlled writer allowlist/
+    );
+    // Even REVOKE alone cannot silently make an unapproved function pass
+    // the reviewed allowlist: the function must be removed or reviewed.
+    await admin.query(`REVOKE EXECUTE ON FUNCTION ${rogueDefiner} FROM PUBLIC`);
+    await assert.rejects(
+      verify(),
+      /unapproved SECURITY DEFINER function exists outside the controlled writer allowlist/
+    );
+  } finally {
+    await admin.query(`DROP FUNCTION ${rogueDefiner}`);
+  }
+  ensure((await verify()).controlled_writers === 7,
+    "unapproved definer cleanup did not restore the topology");
+
+  // Codex P2: unqualified migration statements use current_schema().
+  // A role-specific search_path that selects a decoy schema first must
+  // fail the deployment gate, despite all canonical public grants passing.
+  const shadowMigratorSchema = "jev_migrator_shadow_" + randomBytes(6).toString("hex");
+  const migratorName = (await admin.query(
+    "SELECT pg_catalog.quote_ident(current_user) AS role"
+  )).rows[0].role;
+  await admin.query(`CREATE SCHEMA "${shadowMigratorSchema}"`);
+  try {
+    await admin.query(`ALTER ROLE ${migratorName} SET search_path TO "${shadowMigratorSchema}", public`);
+    await assert.rejects(
+      verify(), /migration session must target public as its active schema/
+    );
+  } finally {
+    await admin.query(`ALTER ROLE ${migratorName} RESET search_path`);
+    await admin.query(`DROP SCHEMA "${shadowMigratorSchema}" CASCADE`);
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "migration search_path cleanup did not restore the production gate");
+
+
   // PostgreSQL foreign-key REFERENCES may expose elevated owner execution.
   // Grant first at table scope, then at column scope through PUBLIC, and
   // prove that both the runtime diagnostic and the actual provisioner
