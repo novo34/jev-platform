@@ -98,6 +98,7 @@ export async function assertRestrictedRuntimeRole(
                  OR pg_catalog.has_table_privilege(c.oid, 'DELETE')
                  OR pg_catalog.has_table_privilege(c.oid, 'TRUNCATE')
                  OR pg_catalog.has_table_privilege(c.oid, 'TRIGGER')
+                 OR pg_catalog.has_table_privilege(c.oid, 'REFERENCES')
                  OR EXISTS (
                    SELECT 1 FROM pg_catalog.pg_attribute a
                    WHERE a.attrelid = c.oid
@@ -105,6 +106,7 @@ export async function assertRestrictedRuntimeRole(
                      AND (
                        pg_catalog.has_column_privilege(c.oid, a.attnum, 'INSERT')
                        OR pg_catalog.has_column_privilege(c.oid, a.attnum, 'UPDATE')
+                       OR pg_catalog.has_column_privilege(c.oid, a.attnum, 'REFERENCES')
                      )
                  )
                )
