@@ -85,6 +85,23 @@ try {
     runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
   });
   ensure(topology.privilege_checks === "4/4 PASS", "privilege diagnostic failed");
+  // A URL with overridden host/port must not masquerade as the same database.
+  const disguised = new URL(runtimeURL);
+  disguised.searchParams.set("host", "127.0.0.2");
+  await assert.rejects(
+    verifyDatabaseTopology({
+      runtimeUrl: disguised.toString(), migrationUrl: adminURL.toString()
+    }),
+    /forbidden connection endpoint override/
+  );
+  disguised.searchParams.delete("host");
+  disguised.searchParams.set("port", "5433");
+  await assert.rejects(
+    verifyDatabaseTopology({
+      runtimeUrl: disguised.toString(), migrationUrl: adminURL.toString()
+    }),
+    /forbidden connection endpoint override/
+  );
 
   // Deployment verifier MUST fail closed when the migration credential can
   // CREATE objects but cannot ALTER/replace previously migrated objects.
@@ -110,6 +127,23 @@ try {
     await admin.query(`DROP ROLE "${fakeRole}"`);
   }
 
+  // An unrelated login granted jev_runtime membership can inherit/use
+  // its SECURITY DEFINER writers. Reject *inbound* membership too.
+  const memberRole = "jev_gate_member_" + randomBytes(6).toString("hex");
+  await admin.query(`CREATE ROLE "${memberRole}" NOLOGIN`);
+  try {
+    await admin.query(`GRANT jev_runtime TO "${memberRole}"`);
+    await assert.rejects(
+      verifyDatabaseTopology({
+        runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
+      }),
+      /jev_runtime cannot be granted to any other database role/
+    );
+  } finally {
+    await admin.query(`REVOKE jev_runtime FROM "${memberRole}"`);
+    await admin.query(`DROP ROLE "${memberRole}"`);
+  }
+
   // Live security checks must notice PostgreSQL catalog drift even when the
   // schema_migrations checksum ledger and EXECUTE grants remain unchanged.
   const writer = "public.jev_lock_project_scope(uuid)";
@@ -127,6 +161,14 @@ try {
     await assert.rejects(verify(), /controlled writer has unsafe owner/);
   } finally {
     await admin.query(`ALTER FUNCTION ${writer} SET search_path = pg_catalog, public, pg_temp`);
+  }
+
+  // Runtime must not be able to delegate its EXECUTE rights to attackers.
+  await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
+  try {
+    await assert.rejects(verify(), /controlled writer has unsafe owner/);
+  } finally {
+    await admin.query(`REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION ${writer} FROM jev_runtime CASCADE`);
   }
 
   // SECURITY DEFINER functions must never be callable via PUBLIC.
