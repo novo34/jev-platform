@@ -146,6 +146,12 @@ commit/CI, database privilege verification and restoration evidence.
 * The smoke tests deliberately alter writer SECURITY DEFINER, owner and
   pinned search_path and try a migrator that can CREATE a schema but cannot
   ALTER managed objects; the verifier must fail each case.
+* Authenticated identity is checked in addition to effective `current_user`:
+  production API/Worker and the live database verifier require
+  `session_user = current_user = jev_runtime`. Connection-string query
+  parameters which could change the active role (such as `options=-c role=...`)
+  are rejected; regression coverage tries to impersonate the runtime role
+  from a privileged PostgreSQL session.
 * `scripts/verify-db-topology.mjs` is **read-only**. It requires distinct
   database runtime/migration identities, four protected-table PASS results,
   all seven controlled writers with trusted ownership, SECURITY DEFINER and
