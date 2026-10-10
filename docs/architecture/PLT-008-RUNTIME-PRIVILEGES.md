@@ -151,6 +151,21 @@ commit/CI, database privilege verification and restoration evidence.
   all seven controlled writers with trusted ownership, SECURITY DEFINER and
   pinned search_path, migration ownership/capability and exactly matching
   source-controlled migration checksums.
+* `scripts/package-lock.json` pins the standalone production verifier's
+  PostgreSQL client and all transitive package integrity hashes. The
+  production workflow runs **`npm ci --ignore-scripts --prefix scripts`**
+  rather than installing mutable dependencies. Checkout/setup-node actions
+  are pinned to immutable reviewed SHA commits. The verifier no longer
+  imports the application build, so no root workspace installation/build
+  takes place on a runner that will receive production secrets.
+* PostgreSQL drift checks reject function EXECUTE granted to `PUBLIC` or
+  non-approved roles as well as a missing SECURITY DEFINER flag, owner,
+  pinned search_path or runtime EXECUTE grant. Negative CI tests grant
+  PUBLIC/foreign-role EXECUTE and confirm the gate fails.
+* Migrator ownership checks exclude PostgreSQL **extension-owned**
+  objects (such as functions installed by pgcrypto), while requiring
+  effective owner privileges on JEV tables, sequences, functions and
+  custom enum/domain types.
 * The protected `.github/workflows/verify-production-db.yml` verifies
   the real server at deployment using a production GitHub Environment.
   Production URLs are injected **only into the final verifier step**,
