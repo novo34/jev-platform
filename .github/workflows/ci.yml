@@ -42,12 +42,8 @@ jobs:
       - name: Install
         run: npm install
 
-      # One-off audited lockfile generation; remove after committing the lock.
-      - name: Generate pinned verifier dependency lock (one-off)
-        shell: bash
-        run: |
-          npm install --package-lock-only --ignore-scripts --prefix scripts
-          node -e 'const fs=require("node:fs");const s=fs.readFileSync("scripts/package-lock.json");console.log("JEV_VERIFIER_LOCK_BEGIN"+s.toString("base64")+"JEV_VERIFIER_LOCK_END")'
+      - name: Install lockfile-pinned production verifier dependencies
+        run: npm ci --ignore-scripts --prefix scripts
 
       - name: Check
         run: npm run check
