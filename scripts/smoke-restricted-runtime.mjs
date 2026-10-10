@@ -189,6 +189,38 @@ try {
   const verify = () => verifyDatabaseTopology({
     runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
   });
+
+  // PostgreSQL foreign-key REFERENCES may expose elevated owner execution.
+  // Grant first at table scope, then at column scope through PUBLIC, and
+  // prove that both the runtime diagnostic and the actual provisioner
+  // reject/remove the dangerous effective privilege.
+  for (const grant of [
+    "GRANT REFERENCES ON TABLE public.approvals TO PUBLIC",
+    "GRANT REFERENCES (id) ON TABLE public.approvals TO PUBLIC"
+  ]) {
+    await admin.query(grant);
+    try {
+      const observer = new Pool({ connectionString: runtimeURL.toString() });
+      try {
+        const rights = await observer.query(
+          "SELECT pg_catalog.has_table_privilege(current_user, 'public.approvals', 'REFERENCES') AS table_right, pg_catalog.has_column_privilege(current_user, 'public.approvals', 'id', 'REFERENCES') AS column_right"
+        );
+        ensure(rights.rows[0].table_right || rights.rows[0].column_right,
+          "REFERENCES test fixture did not grant effective privilege");
+        await assert.rejects(
+          assertRestrictedRuntimeRole(observer),
+          /Unsafe JEV runtime database role/
+        );
+      } finally { await observer.end(); }
+      await assert.rejects(verify(), /guarded-table privilege diagnostic/);
+      await admin.query(provisioning);
+      ensure((await verify()).privilege_checks === "4/4 PASS",
+        "provisioning failed to remove dangerous REFERENCES grants");
+    } finally {
+      await admin.query("REVOKE REFERENCES ON TABLE public.approvals FROM PUBLIC");
+      await admin.query("REVOKE REFERENCES (id) ON TABLE public.approvals FROM PUBLIC");
+    }
+  }
   await admin.query(`ALTER FUNCTION ${writer} SECURITY INVOKER`);
   try {
     await assert.rejects(verify(), /controlled writer has unsafe owner/);
