@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
-import { migrate, assertRestrictedRuntimeRole } from "../packages/db/dist/index.js";
+import { migrate, assertRestrictedRuntimeRole, createDatabasePool } from "../packages/db/dist/index.js";
 import { verifyDatabaseTopology } from "./verify-db-topology.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -270,6 +270,31 @@ try {
     API_PORT: "34341", WORKER_HEALTH_PORT: "34342",
     WORKER_ID: "ci-restricted-worker"
   };
+  // Real process regression: PostgreSQL options can set the session
+  // authorization independently of current_user. Both API and Worker must
+  // reject role-changing options in the shared pool constructor BEFORE
+  // accepting connections, even when they authenticate as a superuser.
+  const spoofedAdminURL = new URL(adminURL);
+  spoofedAdminURL.searchParams.set("options", "-c session_authorization=jev_runtime");
+  assert.throws(
+    () => createDatabasePool({ connectionString: spoofedAdminURL.toString() }),
+    /Forbidden PostgreSQL connection option: options/
+  );
+  assert.throws(
+    () => createDatabasePool({ connectionString: runtimeURL.toString(), options: "-c role=jev_runtime" }),
+    /PostgreSQL startup options are not permitted/
+  );
+  const maliciousAPI = startProcess("apps/api/dist/server.js", {
+    ...restrictedEnv, API_PORT: "34344", DATABASE_URL: spoofedAdminURL.toString()
+  });
+  const maliciousWorker = startProcess("apps/worker/dist/server.js", {
+    ...restrictedEnv, WORKER_HEALTH_PORT: "34345", DATABASE_URL: spoofedAdminURL.toString()
+  });
+  await Promise.all([
+    expectStartRejected(maliciousAPI, 34344),
+    expectStartRejected(maliciousWorker, 34345)
+  ]);
+
   const api = startProcess("apps/api/dist/server.js", restrictedEnv);
   const worker = startProcess("apps/worker/dist/server.js", restrictedEnv);
   await Promise.all([waitForHealth(api, 34341), waitForHealth(worker, 34342)]);
