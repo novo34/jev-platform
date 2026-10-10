@@ -158,11 +158,20 @@ is open until all real-production evidence has been supplied.
 2. Apply immutable migrations using **separate** migration credentials;
    provision the restricted role with the SQL template; configure secret
    injection without copying any passwords into issues, PRs or chat.
-3. Run the production workflow on audited main with the *actual* production
-   URLs. Record its successful run ID, current commit, schema migration count
-   and four PASS results without exposing credentials.
-4. Verify the deployed processes and rollback procedure. Do not report
-   production complete from local CI test evidence.
+3. **Before merging PR #10**, validate the exact candidate commit on a
+   trusted operator runner with access to the deployment secret manager:
+   `npm install && npm run build -w @jev/db` followed by
+   `node scripts/verify-db-topology.mjs`, with `DATABASE_URL` and
+   `MIGRATION_DATABASE_URL` supplied to the process securely. These
+   URLs must never appear in a GitHub comment, log or copied shell history.
+   Preserve only the non-sensitive PASS summary, reviewed commit and operator
+   acceptance as closure evidence. This local pre-merge path avoids a circular
+   dependency on a workflow only available from merged `main`.
+4. After merge, run the GitHub production verification workflow on audited
+   `main` with the *actual* environment secrets and record its successful
+   run ID. A skipped run is not evidence.
+5. Verify the deployed API and Worker processes and the restore/rollback
+   procedure. Do not claim this is complete from disposable CI results.
 
 No production connection or hosting provider is evidenced in this repository;
 **without that external target the gate remains BLOCKED**, not falsely marked
