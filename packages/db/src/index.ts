@@ -31,6 +31,7 @@ export async function assertRestrictedRuntimeRole(
   }
   const result = await pool.query<{
     role_name: string;
+    authenticated_role: string;
     active_schema: string | null;
     elevated: boolean;
     owns_guarded: boolean;
@@ -40,6 +41,7 @@ export async function assertRestrictedRuntimeRole(
     guarded_table_count: number;
   }>(`
     SELECT current_user AS role_name,
+           session_user AS authenticated_role,
            pg_catalog.current_schema() AS active_schema,
            pg_catalog.has_schema_privilege(current_user, $1::text, 'CREATE') AS can_create_in_schema,
            (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolbypassrls OR r.rolreplication) AS elevated,
@@ -87,7 +89,7 @@ export async function assertRestrictedRuntimeRole(
     FROM pg_catalog.pg_roles r WHERE r.rolname = current_user
   `, [applicationSchema]);
   const role = result.rows[0];
-  if (!role || role.active_schema !== applicationSchema || role.guarded_table_count !== 4 || role.elevated || role.owns_guarded || role.has_role_memberships || role.can_create_in_schema || role.can_write_guarded) {
+  if (!role || (applicationSchema === "public" && (role.authenticated_role !== "jev_runtime" || role.role_name !== role.authenticated_role)) || role.active_schema !== applicationSchema || role.guarded_table_count !== 4 || role.elevated || role.owns_guarded || role.has_role_memberships || role.can_create_in_schema || role.can_write_guarded) {
     throw new Error(
       `Unsafe JEV runtime database role: ${role?.role_name ?? "unknown"}; ` +
       "use a restricted application credential, not the migration owner"
