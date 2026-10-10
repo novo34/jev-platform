@@ -37,12 +37,10 @@ function parseConnection(value, label) {
   // stays privileged and RESET ROLE remains available. Admit only the
   // explicitly supported, non-role-changing query parameters.
   const allowed = new Set(["sslmode", "application_name", "connect_timeout"]);
+  const forbidden = new Set(["host", "hostaddr", "port", "dbname", "database", "user", "password", "service"]);
   for (const [key] of url.searchParams) {
+    assert(!forbidden.has(key), label + " has forbidden connection endpoint override: " + key);
     assert(allowed.has(key), label + " has forbidden connection option: " + key);
-  }
-  const forbidden = ["host", "hostaddr", "port", "dbname", "database", "user", "password", "service"];
-  for (const key of forbidden) {
-    assert(!url.searchParams.has(key), label + " has forbidden connection endpoint override: " + key);
   }
   return url;
 }
