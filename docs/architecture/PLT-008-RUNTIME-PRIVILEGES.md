@@ -192,14 +192,22 @@ commit/CI, database privilege verification and restoration evidence.
   non-approved roles as well as a missing SECURITY DEFINER flag, owner,
   pinned search_path or runtime EXECUTE grant. Negative CI tests grant
   PUBLIC/foreign-role EXECUTE and confirm the gate fails.
-* **No unreviewed privileged routine surface:** the live verifier enumerates
-  every non-extension, non-trigger SECURITY DEFINER routine (functions **and**
-  SQL procedures callable with `CALL`) in the canonical `public` schema. Any function outside the seven individually audited
-  writer signatures fails the deployment gate, even when EXECUTE is currently
-  revoked. A PostgreSQL CI negative test creates an unreviewed definer,
-  observes rejection, and confirms removal restores the PASS condition.
-  A second regression creates a `SECURITY DEFINER` procedure with PUBLIC
-  EXECUTE, calls it as the runtime role and proves the verifier rejects it.
+* **No unreviewed privileged routine surface:** the live verifier
+  enumerates every non-extension, non-trigger SECURITY DEFINER function or
+  procedure across **all non-system schemas accessible** to `jev_runtime`
+  (including PUBLIC USAGE). Only the seven individually audited writers in
+  `public` are permitted. A privileged SQL routine outside the allowlist
+  fails the deployment gate even if EXECUTE is currently revoked.
+  CI proves rejection of PUBLIC-callable functions, procedures and a
+  function in a separately granted schema.
+* **Exact audited writer implementations:** checking only `SECURITY DEFINER`,
+  owner, pinned `search_path` and EXECUTE rights cannot detect a malicious
+  `CREATE OR REPLACE FUNCTION` retaining the same signature. The deployment
+  verifier compares each live `pg_proc.prosrc` PL/pgSQL body against its exact
+  final source-controlled definition in the immutable migrations
+  (`0011`, `0013`, `0014`, `0015`, `0017`), and requires PL/pgSQL.
+  The CI regression temporarily replaces an audited writer body, checks
+  the verifier refuses the drift, then restores the verified definition.
 * **Migrator schema cannot drift:** the live verifier requires the actual
   migrator session's `current_schema()` to be `public`. This matters because
   the migration runner uses unqualified statements; a role-specific
