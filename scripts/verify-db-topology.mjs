@@ -208,8 +208,8 @@ async function validateControlledWriters(pool) {
 /**
  * Database-wide allowlist: a SECURITY DEFINER in ANY non-system schema
  * usable by jev_runtime can perform owner-privileged DML, not only those in
- * public. Trigger functions cannot be called as normal SQL routines;
- * extension members are provider-managed.
+ * public. A trigger function may be invoked through an attacker-owned TEMP
+ * table, so trigger routines are included; extension members are excluded.
  *
  * Fail closed even if the extra function currently has EXECUTE revoked:
  * making an unknown owner-privileged entry point callable must require a new
@@ -227,7 +227,8 @@ async function validateDefinerSurface(pool) {
       AND p.prosecdef
       -- Do not limit to prokind='f': SECURITY DEFINER procedures (prokind='p')
       -- are CALL-able with PUBLIC EXECUTE and are equally privileged.
-      AND p.prorettype <> 'pg_catalog.trigger'::pg_catalog.regtype
+      -- Trigger functions are also dangerous: PUBLIC TEMP allows runtime to
+      -- attach PUBLIC-executable SECURITY DEFINER triggers to temp tables.
       AND NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_depend dependency
         WHERE dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
