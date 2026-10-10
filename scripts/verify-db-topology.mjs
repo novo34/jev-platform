@@ -43,7 +43,7 @@ function extractAuditedWriterBody(sql, signature) {
   ));
   assert(start >= 0, "audited function definition not found for " + name);
   const tail = sql.slice(start);
-  const opening = /\\bAS\\s+(\\$[a-zA-Z_0-9]*\\$)/.exec(tail);
+  const opening = /\bAS\s+(\$[a-zA-Z_0-9]*\$)/.exec(tail);
   assert(opening, "audited PL/pgSQL function delimiter not found for " + name);
   const bodyStart = start + opening.index + opening[0].length;
   const bodyEnd = sql.indexOf(opening[1], bodyStart);
@@ -221,7 +221,10 @@ async function validateDefinerSurface(pool) {
     FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace ns ON ns.oid = p.pronamespace
     WHERE ns.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-      AND ns.nspname !~ '^pg_(temp|toast_temp)_[0-9]+
+      AND ns.nspname NOT LIKE 'pg_temp_%'
+      AND ns.nspname NOT LIKE 'pg_toast_temp_%'
+      AND pg_catalog.has_schema_privilege(current_user, ns.oid, 'USAGE')
+      AND p.prosecdef
       -- Do not limit to prokind='f': SECURITY DEFINER procedures (prokind='p')
       -- are CALL-able with PUBLIC EXECUTE and are equally privileged.
       AND p.prorettype <> 'pg_catalog.trigger'::pg_catalog.regtype
