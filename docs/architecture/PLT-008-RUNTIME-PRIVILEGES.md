@@ -104,6 +104,12 @@ rollback procedure. The repository alone cannot attest live database grants.
 * `REVOKE ALL ON TABLE` does not clear historical column-level INSERT/UPDATE
   grants. The provisioning script explicitly revokes them; the runtime
   startup guard and verifier inspect each guarded column.
+* PostgreSQL `REFERENCES` on a protected table or column must also be
+  denied to the runtime, including grants inherited from `PUBLIC`. An
+  attacker able to create foreign keys elsewhere can abuse certain
+  privileged constraint paths. Provisioning revokes PUBLIC/table/column
+  REFERENCES grants, and startup plus SQL diagnostics reject any effective
+  REFERENCES right. Dedicated PostgreSQL tests exercise both scopes.
 * A `PUBLIC` grant of `TRUNCATE` or `TRIGGER` on a guarded table can
   bypass lifecycle immutability or enable unsafe DDL despite role-specific
   REVOKE. Provisioning removes both PUBLIC grants; startup and diagnostic
