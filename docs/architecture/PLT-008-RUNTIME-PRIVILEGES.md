@@ -33,8 +33,8 @@ This document specifies the F-04 acceptance gate. Passing CI proves the restrict
 5. Verify runtime can execute each allowed operation but cannot directly
    INSERT/UPDATE/DELETE guarded tables, ALTER TABLE, DISABLE TRIGGER, or
    SET ROLE to a privileged account. Repeat on PostgreSQL 16 in CI.
-6. Verify rollback and failure handling under two-session concurrency and
-   complete independent review before merge.
+6. Verify two-session concurrency regressions and finish independent review
+   before merging development code; validate real backup/rollback at deployment.
 
 **Do not apply REVOKE in production before step 1 is complete.**
 A green CI using a superuser database does not validate this security boundary.
@@ -74,7 +74,7 @@ staging Deployment creation, human Approval insertion and the
 SET ROLE privilege escalation. The full CI must pass at the
 **final HEAD**, not just on an ancestor commit.
 
-**Actual deployment still needs its own evidence**: distinct runtime and
+**At deployment, external evidence is required**: distinct runtime and
 migrator credentials provisioned via secrets, runtime diagnostic reporting
 four PASS rows, successful API/worker startup with the restricted role,
 rejection of startup with migration credentials, and operator-approved
@@ -121,58 +121,58 @@ rollback procedure. The repository alone cannot attest live database grants.
   required to use the controlled database functions for all guarded writes.
 
 
-## Mandatory end-to-end closure, not deferred work (operator decision 2026-10-10)
+## Code acceptance versus production deployment (operator decision 2026-10-10)
 
-PLT-008 and PR #10 **must not be accepted or merged**, and PLT-009 must not
-resume, while any PLT-008 security or deployment acceptance condition is
-unverified. This is an explicit development gate, not a suggestion to
-postpone the work. Issue
-[PLT-008 closure blocker #11](https://github.com/novo34/jev-platform/issues/11)
-is open until all real-production evidence has been supplied.
+**Development acceptance:** PLT-008 can merge after full CI and independent
+zero-actionable-findings review of the final HEAD. The operator already has a
+server but has explicitly scheduled its actual PostgreSQL/hosting deployment
+for a later milestone. The live DB connection is therefore **not** required
+to begin PLT-009.
 
-### What already runs automatically
+**Deployment acceptance:** production traffic must not begin until the
+real server passes the entire mandatory
+[deployment checklist #11](https://github.com/novo34/jev-platform/issues/11).
+The checklist stays OPEN until verified and is not considered complete by a
+successful isolated CI run. Preserve separate operator sign-off, exact audited
+commit/CI, database privilege verification and restoration evidence.
 
-* GitHub Actions `platform-ci` runs `npm run smoke:restricted-runtime`.
-  This creates a **disposable CI-only PostgreSQL 16** topology, executes
-  all 17 checksum-protected migrations, provisions a true dedicated
-  `jev_runtime` LOGIN, verifies four PASS results and seven controlled writer
-  EXECUTE grants, and launches **the built API and Worker** with
-  `NODE_ENV=production` and restricted credentials.
-* The same test launches an API with the migrator's credential and requires
-  startup to fail. It never prints generated test passwords.
-* `scripts/verify-db-topology.mjs` is an independent **read-only** live
-  verification command that checks separate runtime and migration identities,
-  correct application schema, all guarded-table grants, writer capabilities
-  and migration file/checksum parity without changing data.
-* `.github/workflows/verify-production-db.yml` is the production preflight
-  job, restricted to audited `main` and a `production` GitHub Environment.
-  Supply `JEV_PRODUCTION_RUNTIME_DATABASE_URL` and
-  `JEV_PRODUCTION_MIGRATION_DATABASE_URL` as environment secrets. An absent
-  secret, skipped job or failed run **is not** an acceptable PASS.
+### Automated checks available now
 
-### Real-production acceptance (still required)
+* `platform-ci` runs `npm run smoke:restricted-runtime` against disposable
+  PostgreSQL 16, installing the latest 17 checksum-protected migrations and
+  launching the **built API and Worker** with `NODE_ENV=production` under
+  the restricted role. It rejects API startup as privileged migrator and
+  verifies four protected tables with PASS diagnostics.
+* The smoke tests deliberately alter writer SECURITY DEFINER, owner and
+  pinned search_path and try a migrator that can CREATE a schema but cannot
+  ALTER managed objects; the verifier must fail each case.
+* `scripts/verify-db-topology.mjs` is **read-only**. It requires distinct
+  database runtime/migration identities, four protected-table PASS results,
+  all seven controlled writers with trusted ownership, SECURITY DEFINER and
+  pinned search_path, migration ownership/capability and exactly matching
+  source-controlled migration checksums.
+* The protected `.github/workflows/verify-production-db.yml` verifies
+  the real server at deployment using a production GitHub Environment.
+  Production URLs are injected **only into the final verifier step**,
+  never into checkout, install or build actions. A skipped/missing-secret
+  job never counts as production acceptance.
 
-1. Choose and provision the real PostgreSQL deployment and API/Worker hosting;
-   the repository currently contains **only disposable CI and local compose**,
-   not a provisioned production infrastructure.
-2. Apply immutable migrations using **separate** migration credentials;
-   provision the restricted role with the SQL template; configure secret
-   injection without copying any passwords into issues, PRs or chat.
-3. **Before merging PR #10**, validate the exact candidate commit on a
-   trusted operator runner with access to the deployment secret manager:
-   `npm install && npm run build -w @jev/db` followed by
-   `node scripts/verify-db-topology.mjs`, with `DATABASE_URL` and
-   `MIGRATION_DATABASE_URL` supplied to the process securely. These
-   URLs must never appear in a GitHub comment, log or copied shell history.
-   Preserve only the non-sensitive PASS summary, reviewed commit and operator
-   acceptance as closure evidence. This local pre-merge path avoids a circular
-   dependency on a workflow only available from merged `main`.
-4. After merge, run the GitHub production verification workflow on audited
-   `main` with the *actual* environment secrets and record its successful
-   run ID. A skipped run is not evidence.
-5. Verify the deployed API and Worker processes and the restore/rollback
-   procedure. Do not claim this is complete from disposable CI results.
+### Required when deploying on the available server
 
-No production connection or hosting provider is evidenced in this repository;
-**without that external target the gate remains BLOCKED**, not falsely marked
-DONE or moved to a later task.
+1. Configure actual PostgreSQL, API/Worker hosting, DNS/network security and
+   reliable backups. Inject `DATABASE_URL` and `MIGRATION_DATABASE_URL`
+   from a secure secret store; never write them in chat, source or CI logs.
+2. Test backup restoration and rollback **before** running migrations.
+3. Run `npm run db:migrate` with migrator credentials, then run the
+   admin-only `packages/db/security/provision-runtime-role.sql` template.
+4. Execute `node scripts/verify-db-topology.mjs` from an audited build with
+   the **actual** server credentials. Record its sanitized PASS summary.
+5. Run the protected main-branch verification workflow. Save its successful
+   run ID and check the deployed API and Worker with restricted credentials;
+   verify the privileged migration identity is rejected.
+6. Record the operator's rollout sign-off in issue #11. If any check fails,
+   stop production rollout; fix it before opening live traffic.
+
+Do not merge implementation code into production as proof that the live
+role has been provisioned: code/test completion and production deployment
+are separate, explicitly audited acceptance events.
