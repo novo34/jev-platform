@@ -179,7 +179,8 @@ async function validateDefinerSurface(pool) {
     JOIN pg_catalog.pg_namespace ns ON ns.oid = p.pronamespace
     WHERE ns.nspname = 'public'
       AND p.prosecdef
-      AND p.prokind = 'f'
+      -- Do not limit to prokind='f': SECURITY DEFINER procedures (prokind='p')
+      -- are CALL-able with PUBLIC EXECUTE and are equally privileged.
       AND p.prorettype <> 'pg_catalog.trigger'::pg_catalog.regtype
       AND NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_depend dependency
@@ -195,7 +196,7 @@ async function validateDefinerSurface(pool) {
     ORDER BY p.oid::pg_catalog.regprocedure::text
   `, [controlled]);
   assert(results.rows.length === 0,
-    "unapproved SECURITY DEFINER function exists outside the controlled writer allowlist");
+    "unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist");
 }
 
 /** Validate the actual DB endpoints supplied by the deployment secret manager. */
