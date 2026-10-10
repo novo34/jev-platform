@@ -42,7 +42,7 @@ $jev_memberships$;
 
 -- PUBLIC grants also apply to jev_runtime, even if its own grants are revoked.
 -- TRUNCATE can erase immutable human decisions; TRIGGER allows DDL.
-REVOKE TRUNCATE, TRIGGER ON TABLE tasks, approvals, deployments, environments
+REVOKE TRUNCATE, TRIGGER, REFERENCES ON TABLE tasks, approvals, deployments, environments
   FROM PUBLIC;
 REVOKE ALL ON TABLE tasks, approvals, deployments, environments FROM jev_runtime;
 -- Table REVOKE does NOT revoke historical column-level INSERT/UPDATE grants.
@@ -61,6 +61,11 @@ BEGIN
     EXECUTE format(
       'REVOKE INSERT (%I), UPDATE (%I), REFERENCES (%I) ON TABLE public.%I FROM jev_runtime',
       c.column_name, c.column_name, c.column_name, c.table_name
+    );
+
+    EXECUTE format(
+      'REVOKE REFERENCES (%I) ON TABLE public.%I FROM PUBLIC',
+      c.column_name, c.table_name
     );
   END LOOP;
 END;
