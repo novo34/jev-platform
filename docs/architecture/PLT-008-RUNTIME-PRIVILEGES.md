@@ -193,10 +193,12 @@ commit/CI, database privilege verification and restoration evidence.
   pinned search_path or runtime EXECUTE grant. Negative CI tests grant
   PUBLIC/foreign-role EXECUTE and confirm the gate fails.
 * **No unreviewed privileged routine surface:** the live verifier
-  enumerates every non-extension, non-trigger SECURITY DEFINER function or
-  procedure across **all non-system schemas accessible** to `jev_runtime`
-  (including PUBLIC USAGE). Only the seven individually audited writers in
-  `public` are permitted. A privileged SQL routine outside the allowlist
+  enumerates every non-extension SECURITY DEFINER function, procedure
+  **or trigger-returning routine** across **all non-system schemas accessible**
+  to `jev_runtime` (including PUBLIC USAGE). A privileged trigger routine
+  can be attached to a runtime-owned temporary table and fired via INSERT;
+  it must not be excluded because direct SELECT/CALL is unavailable.
+  Only the seven individually audited writers in `public` are permitted. A privileged SQL routine outside the allowlist
   fails the deployment gate even if EXECUTE is currently revoked.
   CI proves rejection of PUBLIC-callable functions, procedures and a
   function in a separately granted schema.
@@ -208,6 +210,15 @@ commit/CI, database privilege verification and restoration evidence.
   (`0011`, `0013`, `0014`, `0015`, `0017`), and requires PL/pgSQL.
   The CI regression temporarily replaces an audited writer body, checks
   the verifier refuses the drift, then restores the verified definition.
+* **Trigger invariants are part of the trusted write boundary:** the live
+  verifier reconstructs the expected 15 non-internal application trigger
+  bindings from immutable migration SQL, checks event masks, update-column
+  filters, table/function identity and enabled state, and compares the
+  final PL/pgSQL body of each bound trigger function against the last
+  audited migration that defined it. CI proves detection of a disabled,
+  detached, or body-replaced approval-authorization trigger. A green
+  migration checksum ledger alone does not prove that live triggers remain
+  attached or unmodified.
 * **Migrator schema cannot drift:** the live verifier requires the actual
   migrator session's `current_schema()` to be `public`. This matters because
   the migration runner uses unqualified statements; a role-specific
