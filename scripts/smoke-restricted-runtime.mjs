@@ -244,6 +244,40 @@ try {
   ensure((await verify()).controlled_writers === 7,
     "unapproved procedure cleanup did not restore the topology");
 
+  // P1: RETURN trigger cannot be invoked with SELECT/CALL, but PUBLIC TEMP
+  // allows attaching a PUBLIC-executable SECURITY DEFINER trigger to a
+  // runtime-owned temporary table. The inventory MUST reject this routine.
+  const rogueTrigger = "public.jev_unreviewed_owner_trigger()";
+  await admin.query(`
+    CREATE FUNCTION ${rogueTrigger} RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS 'BEGIN RETURN NEW; END;'
+  `);
+  try {
+    const runtimeTrigger = new Pool({ connectionString: runtimeURL.toString(), max: 1 });
+    const connection = await runtimeTrigger.connect();
+    try {
+      await connection.query("CREATE TEMP TABLE jev_runtime_temp_probe(id integer)");
+      await connection.query(
+        "CREATE TRIGGER jev_runtime_temp_proof BEFORE INSERT ON pg_temp.jev_runtime_temp_probe FOR EACH ROW EXECUTE FUNCTION " + rogueTrigger
+      );
+      await connection.query("INSERT INTO pg_temp.jev_runtime_temp_probe(id) VALUES (1)");
+    } finally {
+      connection.release();
+      await runtimeTrigger.end();
+    }
+    await assert.rejects(
+      verify(),
+      /unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist/
+    );
+  } finally {
+    await admin.query("DROP FUNCTION " + rogueTrigger);
+  }
+  ensure((await verify()).controlled_writers === 7,
+    "unapproved privileged trigger cleanup did not restore the topology");
+
+
   // P1: definer functions outside public are equally dangerous whenever
   // runtime can USE that schema (including PUBLIC USAGE).
   const foreignSchema = "jev_definer_extra_" + randomBytes(6).toString("hex");
@@ -368,6 +402,60 @@ try {
   } finally {
     await admin.query(`ALTER FUNCTION ${writer} SET search_path = pg_catalog, public, pg_temp`);
   }
+
+
+  // P1: approval validity depends on database triggers. Verify that an
+  // auditor detects both disabled bindings and a changed trigger body.
+  const approvalTrigger = "trg_00_validate_approval_actor";
+  await admin.query(
+    "ALTER TABLE public.approvals DISABLE TRIGGER " + approvalTrigger
+  );
+  try {
+    await assert.rejects(
+      verify(), /application trigger binding, events or enabled state drifted/
+    );
+  } finally {
+    await admin.query(
+      "ALTER TABLE public.approvals ENABLE TRIGGER " + approvalTrigger
+    );
+  }
+
+  const approvalFn = "public.validate_approval_actor()";
+  const originalApprovalFn = (await admin.query(
+    "SELECT pg_catalog.pg_get_functiondef($1::pg_catalog.regprocedure) AS ddl",
+    [approvalFn]
+  )).rows[0].ddl;
+  await admin.query(`
+    CREATE OR REPLACE FUNCTION public.validate_approval_actor()
+    RETURNS trigger LANGUAGE plpgsql
+    SET search_path = pg_catalog, public, pg_temp
+    AS 'BEGIN RETURN NEW; END;'
+  `);
+  try {
+    await assert.rejects(
+      verify(), /application trigger function body drifted from audited migration/
+    );
+  } finally {
+    await admin.query(originalApprovalFn);
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "approval trigger restoration did not restore the release gate");
+
+  // A detached enforcement trigger must also fail even with its function intact.
+  const originalTriggerDef = (await admin.query(
+    "SELECT pg_catalog.pg_get_triggerdef(t.oid) AS ddl FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='approvals' AND t.tgname=$1",
+    [approvalTrigger]
+  )).rows[0].ddl;
+  await admin.query("DROP TRIGGER " + approvalTrigger + " ON public.approvals");
+  try {
+    await assert.rejects(
+      verify(), /application trigger set differs from the audited migration inventory/
+    );
+  } finally {
+    await admin.query(originalTriggerDef);
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "approval trigger binding restoration did not restore the release gate");
 
   // Runtime must not be able to delegate its EXECUTE rights to attackers.
   await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
