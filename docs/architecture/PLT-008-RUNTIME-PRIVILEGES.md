@@ -119,3 +119,51 @@ rollback procedure. The repository alone cannot attest live database grants.
 * DB ownership inherently permits bypass of app-level ACLs; use migration
   credentials only in controlled administrative operations. The runtime is
   required to use the controlled database functions for all guarded writes.
+
+
+## Mandatory end-to-end closure, not deferred work (operator decision 2026-10-10)
+
+PLT-008 and PR #10 **must not be accepted or merged**, and PLT-009 must not
+resume, while any PLT-008 security or deployment acceptance condition is
+unverified. This is an explicit development gate, not a suggestion to
+postpone the work. Issue
+[PLT-008 closure blocker #11](https://github.com/novo34/jev-platform/issues/11)
+is open until all real-production evidence has been supplied.
+
+### What already runs automatically
+
+* GitHub Actions `platform-ci` runs `npm run smoke:restricted-runtime`.
+  This creates a **disposable CI-only PostgreSQL 16** topology, executes
+  all 17 checksum-protected migrations, provisions a true dedicated
+  `jev_runtime` LOGIN, verifies four PASS results and seven controlled writer
+  EXECUTE grants, and launches **the built API and Worker** with
+  `NODE_ENV=production` and restricted credentials.
+* The same test launches an API with the migrator's credential and requires
+  startup to fail. It never prints generated test passwords.
+* `scripts/verify-db-topology.mjs` is an independent **read-only** live
+  verification command that checks separate runtime and migration identities,
+  correct application schema, all guarded-table grants, writer capabilities
+  and migration file/checksum parity without changing data.
+* `.github/workflows/verify-production-db.yml` is the production preflight
+  job, restricted to audited `main` and a `production` GitHub Environment.
+  Supply `JEV_PRODUCTION_RUNTIME_DATABASE_URL` and
+  `JEV_PRODUCTION_MIGRATION_DATABASE_URL` as environment secrets. An absent
+  secret, skipped job or failed run **is not** an acceptable PASS.
+
+### Real-production acceptance (still required)
+
+1. Choose and provision the real PostgreSQL deployment and API/Worker hosting;
+   the repository currently contains **only disposable CI and local compose**,
+   not a provisioned production infrastructure.
+2. Apply immutable migrations using **separate** migration credentials;
+   provision the restricted role with the SQL template; configure secret
+   injection without copying any passwords into issues, PRs or chat.
+3. Run the production workflow on audited main with the *actual* production
+   URLs. Record its successful run ID, current commit, schema migration count
+   and four PASS results without exposing credentials.
+4. Verify the deployed processes and rollback procedure. Do not report
+   production complete from local CI test evidence.
+
+No production connection or hosting provider is evidenced in this repository;
+**without that external target the gate remains BLOCKED**, not falsely marked
+DONE or moved to a later task.
