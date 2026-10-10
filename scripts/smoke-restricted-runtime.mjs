@@ -4,6 +4,7 @@
  * Tests actual built API and Worker processes, not only SQL-role simulation.
  */
 import { randomBytes } from "node:crypto";
+import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -84,6 +85,71 @@ try {
     runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
   });
   ensure(topology.privilege_checks === "4/4 PASS", "privilege diagnostic failed");
+
+  // Deployment verifier MUST fail closed when the migration credential can
+  // CREATE objects but cannot ALTER/replace previously migrated objects.
+  const fakeRole = "jev_gate_migrator_" + randomBytes(6).toString("hex");
+  const fakeSecret = randomBytes(32).toString("hex");
+  const fakeLiteral = (await admin.query(
+    "SELECT pg_catalog.quote_literal($1::text) AS escaped", [fakeSecret]
+  )).rows[0].escaped;
+  await admin.query(`CREATE ROLE "${fakeRole}" LOGIN PASSWORD ${fakeLiteral} NOINHERIT`);
+  try {
+    await admin.query(`GRANT USAGE, CREATE ON SCHEMA public TO "${fakeRole}"`);
+    const fakeURL = new URL(adminURL);
+    fakeURL.username = fakeRole;
+    fakeURL.password = fakeSecret;
+    await assert.rejects(
+      verifyDatabaseTopology({
+        runtimeUrl: runtimeURL.toString(), migrationUrl: fakeURL.toString()
+      }),
+      /migration identity cannot manage all existing application schema objects/
+    );
+  } finally {
+    await admin.query(`REVOKE USAGE, CREATE ON SCHEMA public FROM "${fakeRole}"`);
+    await admin.query(`DROP ROLE "${fakeRole}"`);
+  }
+
+  // Live security checks must notice PostgreSQL catalog drift even when the
+  // schema_migrations checksum ledger and EXECUTE grants remain unchanged.
+  const writer = "public.jev_lock_project_scope(uuid)";
+  const verify = () => verifyDatabaseTopology({
+    runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
+  });
+  await admin.query(`ALTER FUNCTION ${writer} SECURITY INVOKER`);
+  try {
+    await assert.rejects(verify(), /controlled writer has unsafe owner/);
+  } finally {
+    await admin.query(`ALTER FUNCTION ${writer} SECURITY DEFINER`);
+  }
+  await admin.query(`ALTER FUNCTION ${writer} SET search_path = pg_catalog, pg_temp`);
+  try {
+    await assert.rejects(verify(), /controlled writer has unsafe owner/);
+  } finally {
+    await admin.query(`ALTER FUNCTION ${writer} SET search_path = pg_catalog, public, pg_temp`);
+  }
+
+  // A malicious function owner must not pass merely because a definer flag
+  // and EXECUTE are present.
+  const fakeOwner = "jev_gate_owner_" + randomBytes(6).toString("hex");
+  const ownerQuoted = (await admin.query(
+    "SELECT pg_catalog.quote_ident(current_user) AS role"
+  )).rows[0].role;
+  await admin.query(`CREATE ROLE "${fakeOwner}" NOLOGIN`);
+  try {
+    await admin.query(`GRANT CREATE ON SCHEMA public TO "${fakeOwner}"`);
+    await admin.query(`ALTER FUNCTION ${writer} OWNER TO "${fakeOwner}"`);
+    try {
+      await assert.rejects(verify(), /controlled writer has unsafe owner/);
+    } finally {
+      await admin.query(`ALTER FUNCTION ${writer} OWNER TO ${ownerQuoted}`);
+    }
+  } finally {
+    await admin.query(`REVOKE CREATE ON SCHEMA public FROM "${fakeOwner}"`);
+    await admin.query(`DROP ROLE "${fakeOwner}"`);
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "restore of controlled writer attributes failed");
 
   const runtimePool = new Pool({ connectionString: runtimeURL.toString() });
   try {
