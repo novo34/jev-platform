@@ -162,6 +162,42 @@ async function validateControlledWriters(pool) {
   return result.rows.length;
 }
 
+/**
+ * Catalog-wide allowlist: checking only the seven expected signatures is not
+ * enough. An unreviewed SECURITY DEFINER helper can perform owner-privileged
+ * DML even when every protected table ACL is safe. Trigger procedures are not
+ * callable as normal SQL functions; extension members are provider-managed.
+ *
+ * Fail closed even if the extra function currently has EXECUTE revoked:
+ * making an unknown owner-privileged entry point callable must require a new
+ * explicit review/allowlist update, not a silent ACL change.
+ */
+async function validateDefinerSurface(pool) {
+  const results = await pool.query(`
+    SELECT p.oid::pg_catalog.regprocedure::text AS signature
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace ns ON ns.oid = p.pronamespace
+    WHERE ns.nspname = 'public'
+      AND p.prosecdef
+      AND p.prokind = 'f'
+      AND p.prorettype <> 'pg_catalog.trigger'::pg_catalog.regtype
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_depend dependency
+        WHERE dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+          AND dependency.objid = p.oid
+          AND dependency.deptype = 'e'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.unnest($1::text[]) AS allowed(signature)
+        WHERE p.oid = pg_catalog.to_regprocedure('public.' || allowed.signature)
+      )
+    ORDER BY p.oid::pg_catalog.regprocedure::text
+  `, [controlled]);
+  assert(results.rows.length === 0,
+    "unapproved SECURITY DEFINER function exists outside the controlled writer allowlist");
+}
+
 /** Validate the actual DB endpoints supplied by the deployment secret manager. */
 export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
   const runtime = parseConnection(runtimeUrl, "DATABASE_URL");
@@ -184,6 +220,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
         pg_catalog.pg_postmaster_start_time() AS server_started`),
       migrationPool.query(`SELECT current_user AS role, session_user AS authenticated_role, pg_catalog.current_database() AS db,
         pg_catalog.has_schema_privilege(current_user,'public','CREATE') AS schema_create,
+        pg_catalog.current_schema() AS active_schema,
         pg_catalog.inet_server_addr()::text AS server_addr,
         pg_catalog.inet_server_port() AS server_port,
         pg_catalog.pg_postmaster_start_time() AS server_started`)
@@ -196,6 +233,8 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
       "application session must authenticate directly as jev_runtime; role switching is forbidden");
     assert(admin.authenticated_role === admin.role,
       "migration connection must not impersonate a different role");
+    assert(admin.active_schema === "public",
+      "migration session must target public as its active schema");
     assert(app.role !== admin.role && app.db === admin.db && admin.schema_create,
       "migration connection must be a separate privileged identity on the same database");
     assert(app.server_addr === admin.server_addr &&
@@ -227,6 +266,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
       "guarded-table privilege diagnostic did not return four PASS results");
 
     const writers = await validateControlledWriters(runtimePool);
+    await validateDefinerSurface(runtimePool);
     const managed = await validateMigratorOwnership(migrationPool);
     const counts = await validateMigrationHistory(runtimePool);
     return {
