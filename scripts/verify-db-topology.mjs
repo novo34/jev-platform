@@ -246,6 +246,89 @@ async function validateDefinerSurface(pool) {
     "unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist");
 }
 
+
+/**
+ * Verify all application trigger bindings and their final audited bodies.
+ * A writer that calls an approval trigger is not safe if that trigger is
+ * disabled, replaced, detached or rebound. Only schema-migration definitions
+ * are trusted; an unchanged schema_migrations ledger is not sufficient.
+ */
+async function validateTriggerInvariants(pool) {
+  const directory = path.join(root, "packages", "db", "migrations");
+  const files = (await readdir(directory)).filter(x => /^\d+_.+\.sql$/.test(x)).sort();
+  const sources = await Promise.all(files.map(async file => ({
+    file, sql: await readFile(path.join(directory, file), "utf8")
+  })));
+  const expected = new Map();
+  const triggerPattern = /CREATE\s+TRIGGER\s+([a-z_][\w]*)\s+([\s\S]*?)\s+ON\s+([a-z_][\w]*)\s+([\s\S]*?)\s+EXECUTE\s+FUNCTION\s+([a-z_][\w]*)\s*\(\s*\)\s*;/gi;
+  for (const source of sources) {
+    for (const found of source.sql.matchAll(triggerPattern)) {
+      const [, name, eventClause, table, rowClause, functionName] = found;
+      const cols = /\bUPDATE\s+OF\s+([\s\S]*)$/i.exec(eventClause);
+      const updateColumns = cols
+        ? cols[1].split(",").map(x => x.trim()).filter(Boolean).sort() : [];
+      const type = (/\bROW\b/i.test(rowClause) ? 1 : 0)
+        | (/\bBEFORE\b/i.test(eventClause) ? 2 : 0)
+        | (/\bINSERT\b/i.test(eventClause) ? 4 : 0)
+        | (/\bDELETE\b/i.test(eventClause) ? 8 : 0)
+        | (/\bUPDATE\b/i.test(eventClause) ? 16 : 0)
+        | (/\bTRUNCATE\b/i.test(eventClause) ? 32 : 0);
+      expected.set(name, { table, functionName, type, updateColumns });
+    }
+  }
+  assert(expected.size === 15,
+    "expected trigger inventory changed; review every migration binding");
+
+  const query = [
+    "SELECT t.tgname AS trigger_name, c.relname AS table_name,",
+    "  p.proname AS function_name, p.pronargs AS nargs,",
+    "  t.tgtype::integer AS type, t.tgenabled AS enabled,",
+    "  l.lanname AS language, p.prosecdef AS security_definer,",
+    "  p.prosrc AS function_body, p.proowner = ledger.relowner AS trusted_owner,",
+    "  ARRAY(SELECT a.attname::text FROM pg_catalog.pg_attribute a",
+    "    WHERE a.attrelid = t.tgrelid AND a.attnum = ANY(t.tgattr::smallint[])",
+    "    ORDER BY a.attname) AS update_columns",
+    "FROM pg_catalog.pg_trigger t",
+    "JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid",
+    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace",
+    "JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid",
+    "JOIN pg_catalog.pg_language l ON l.oid = p.prolang",
+    "CROSS JOIN pg_catalog.pg_class ledger",
+    "JOIN pg_catalog.pg_namespace ledger_ns ON ledger_ns.oid = ledger.relnamespace",
+    "WHERE n.nspname = 'public' AND NOT t.tgisinternal",
+    "  AND ledger_ns.nspname = 'public' AND ledger.relname = 'schema_migrations'",
+    "ORDER BY t.tgname"
+  ].join("\n");
+  const result = await pool.query(query);
+  assert(result.rows.length === expected.size,
+    "application trigger set differs from the audited migration inventory");
+  for (const trigger of result.rows) {
+    const audited = expected.get(trigger.trigger_name);
+    assert(audited && trigger.table_name === audited.table &&
+      trigger.function_name === audited.functionName &&
+      trigger.nargs === 0 && trigger.type === audited.type &&
+      trigger.enabled === "O" && trigger.language === "plpgsql" &&
+      trigger.security_definer === false && trigger.trusted_owner &&
+      JSON.stringify(trigger.update_columns) === JSON.stringify(audited.updateColumns),
+      "application trigger binding, events or enabled state drifted: " +
+      trigger.trigger_name);
+    let auditedBody;
+    for (let i = sources.length - 1; i >= 0; i--) {
+      const namePattern = new RegExp(
+        "CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+" +
+        audited.functionName + "\\s*\\(", "i"
+      );
+      if (namePattern.test(sources[i].sql)) {
+        auditedBody = extractAuditedWriterBody(sources[i].sql, audited.functionName + "()");
+        break;
+      }
+    }
+    assert(auditedBody !== undefined && trigger.function_body === auditedBody,
+      "application trigger function body drifted from audited migration: " +
+      trigger.trigger_name);
+  }
+}
+
 /** Validate the actual DB endpoints supplied by the deployment secret manager. */
 export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
   const runtime = parseConnection(runtimeUrl, "DATABASE_URL");
@@ -315,6 +398,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
 
     const writers = await validateControlledWriters(runtimePool);
     await validateDefinerSurface(runtimePool);
+    await validateTriggerInvariants(runtimePool);
     const managed = await validateMigratorOwnership(migrationPool);
     const counts = await validateMigrationHistory(runtimePool);
     return {
