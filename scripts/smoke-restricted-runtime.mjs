@@ -202,20 +202,48 @@ try {
   try {
     await assert.rejects(
       verify(),
-      /unapproved SECURITY DEFINER function exists outside the controlled writer allowlist/
+      /unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist/
     );
     // Even REVOKE alone cannot silently make an unapproved function pass
     // the reviewed allowlist: the function must be removed or reviewed.
     await admin.query(`REVOKE EXECUTE ON FUNCTION ${rogueDefiner} FROM PUBLIC`);
     await assert.rejects(
       verify(),
-      /unapproved SECURITY DEFINER function exists outside the controlled writer allowlist/
+      /unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist/
     );
   } finally {
     await admin.query(`DROP FUNCTION ${rogueDefiner}`);
   }
   ensure((await verify()).controlled_writers === 7,
     "unapproved definer cleanup did not restore the topology");
+
+  // P1: SQL procedures are prokind='p', not prokind='f'. PostgreSQL makes
+  // their SECURITY DEFINER body callable with CALL and, by default, grants
+  // EXECUTE to PUBLIC. They must be rejected by the same catalog allowlist.
+  const rogueProcedure = "public.jev_unreviewed_owner_procedure()";
+  await admin.query(`
+    CREATE PROCEDURE ${rogueProcedure}
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS 'BEGIN NULL; END;'
+  `);
+  try {
+    const runtimeProc = new Pool({ connectionString: runtimeURL.toString() });
+    try {
+      await runtimeProc.query("CALL " + rogueProcedure);
+    } finally {
+      await runtimeProc.end();
+    }
+    await assert.rejects(
+      verify(),
+      /unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist/
+    );
+  } finally {
+    await admin.query("DROP PROCEDURE " + rogueProcedure);
+  }
+  ensure((await verify()).controlled_writers === 7,
+    "unapproved procedure cleanup did not restore the topology");
+
 
   // Codex P2: unqualified migration statements use current_schema().
   // A role-specific search_path that selects a decoy schema first must
