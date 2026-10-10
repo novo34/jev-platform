@@ -197,7 +197,7 @@ try {
     CREATE FUNCTION ${rogueDefiner} RETURNS integer
     LANGUAGE sql SECURITY DEFINER
     SET search_path = pg_catalog, public, pg_temp
-    AS $ SELECT 1 $
+    AS 'SELECT 1'
   `);
   try {
     await assert.rejects(
