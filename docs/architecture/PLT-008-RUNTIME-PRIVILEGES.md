@@ -151,7 +151,11 @@ commit/CI, database privilege verification and restoration evidence.
   `session_user = current_user = jev_runtime`. Connection-string query
   parameters which could change the active role (such as `options=-c role=...`)
   are rejected; regression coverage tries to impersonate the runtime role
-  from a privileged PostgreSQL session.
+  from a privileged PostgreSQL session. The shared `createDatabasePool`
+  constructor also rejects role-altering URL parameters and `PGOPTIONS`
+  before API or Worker connection, preventing malicious
+  `session_authorization` startup options. The real-process CI smoke
+  confirms that both services fail to start under a forged URL.
 * `scripts/verify-db-topology.mjs` is **read-only**. It requires distinct
   database runtime/migration identities, four protected-table PASS results,
   all seven controlled writers with trusted ownership, SECURITY DEFINER and
