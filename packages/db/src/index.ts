@@ -7,6 +7,29 @@ export function createDatabasePool(config?: PoolConfig): Pool {
     throw new Error("DATABASE_URL is required");
   }
 
+  // PostgreSQL startup options can silently alter session_authorization or
+  // role, making a privileged login appear to be jev_runtime to SQL-based
+  // role checks. Validate the URL BEFORE opening any API/Worker connection.
+  // The migration command uses the same protected constructor.
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    throw new Error("Invalid PostgreSQL connection URL");
+  }
+  if (!["postgres:", "postgresql:"].includes(url.protocol)) {
+    throw new Error("PostgreSQL connection URL required");
+  }
+  const allowedParameters = new Set(["sslmode", "application_name", "connect_timeout"]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowedParameters.has(key)) {
+      throw new Error("Forbidden PostgreSQL connection option: " + key);
+    }
+  }
+  if (config?.options || process.env.PGOPTIONS) {
+    throw new Error("PostgreSQL startup options are not permitted for JEV");
+  }
+
   return new Pool({
     ...config,
     connectionString
