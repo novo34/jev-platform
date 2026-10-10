@@ -85,6 +85,41 @@ try {
     runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
   });
   ensure(topology.privilege_checks === "4/4 PASS", "privilege diagnostic failed");
+  // A privileged URL can request a role switch at connection startup.
+  // Neither the deployment verifier nor API/Worker startup may accept it.
+  const spoofedURL = new URL(adminURL);
+  spoofedURL.searchParams.set("options", "-c role=jev_runtime");
+  await assert.rejects(
+    verifyDatabaseTopology({
+      runtimeUrl: spoofedURL.toString(), migrationUrl: adminURL.toString()
+    }),
+    /forbidden connection option/
+  );
+
+  // Bypass the URL parser and exercise a real PostgreSQL superuser session
+  // switched into the restricted identity. current_user is misleading here:
+  // the authenticated session_user still has migrator privileges.
+  const ownerClient = await admin.connect();
+  try {
+    await ownerClient.query("BEGIN");
+    await ownerClient.query("SET LOCAL ROLE jev_runtime");
+    const identities = await ownerClient.query(
+      "SELECT current_user AS effective, session_user AS authenticated"
+    );
+    ensure(identities.rows[0].effective === "jev_runtime" &&
+      identities.rows[0].authenticated !== "jev_runtime",
+      "role-switch spoof fixture did not impersonate the runtime role");
+    await assert.rejects(
+      assertRestrictedRuntimeRole({
+        query: ownerClient.query.bind(ownerClient)
+      }),
+      /Unsafe JEV runtime database role/
+    );
+    await ownerClient.query("ROLLBACK");
+  } finally {
+    await ownerClient.query("ROLLBACK").catch(() => undefined);
+    ownerClient.release();
+  }
   // A URL with overridden host/port must not masquerade as the same database.
   const disguised = new URL(runtimeURL);
   disguised.searchParams.set("host", "127.0.0.2");
