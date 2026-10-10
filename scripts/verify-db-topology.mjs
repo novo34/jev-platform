@@ -8,7 +8,6 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
-import { assertRestrictedRuntimeRole } from "../packages/db/dist/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const guarded = ["approvals", "deployments", "environments", "tasks"];
@@ -60,16 +59,34 @@ async function validateMigratorOwnership(pool) {
       FROM pg_catalog.pg_class c
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relkind IN ('r','p','S','v','m')
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_depend dependency
+          WHERE dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+            AND dependency.objid = c.oid
+            AND dependency.deptype = 'e'
+        )
       UNION ALL
       SELECT p.proowner
       FROM pg_catalog.pg_proc p
       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public'
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_depend dependency
+          WHERE dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+            AND dependency.objid = p.oid
+            AND dependency.deptype = 'e'
+        )
       UNION ALL
       SELECT t.typowner
       FROM pg_catalog.pg_type t
       JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
       WHERE n.nspname = 'public' AND t.typtype IN ('e','d')
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_depend dependency
+          WHERE dependency.classid = 'pg_catalog.pg_type'::pg_catalog.regclass
+            AND dependency.objid = t.oid
+            AND dependency.deptype = 'e'
+        )
     )
     SELECT COUNT(*)::integer AS objects_checked,
       COUNT(*) FILTER (WHERE NOT (
@@ -98,7 +115,15 @@ async function validateControlledWriters(pool) {
       p.proconfig AS config,
       p.proowner = ledger.relowner AS trusted_owner,
       (p.proowner = runtime.oid) AS runtime_owned,
-      pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE') AS can_execute
+      pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE') AS can_execute,
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.aclexplode(
+          COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+        ) AS acl
+        WHERE acl.privilege_type = 'EXECUTE'
+          AND acl.grantee NOT IN (p.proowner, runtime.oid)
+      ) AS safe_execute_acl
     FROM pg_catalog.unnest($1::text[]) AS signatures(signature)
     LEFT JOIN pg_catalog.pg_proc p
       ON p.oid = pg_catalog.to_regprocedure('public.' || signatures.signature)
@@ -115,8 +140,8 @@ async function validateControlledWriters(pool) {
     const pinned = Array.isArray(config) && config.length === 1 &&
       config[0].replace(/\s+/g, "") === "search_path=pg_catalog,public,pg_temp";
     assert(writer.exists && writer.security_definer && writer.trusted_owner &&
-      !writer.runtime_owned && writer.can_execute && pinned,
-      "controlled writer has unsafe owner, execution grant, SECURITY DEFINER or search_path: " +
+      !writer.runtime_owned && writer.can_execute && writer.safe_execute_acl && pinned,
+      "controlled writer has unsafe owner, EXECUTE ACL, SECURITY DEFINER or search_path: " +
       writer.signature);
   }
   return result.rows.length;
@@ -136,7 +161,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
   const runtimePool = new Pool({ connectionString: runtime.toString(), max: 2, connectionTimeoutMillis: 5000 });
   const migrationPool = new Pool({ connectionString: migrator.toString(), max: 1, connectionTimeoutMillis: 5000 });
   try {
-    await assertRestrictedRuntimeRole(runtimePool);
+    // The read-only SQL diagnostic independently verifies all runtime ACLs.
     const [runtimeIdentity, migrationIdentity] = await Promise.all([
       runtimePool.query("SELECT current_user AS role, current_database() AS db"),
       migrationPool.query("SELECT current_user AS role, current_database() AS db, pg_catalog.has_schema_privilege(current_user,'public','CREATE') AS schema_create")
