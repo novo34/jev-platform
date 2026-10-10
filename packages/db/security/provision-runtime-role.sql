@@ -23,9 +23,13 @@ BEGIN
     SELECT 1 FROM pg_catalog.pg_auth_members m
     JOIN pg_catalog.pg_roles r ON r.oid = m.member
     WHERE r.rolname = 'jev_runtime'
+  ) OR EXISTS (
+    SELECT 1 FROM pg_catalog.pg_auth_members m
+    JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
+    WHERE r.rolname = 'jev_runtime'
   ) THEN
     RAISE EXCEPTION
-      'jev_runtime must have no role memberships; revoke them before provisioning'
+      'jev_runtime must have no inbound or outbound role memberships; revoke them before provisioning'
       USING ERRCODE = '42501';
   END IF;
 END;
@@ -68,6 +72,34 @@ REVOKE CREATE ON SCHEMA public FROM jev_runtime;
 GRANT USAGE ON SCHEMA public TO jev_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO jev_runtime;
 
+-- Definer writer privileges are explicit and non-delegable. Historical
+-- PUBLIC/foreign grants must fail the verifier; sanitize PUBLIC and runtime
+-- GRANT OPTION before reinstating the seven approved EXECUTE grants.
+DO $jev_writers$
+DECLARE
+  signature text;
+BEGIN
+  FOREACH signature IN ARRAY ARRAY[
+    'jev_set_deployment_status(uuid,uuid[],text)',
+    'jev_transition_task(uuid,text,text,text,text,jsonb)',
+    'jev_create_task(uuid,uuid,uuid,text,text,jsonb)',
+    'jev_create_environment(uuid,uuid,text,text,text,jsonb)',
+    'jev_lock_project_scope(uuid)',
+    'jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)',
+    'jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)'
+  ]
+  LOOP
+    EXECUTE pg_catalog.format(
+      'REVOKE EXECUTE ON FUNCTION public.%s FROM PUBLIC', signature
+    );
+    EXECUTE pg_catalog.format(
+      'REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION public.%s FROM jev_runtime CASCADE',
+      signature
+    );
+  END LOOP;
+END;
+$jev_writers$;
+
 -- Only this controlled operation is granted at this stage.
 GRANT EXECUTE ON FUNCTION jev_set_deployment_status(uuid, uuid[], text)
   TO jev_runtime;
@@ -92,9 +124,8 @@ GRANT EXECUTE ON FUNCTION jev_create_deployment(uuid,uuid,uuid,uuid,text,text,te
   TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)
   TO jev_runtime;
--- Approval and Deployment creation are not yet exposed through authorized
--- writers; direct INSERT on approvals/deployments remains prohibited.
--- Additional controlled write functions require individual review.
--- Do not use GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public.
--- Do not enable this credential for live traffic until those functions exist
--- and the runtime privilege verifier returns PASS for all guarded tables.
+-- Controlled Approval and Deployment creation is available only via the
+-- named definer writers above; direct guarded INSERT remains forbidden.
+-- Never use GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public.
+-- Keep real deployment blocked until the production checker and operator
+-- checklist #11 have passed with the actual application credentials.
