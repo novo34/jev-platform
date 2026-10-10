@@ -244,6 +244,40 @@ try {
   ensure((await verify()).controlled_writers === 7,
     "unapproved procedure cleanup did not restore the topology");
 
+  // P1: definer functions outside public are equally dangerous whenever
+  // runtime can USE that schema (including PUBLIC USAGE).
+  const foreignSchema = "jev_definer_extra_" + randomBytes(6).toString("hex");
+  await admin.query(`CREATE SCHEMA "${foreignSchema}"`);
+  try {
+    await admin.query(`GRANT USAGE ON SCHEMA "${foreignSchema}" TO PUBLIC`);
+    await admin.query(`
+      CREATE FUNCTION "${foreignSchema}".unreviewed_writer() RETURNS integer
+      LANGUAGE sql SECURITY DEFINER
+      SET search_path = pg_catalog, public, pg_temp
+      AS 'SELECT 1'
+    `);
+    const runtimeClient = new Pool({ connectionString: runtimeURL.toString() });
+    try {
+      const called = await runtimeClient.query(
+        `SELECT "${foreignSchema}".unreviewed_writer() AS value`
+      );
+      ensure(called.rows[0].value === 1,
+        "runtime-accessible definer fixture was not callable");
+    } finally {
+      await runtimeClient.end();
+    }
+    await assert.rejects(
+      verify(),
+      /unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist/
+    );
+  } finally {
+    await admin.query(`REVOKE USAGE ON SCHEMA "${foreignSchema}" FROM PUBLIC`);
+    await admin.query(`DROP SCHEMA "${foreignSchema}" CASCADE`);
+  }
+  ensure((await verify()).controlled_writers === 7,
+    "foreign-schema definer cleanup did not restore the topology");
+
+
 
   // Codex P2: unqualified migration statements use current_schema().
   // A role-specific search_path that selects a decoy schema first must
@@ -297,6 +331,31 @@ try {
       await admin.query("REVOKE REFERENCES (id) ON TABLE public.approvals FROM PUBLIC");
     }
   }
+
+  // P1: the audited seven writers can drift in-place without a migration
+  // ledger update. Compare the actual pg_proc.prosrc body to the immutable
+  // final CREATE OR REPLACE definition; grants/owner/search_path are unchanged.
+  const originalDefinition = (await admin.query(
+    "SELECT pg_catalog.pg_get_functiondef($1::pg_catalog.regprocedure) AS ddl",
+    [writer]
+  )).rows[0].ddl;
+  await admin.query(`
+    CREATE OR REPLACE FUNCTION public.jev_lock_project_scope(p_project_id uuid)
+    RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS 'BEGIN RETURN p_project_id; END;'
+  `);
+  try {
+    await assert.rejects(
+      verify(),
+      /controlled writer implementation drifted from immutable audited migrations/
+    );
+  } finally {
+    await admin.query(originalDefinition);
+  }
+  ensure((await verify()).controlled_writers === 7,
+    "writer definition restoration failed");
+
   await admin.query(`ALTER FUNCTION ${writer} SECURITY INVOKER`);
   try {
     await assert.rejects(verify(), /controlled writer has unsafe owner/);
