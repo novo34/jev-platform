@@ -19,10 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 10
-    env:
-      NODE_ENV: production
-      DATABASE_URL: ${{ secrets.JEV_PRODUCTION_RUNTIME_DATABASE_URL }}
-      MIGRATION_DATABASE_URL: ${{ secrets.JEV_PRODUCTION_MIGRATION_DATABASE_URL }}
     steps:
       - name: Checkout audited main
         uses: actions/checkout@v4
@@ -34,5 +30,11 @@ jobs:
         run: npm install
       - name: Build DB guard
         run: npm run build -w @jev/db
+      # No production credentials enter checkout, setup, install, or build.
+      # In particular, package lifecycle scripts run without DB secrets.
       - name: Validate real production PostgreSQL identity and guarded ACLs
+        env:
+          NODE_ENV: production
+          DATABASE_URL: ${{ secrets.JEV_PRODUCTION_RUNTIME_DATABASE_URL }}
+          MIGRATION_DATABASE_URL: ${{ secrets.JEV_PRODUCTION_MIGRATION_DATABASE_URL }}
         run: node scripts/verify-db-topology.mjs
