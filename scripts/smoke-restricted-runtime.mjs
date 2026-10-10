@@ -129,6 +129,16 @@ try {
     await admin.query(`ALTER FUNCTION ${writer} SET search_path = pg_catalog, public, pg_temp`);
   }
 
+  // SECURITY DEFINER functions must never be callable via PUBLIC.
+  // The old verifier checked only that runtime could EXECUTE and missed
+  // cross-role grants; privilege drift must fail even with intact checksums.
+  await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO PUBLIC`);
+  try {
+    await assert.rejects(verify(), /controlled writer has unsafe owner/);
+  } finally {
+    await admin.query(`REVOKE EXECUTE ON FUNCTION ${writer} FROM PUBLIC`);
+  }
+
   // A malicious function owner must not pass merely because a definer flag
   // and EXECUTE are present.
   const fakeOwner = "jev_gate_owner_" + randomBytes(6).toString("hex");
@@ -138,6 +148,12 @@ try {
   await admin.query(`CREATE ROLE "${fakeOwner}" NOLOGIN`);
   try {
     await admin.query(`GRANT CREATE ON SCHEMA public TO "${fakeOwner}"`);
+    await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO "${fakeOwner}"`);
+    try {
+      await assert.rejects(verify(), /controlled writer has unsafe owner/);
+    } finally {
+      await admin.query(`REVOKE EXECUTE ON FUNCTION ${writer} FROM "${fakeOwner}"`);
+    }
     await admin.query(`ALTER FUNCTION ${writer} OWNER TO "${fakeOwner}"`);
     try {
       await assert.rejects(verify(), /controlled writer has unsafe owner/);
