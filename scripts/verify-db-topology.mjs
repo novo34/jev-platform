@@ -48,6 +48,80 @@ async function validateMigrationHistory(pool) {
   return files.length;
 }
 
+/**
+ * A CREATE-on-schema grant is not equivalent to ownership of existing schema
+ * objects. Every forward-only migration must be able to ALTER managed tables,
+ * sequences, function definitions and any enum/domain types.
+ */
+async function validateMigratorOwnership(pool) {
+  const result = await pool.query(`
+    WITH managed AS (
+      SELECT c.relowner AS owner_oid
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r','p','S','v','m')
+      UNION ALL
+      SELECT p.proowner
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public'
+      UNION ALL
+      SELECT t.typowner
+      FROM pg_catalog.pg_type t
+      JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = 'public' AND t.typtype IN ('e','d')
+    )
+    SELECT COUNT(*)::integer AS objects_checked,
+      COUNT(*) FILTER (WHERE NOT (
+        r.rolsuper OR pg_catalog.pg_has_role(current_user, managed.owner_oid, 'USAGE')
+      ))::integer AS objects_unmanageable
+    FROM managed
+    CROSS JOIN pg_catalog.pg_roles r
+    WHERE r.rolname = current_user
+  `);
+  const row = result.rows[0];
+  assert(row && row.objects_checked > 0 && row.objects_unmanageable === 0,
+    "migration identity cannot manage all existing application schema objects");
+  return row.objects_checked;
+}
+
+/**
+ * A callable SECURITY INVOKER function or a definer with a changed search_path
+ * is not a working secure writer, even if EXECUTE is still granted. All writers
+ * must have the same trusted owner as the migration ledger.
+ */
+async function validateControlledWriters(pool) {
+  const result = await pool.query(`
+    SELECT signatures.signature,
+      p.oid IS NOT NULL AS exists,
+      p.prosecdef AS security_definer,
+      p.proconfig AS config,
+      p.proowner = ledger.relowner AS trusted_owner,
+      (p.proowner = runtime.oid) AS runtime_owned,
+      pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE') AS can_execute
+    FROM pg_catalog.unnest($1::text[]) AS signatures(signature)
+    LEFT JOIN pg_catalog.pg_proc p
+      ON p.oid = pg_catalog.to_regprocedure('public.' || signatures.signature)
+    CROSS JOIN pg_catalog.pg_class ledger
+    JOIN pg_catalog.pg_namespace schema
+      ON schema.oid = ledger.relnamespace AND schema.nspname = 'public'
+    JOIN pg_catalog.pg_roles runtime ON runtime.rolname = 'jev_runtime'
+    WHERE ledger.relname = 'schema_migrations' AND ledger.relkind = 'r'
+  `, [controlled]);
+  assert(result.rows.length === controlled.length,
+    "missing migration ledger or controlled PostgreSQL writers");
+  for (const writer of result.rows) {
+    const config = writer.config;
+    const pinned = Array.isArray(config) && config.length === 1 &&
+      config[0].replace(/\\s+/g, "") === "search_path=pg_catalog,public,pg_temp";
+    assert(writer.exists && writer.security_definer && writer.trusted_owner &&
+      !writer.runtime_owned && writer.can_execute && pinned,
+      "controlled writer has unsafe owner, execution grant, SECURITY DEFINER or search_path: " +
+      writer.signature);
+  }
+  return result.rows.length;
+}
+
 /** Validate the actual DB endpoints supplied by the deployment secret manager. */
 export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
   const runtime = parseConnection(runtimeUrl, "DATABASE_URL");
@@ -81,20 +155,16 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
     assert(rows.every(x => x.runtime_role === "jev_runtime" && x.direct_dml_boundary === "PASS"),
       "guarded-table privilege diagnostic did not return four PASS results");
 
-    const rights = await runtimePool.query(
-      "SELECT name, pg_catalog.has_function_privilege(current_user, 'public.' || name, 'EXECUTE') AS allowed FROM unnest($1::text[]) AS name",
-      [controlled]
-    );
-    assert(rights.rows.length === controlled.length && rights.rows.every(x => x.allowed),
-      "one or more controlled-writer function grants are missing");
-
+    const writers = await validateControlledWriters(runtimePool);
+    const managed = await validateMigratorOwnership(migrationPool);
     const counts = await validateMigrationHistory(runtimePool);
     return {
       runtime_role: app.role,
       migrator_is_separate: true,
       protected_tables: guarded.length,
       privilege_checks: "4/4 PASS",
-      controlled_writers: controlled.length,
+      controlled_writers: writers,
+      migrator_objects_checked: managed,
       verified_migrations: counts
     };
   } finally {
