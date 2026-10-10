@@ -158,6 +158,20 @@ commit/CI, database privilege verification and restoration evidence.
   are pinned to immutable reviewed SHA commits. The verifier no longer
   imports the application build, so no root workspace installation/build
   takes place on a runner that will receive production secrets.
+* `jev_runtime` is not permitted to be a **member of** any other role
+  and no other role may be a **member of `jev_runtime`**. The deployment
+  verifier rejects both directions (including PostgreSQL 16 SET/INHERIT
+  memberships), and provisioning refuses pre-existing memberships.
+* Controlled SECURITY DEFINER function EXECUTE granted to `jev_runtime`
+  may never have `WITH GRANT OPTION`, which would allow delegation to
+  arbitrary callers. Provisioning strips historical runtime grant options;
+  CI regression grants the option, proves the verifier fails, and confirms
+  provisioning removes it.
+* The read-only live database gate rejects URL `host`, `port`, `dbname`,
+  `user`, `password` and other endpoint query overrides; it compares the
+  established runtime/migrator PostgreSQL server address, port and
+  postmaster start time in addition to database identity. This prevents
+  attesting separate instances as one deployment.
 * PostgreSQL drift checks reject function EXECUTE granted to `PUBLIC` or
   non-approved roles as well as a missing SECURITY DEFINER flag, owner,
   pinned search_path or runtime EXECUTE grant. Negative CI tests grant
