@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { Pool } from "pg";
 import { createDatabasePool, DEFAULT_MIGRATIONS_DIR, setDeploymentStatuses, withDeploymentWriteScopes } from "./index.js";
 
 async function migration(name: string): Promise<string> {
@@ -761,7 +762,12 @@ describe("PLT-008 remediation migration", () => {
       expect(bulkResults).toContain("40P01");
       // GREEN: the new entry point serializes conflicting bulk writes before
       // either session acquires a deployment row lock.
-      const scopedPool = createDatabasePool({ options: `-c search_path=${schema},public` });
+      // This privileged diagnostic fixture intentionally uses a non-default schema.
+       // Application pools must reject PostgreSQL startup options.
+       const scopedPool = new Pool({
+         connectionString: process.env.DATABASE_URL,
+         options: `-c search_path=${schema},public`
+       });
       try {
         const one = withDeploymentWriteScopes(scopedPool, [project], async client => {
           await client.query(`SET LOCAL search_path TO "${schema}", public`);
