@@ -1,5 +1,9 @@
 import type { Pool, PoolClient } from "pg";
 import {
+  ProjectRegistryError,
+  ProjectRegistryService
+} from "@jev/projects";
+import {
   WorkOrderError,
   type CreateTaskInput,
   type CreateWorkOrderInput,
@@ -8,6 +12,7 @@ import {
   type StateHistoryEntry,
   type TaskRecord,
   type TaskStatus,
+  type TransitionContext,
   type WorkOrderRecord
 } from "./types.js";
 
@@ -34,12 +39,73 @@ function mapHistory<TStatus extends string>(rows: any[]): StateHistoryEntry<TSta
   return rows.map((row) => ({
     fromStatus: row.from_status as TStatus | null,
     toStatus: row.to_status as TStatus,
+    actorType: row.actor_type,
+    actorId: row.actor_id,
+    cause: row.cause,
+    evidence: row.evidence ?? {},
     createdAt: new Date(row.created_at).toISOString()
   }));
 }
 
+async function applyTransitionContext(
+  client: PoolClient,
+  context: TransitionContext
+): Promise<void> {
+  assertNonEmpty(context.cause, "transition cause");
+  if (
+    context.actorType !== "SYSTEM" &&
+    (typeof context.actorId !== "string" || !context.actorId.trim())
+  ) {
+    throw new WorkOrderError(
+      "INVALID_ORDER",
+      "transition actor ID is required for USER and AGENT actors"
+    );
+  }
+  await client.query(
+    "SELECT set_config('jev.transition_actor_type', $1, true)",
+    [context.actorType]
+  );
+  await client.query(
+    "SELECT set_config('jev.transition_actor_id', $1, true)",
+    [context.actorId ?? ""]
+  );
+  await client.query(
+    "SELECT set_config('jev.transition_cause', $1, true)",
+    [context.cause.trim()]
+  );
+  await client.query(
+    "SELECT set_config('jev.transition_evidence', $1, true)",
+    [JSON.stringify(context.evidence ?? {})]
+  );
+}
+
+function mapRepositoryError(error: unknown): never {
+  if (error instanceof ProjectRegistryError) {
+    if (error.code === "AMBIGUOUS_REPOSITORY_TARGET") {
+      throw new WorkOrderError(
+        "AMBIGUOUS_REPOSITORY_TARGET",
+        error.message
+      );
+    }
+    if (error.code === "REPOSITORY_NOT_FOUND") {
+      throw new WorkOrderError("REPOSITORY_NOT_FOUND", error.message);
+    }
+    if (error.code === "PROJECT_NOT_FOUND") {
+      throw new WorkOrderError("INVALID_ORDER", "project not found");
+    }
+  }
+  throw error;
+}
+
 export class WorkOrderService {
-  constructor(private readonly pool: Pool) {}
+  private readonly projects: ProjectRegistryService;
+
+  constructor(
+    private readonly pool: Pool,
+    projects?: ProjectRegistryService
+  ) {
+    this.projects = projects ?? new ProjectRegistryService(pool);
+  }
 
   async createOrder(input: CreateWorkOrderInput): Promise<WorkOrderRecord> {
     assertNonEmpty(input.objective, "objective");
@@ -56,6 +122,7 @@ export class WorkOrderService {
     }
 
     const client = await this.pool.connect();
+    let orderId: string;
     try {
       await client.query("BEGIN");
       const orderResult = await client.query(
@@ -76,7 +143,7 @@ export class WorkOrderService {
         ]
       );
 
-      const orderId = orderResult.rows[0].id as string;
+      orderId = orderResult.rows[0].id as string;
       for (const requirement of input.requirements ?? []) {
         await client.query(
           `INSERT INTO requirements (
@@ -94,24 +161,48 @@ export class WorkOrderService {
       }
 
       await client.query("COMMIT");
-      return await this.getOrder(orderId);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
+
+    return this.getOrder(orderId);
   }
 
   async createTask(input: CreateTaskInput): Promise<TaskRecord> {
     assertNonEmpty(input.title, "task title");
     const requirementIds = [...new Set(input.requirementIds ?? [])];
+
+    let repositoryId: string;
+    try {
+      const repository = await this.projects.resolveRepository(
+        input.projectId,
+        input.repositoryId
+      );
+      repositoryId = repository.id;
+    } catch (error) {
+      mapRepositoryError(error);
+    }
+
     const client = await this.pool.connect();
+    let taskId: string;
 
     try {
       await client.query("BEGIN");
+      // Only read here: the SECURITY DEFINER writer acquires the canonical
+      // project-first locks. The restricted role intentionally has no UPDATE
+      // privilege on projects and cannot SELECT ... FOR NO KEY UPDATE.
+      const projectScope = await client.query(
+        "SELECT id FROM projects WHERE id = $1",
+        [input.projectId]
+      );
+      if (!projectScope.rows[0]) {
+        throw new WorkOrderError("INVALID_ORDER", "project not found");
+      }
       const orderResult = await client.query(
-        "SELECT id, project_id FROM orders WHERE id = $1 FOR UPDATE",
+        "SELECT id, project_id FROM orders WHERE id = $1",
         [input.orderId]
       );
       const order = orderResult.rows[0];
@@ -140,21 +231,18 @@ export class WorkOrderService {
       }
 
       const taskResult = await client.query(
-        `INSERT INTO tasks (
-           project_id, order_id, repository_id, title, status, risk, acceptance_criteria
-         ) VALUES ($1, $2, $3, $4, 'PLANNED', $5, $6::jsonb)
-         RETURNING id`,
+        "SELECT jev_create_task($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::jsonb) AS id",
         [
           input.projectId,
           input.orderId,
-          input.repositoryId ?? null,
+          repositoryId,
           input.title.trim(),
           input.risk ?? "R0",
           JSON.stringify(input.acceptanceCriteria ?? [])
         ]
       );
 
-      const taskId = taskResult.rows[0].id as string;
+      taskId = taskResult.rows[0].id as string;
       for (const requirementId of requirementIds) {
         await client.query(
           "INSERT INTO task_requirements (task_id, requirement_id) VALUES ($1, $2)",
@@ -163,49 +251,76 @@ export class WorkOrderService {
       }
 
       await client.query("COMMIT");
-      return await this.getTask(taskId);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
+
+    return this.getTask(taskId);
   }
 
-  async transitionOrder(orderId: string, toStatus: OrderStatus): Promise<WorkOrderRecord> {
+  async transitionOrder(
+    orderId: string,
+    toStatus: OrderStatus,
+    context: TransitionContext
+  ): Promise<WorkOrderRecord> {
+    const client = await this.pool.connect();
     try {
-      const result = await this.pool.query(
+      await client.query("BEGIN");
+      await applyTransitionContext(client, context);
+      const result = await client.query(
         "UPDATE orders SET status = $2 WHERE id = $1 RETURNING id",
         [orderId, toStatus]
       );
       if (!result.rows[0]) {
         throw new WorkOrderError("ORDER_NOT_FOUND");
       }
-      return await this.getOrder(orderId);
+      await client.query("COMMIT");
     } catch (error) {
+      await client.query("ROLLBACK");
       if (isConstraintViolation(error)) {
         throw new WorkOrderError("ILLEGAL_TRANSITION", "illegal order state transition");
       }
       throw error;
+    } finally {
+      client.release();
     }
+
+    return this.getOrder(orderId);
   }
 
-  async transitionTask(taskId: string, toStatus: TaskStatus): Promise<TaskRecord> {
+  async transitionTask(
+    taskId: string,
+    toStatus: TaskStatus,
+    context: TransitionContext
+  ): Promise<TaskRecord> {
+    const client = await this.pool.connect();
     try {
-      const result = await this.pool.query(
-        "UPDATE tasks SET status = $2 WHERE id = $1 RETURNING id",
-        [taskId, toStatus]
+      await client.query("BEGIN");
+      // Preserve service-level validation and typed errors for invalid actor context.
+      await applyTransitionContext(client, context);
+      const result = await client.query(
+        "SELECT jev_transition_task($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::jsonb) AS id",
+        [taskId, toStatus, context.actorType, context.actorId ?? null,
+         context.cause, JSON.stringify(context.evidence ?? {})]
       );
-      if (!result.rows[0]) {
+      if (!result.rows[0]?.id) {
         throw new WorkOrderError("TASK_NOT_FOUND");
       }
-      return await this.getTask(taskId);
+      await client.query("COMMIT");
     } catch (error) {
+      await client.query("ROLLBACK");
       if (isConstraintViolation(error)) {
         throw new WorkOrderError("ILLEGAL_TRANSITION", "illegal task state transition");
       }
       throw error;
+    } finally {
+      client.release();
     }
+
+    return this.getTask(taskId);
   }
 
   async getOrder(orderId: string): Promise<WorkOrderRecord> {
@@ -234,7 +349,7 @@ export class WorkOrderService {
         [orderId]
       ),
       this.pool.query(
-        `SELECT from_status, to_status, created_at
+        `SELECT from_status, to_status, actor_type, actor_id, cause, evidence, created_at
            FROM order_state_history
           WHERE order_id = $1
           ORDER BY created_at, id`,
@@ -293,7 +408,7 @@ export class WorkOrderService {
         [taskId]
       ),
       this.pool.query(
-        `SELECT from_status, to_status, created_at
+        `SELECT from_status, to_status, actor_type, actor_id, cause, evidence, created_at
            FROM task_state_history
           WHERE task_id = $1
           ORDER BY created_at, id`,

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createDatabasePool } from "@jev/db";
+import { checkDatabase, createDatabasePool } from "@jev/db";
 import { QueueService } from "@jev/queue";
 import { buildWorkerHealthServer } from "./app.js";
 import { WorkerRuntime } from "./runtime.js";
@@ -19,6 +19,7 @@ app.addHook("onClose", async () => {
 });
 
 try {
+  await checkDatabase(pool);
   await runtime.start();
   await app.listen({ host, port });
 } catch (error) {

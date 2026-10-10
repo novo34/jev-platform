@@ -1,4 +1,4 @@
-import { createDatabasePool } from "@jev/db";
+import { checkDatabase, createDatabasePool } from "@jev/db";
 import { buildApi } from "./app.js";
 
 const host = process.env.API_HOST ?? "0.0.0.0";
@@ -11,6 +11,7 @@ app.addHook("onClose", async () => {
 });
 
 try {
+  await checkDatabase(pool);
   await app.listen({ host, port });
 } catch (error) {
   app.log.error(error);

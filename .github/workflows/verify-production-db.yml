@@ -1,0 +1,40 @@
+name: JEV production database readiness
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      JEV_PRODUCTION_RUNTIME_DATABASE_URL:
+        required: true
+      JEV_PRODUCTION_MIGRATION_DATABASE_URL:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production-role:
+    # No production secrets may be exposed to a feature branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Checkout audited main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      # Audit-only verifier dependency graph: exact versions and integrity
+      # hashes from scripts/package-lock.json, with no install-time scripts.
+      - name: Install pinned standalone verifier dependencies
+        run: npm ci --ignore-scripts --prefix scripts
+      # No production credentials enter checkout, setup, install, or build.
+      # In particular, package lifecycle scripts run without DB secrets.
+      - name: Validate real production PostgreSQL identity and guarded ACLs
+        env:
+          NODE_ENV: production
+          DATABASE_URL: ${{ secrets.JEV_PRODUCTION_RUNTIME_DATABASE_URL }}
+          MIGRATION_DATABASE_URL: ${{ secrets.JEV_PRODUCTION_MIGRATION_DATABASE_URL }}
+        run: node scripts/verify-db-topology.mjs

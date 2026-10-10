@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabasePool } from "./index.js";
+import { assertRestrictedRuntimeRole, createDatabasePool } from "./index.js";
 import { migrate } from "./migrations.js";
 
 const pool = createDatabasePool();
@@ -14,6 +14,12 @@ afterAll(async () => {
 });
 
 describe("canonical PostgreSQL persistence", () => {
+  it("rejects the migration owner as a restricted application runtime", async () => {
+    await expect(assertRestrictedRuntimeRole(pool)).rejects.toThrow(
+      "Unsafe JEV runtime database role"
+    );
+  });
+
   it("creates the canonical tables and persists one connected record graph", async () => {
     const organizationId = randomUUID();
     const userId = randomUUID();
@@ -25,7 +31,6 @@ describe("canonical PostgreSQL persistence", () => {
     const requirementId = randomUUID();
     const taskId = randomUUID();
     const taskRunId = randomUUID();
-    const approvalId = randomUUID();
     const auditEventId = randomUUID();
     const costEventId = randomUUID();
     const notificationId = randomUUID();
@@ -110,7 +115,7 @@ describe("canonical PostgreSQL persistence", () => {
         `INSERT INTO tasks (
            id, project_id, order_id, repository_id, title, status, risk
          ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [taskId, projectId, orderId, repositoryId, "Task", "READY", "R2"]
+        [taskId, projectId, orderId, repositoryId, "Task", "PLANNED", "R2"]
       );
       await client.query(
         `INSERT INTO task_runs (
@@ -118,19 +123,8 @@ describe("canonical PostgreSQL persistence", () => {
          ) VALUES ($1, $2, $3, $4, $5, $6)`,
         [taskRunId, taskId, "RUNNING", "corr-test", "openai", "test-model"]
       );
-      await client.query(
-        `INSERT INTO approvals (
-           id, task_id, actor_user_id, decision, revision, commit_sha
-         ) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          approvalId,
-          taskId,
-          userId,
-          "APPROVED",
-          "rev-1",
-          "0123456789abcdef"
-        ]
-      );
+      // A canonical persistence graph must not manufacture an approval outside
+      // AWAITING_HUMAN. Approval insertion is exercised by lifecycle tests.
       await client.query(
         `INSERT INTO audit_events (
            id, organization_id, project_id, task_id, actor_type,
@@ -211,7 +205,6 @@ describe("canonical PostgreSQL persistence", () => {
         "requirements",
         "tasks",
         "task_runs",
-        "approvals",
         "audit_events",
         "cost_events",
         "notifications",
@@ -243,7 +236,19 @@ describe("canonical PostgreSQL persistence", () => {
       "0002_auth_rbac.sql",
       "0003_queue_worker.sql",
       "0004_project_registry.sql",
-      "0005_work_order_task_lifecycle.sql"
+      "0005_work_order_task_lifecycle.sql",
+      "0006_work_order_task_review_remediation.sql",
+      "0007_staging_requirement_approved_guard.sql",
+      "0008_serialize_staging_requirement.sql",
+        "0009_harden_trigger_function_search_path.sql",
+        "0010_controlled_deployment_status_writer.sql",
+        "0011_scope_controlled_writer_to_schema.sql",
+      "0012_controlled_task_transition.sql",
+      "0013_controlled_task_environment_writers.sql",
+      "0014_controlled_project_scope_lock.sql",
+      "0015_controlled_approval_deployment_creation.sql",
+      "0016_deployment_order_and_approval_references.sql",
+      "0017_atomic_approved_task_rework.sql"
     ]);
   });
 });
