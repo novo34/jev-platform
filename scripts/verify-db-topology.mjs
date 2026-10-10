@@ -30,6 +30,12 @@ function parseConnection(value, label) {
   const url = new URL(value);
   assert(url.protocol === "postgresql:" || url.protocol === "postgres:", label + " must be PostgreSQL");
   assert(url.hostname && url.username && url.pathname.length > 1, label + " needs host, username and database");
+  // libpq-compatible parsers can treat these query parameters as connection
+  // endpoint overrides even when the URL authority looks identical.
+  const forbidden = ["host", "hostaddr", "port", "dbname", "database", "user", "password", "service"];
+  for (const key of forbidden) {
+    assert(!url.searchParams.has(key), label + " has forbidden connection endpoint override: " + key);
+  }
   return url;
 }
 
@@ -122,7 +128,10 @@ async function validateControlledWriters(pool) {
           COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
         ) AS acl
         WHERE acl.privilege_type = 'EXECUTE'
-          AND acl.grantee NOT IN (p.proowner, runtime.oid)
+          AND (
+            acl.grantee NOT IN (p.proowner, runtime.oid)
+            OR (acl.grantee = runtime.oid AND acl.is_grantable)
+          )
       ) AS safe_execute_acl
     FROM pg_catalog.unnest($1::text[]) AS signatures(signature)
     LEFT JOIN pg_catalog.pg_proc p
@@ -163,14 +172,40 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
   try {
     // The read-only SQL diagnostic independently verifies all runtime ACLs.
     const [runtimeIdentity, migrationIdentity] = await Promise.all([
-      runtimePool.query("SELECT current_user AS role, current_database() AS db"),
-      migrationPool.query("SELECT current_user AS role, current_database() AS db, pg_catalog.has_schema_privilege(current_user,'public','CREATE') AS schema_create")
+      runtimePool.query(`SELECT current_user AS role, pg_catalog.current_database() AS db,
+        pg_catalog.inet_server_addr()::text AS server_addr,
+        pg_catalog.inet_server_port() AS server_port,
+        pg_catalog.pg_postmaster_start_time() AS server_started`),
+      migrationPool.query(`SELECT current_user AS role, pg_catalog.current_database() AS db,
+        pg_catalog.has_schema_privilege(current_user,'public','CREATE') AS schema_create,
+        pg_catalog.inet_server_addr()::text AS server_addr,
+        pg_catalog.inet_server_port() AS server_port,
+        pg_catalog.pg_postmaster_start_time() AS server_started`)
     ]);
     const app = runtimeIdentity.rows[0];
     const admin = migrationIdentity.rows[0];
     assert(app.role === "jev_runtime", "application must connect using jev_runtime");
     assert(app.role !== admin.role && app.db === admin.db && admin.schema_create,
       "migration connection must be a separate privileged identity on the same database");
+    assert(app.server_addr === admin.server_addr &&
+      app.server_port === admin.server_port &&
+      new Date(app.server_started).getTime() === new Date(admin.server_started).getTime(),
+      "runtime and migrator connections must reach the same live PostgreSQL server");
+
+    // Runtime's own membership check only sees roles it can inherit/SET.
+    // Reverse memberships are equally dangerous: an attacker can inherit
+    // the runtime's SECURITY DEFINER EXECUTE grants.
+    const inboundMemberships = await runtimePool.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_auth_members members
+        JOIN pg_catalog.pg_roles parent ON parent.oid = members.roleid
+        WHERE parent.rolname = 'jev_runtime'
+      ) AS any_inbound
+    `);
+    assert(inboundMemberships.rows.length === 1 &&
+      inboundMemberships.rows[0].any_inbound === false,
+      "jev_runtime cannot be granted to any other database role");
 
     const sql = await readFile(path.join(root, "packages", "db", "security", "verify-runtime-privileges.sql"), "utf8");
     const rows = (await runtimePool.query(sql)).rows;
