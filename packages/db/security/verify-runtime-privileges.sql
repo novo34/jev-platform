@@ -17,6 +17,7 @@ WITH guarded_tables AS (
 checks AS (
   SELECT table_name,
          current_user AS runtime_role,
+         session_user AS authenticated_role,
          pg_catalog.has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_schema,
          pg_catalog.pg_get_userbyid(relowner) AS owner_role,
          pg_catalog.pg_has_role(current_user, relowner, 'MEMBER') AS inherits_owner_membership,
@@ -43,7 +44,9 @@ checks AS (
   FROM guarded_tables
 )
 SELECT *,
-       CASE WHEN pg_catalog.current_schema() IS DISTINCT FROM 'public'
+       CASE WHEN authenticated_role IS DISTINCT FROM 'jev_runtime'
+                 OR authenticated_role IS DISTINCT FROM runtime_role
+                 OR pg_catalog.current_schema() IS DISTINCT FROM 'public'
                  OR runtime_role = owner_role
                  OR inherits_owner_membership
                  OR elevated_role
