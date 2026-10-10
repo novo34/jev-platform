@@ -32,6 +32,14 @@ function parseConnection(value, label) {
   assert(url.hostname && url.username && url.pathname.length > 1, label + " needs host, username and database");
   // libpq-compatible parsers can treat these query parameters as connection
   // endpoint overrides even when the URL authority looks identical.
+  // Connection options such as options=-c role=jev_runtime can make a
+  // superuser login appear restricted via current_user while session_user
+  // stays privileged and RESET ROLE remains available. Admit only the
+  // explicitly supported, non-role-changing query parameters.
+  const allowed = new Set(["sslmode", "application_name", "connect_timeout"]);
+  for (const [key] of url.searchParams) {
+    assert(allowed.has(key), label + " has forbidden connection option: " + key);
+  }
   const forbidden = ["host", "hostaddr", "port", "dbname", "database", "user", "password", "service"];
   for (const key of forbidden) {
     assert(!url.searchParams.has(key), label + " has forbidden connection endpoint override: " + key);
@@ -172,11 +180,11 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
   try {
     // The read-only SQL diagnostic independently verifies all runtime ACLs.
     const [runtimeIdentity, migrationIdentity] = await Promise.all([
-      runtimePool.query(`SELECT current_user AS role, pg_catalog.current_database() AS db,
+      runtimePool.query(`SELECT current_user AS role, session_user AS authenticated_role, pg_catalog.current_database() AS db,
         pg_catalog.inet_server_addr()::text AS server_addr,
         pg_catalog.inet_server_port() AS server_port,
         pg_catalog.pg_postmaster_start_time() AS server_started`),
-      migrationPool.query(`SELECT current_user AS role, pg_catalog.current_database() AS db,
+      migrationPool.query(`SELECT current_user AS role, session_user AS authenticated_role, pg_catalog.current_database() AS db,
         pg_catalog.has_schema_privilege(current_user,'public','CREATE') AS schema_create,
         pg_catalog.inet_server_addr()::text AS server_addr,
         pg_catalog.inet_server_port() AS server_port,
@@ -185,6 +193,11 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
     const app = runtimeIdentity.rows[0];
     const admin = migrationIdentity.rows[0];
     assert(app.role === "jev_runtime", "application must connect using jev_runtime");
+    assert(app.authenticated_role === "jev_runtime" &&
+      app.authenticated_role === app.role,
+      "application session must authenticate directly as jev_runtime; role switching is forbidden");
+    assert(admin.authenticated_role === admin.role,
+      "migration connection must not impersonate a different role");
     assert(app.role !== admin.role && app.db === admin.db && admin.schema_create,
       "migration connection must be a separate privileged identity on the same database");
     assert(app.server_addr === admin.server_addr &&
