@@ -139,6 +139,10 @@ try {
       }),
       /jev_runtime cannot be granted to any other database role/
     );
+    await assert.rejects(
+      admin.query(provisioning),
+      /must have no inbound or outbound role memberships/
+    );
   } finally {
     await admin.query(`REVOKE jev_runtime FROM "${memberRole}"`);
     await admin.query(`DROP ROLE "${memberRole}"`);
@@ -167,6 +171,11 @@ try {
   await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
   try {
     await assert.rejects(verify(), /controlled writer has unsafe owner/);
+    // The administrative provisioning script must strip the delegation
+    // right while preserving legitimate EXECUTE.
+    await admin.query(provisioning);
+    ensure((await verify()).privilege_checks === "4/4 PASS",
+      "provisioning did not remove runtime EXECUTE grant option");
   } finally {
     await admin.query(`REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION ${writer} FROM jev_runtime CASCADE`);
   }
