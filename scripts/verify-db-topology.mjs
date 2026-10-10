@@ -113,7 +113,7 @@ async function validateControlledWriters(pool) {
   for (const writer of result.rows) {
     const config = writer.config;
     const pinned = Array.isArray(config) && config.length === 1 &&
-      config[0].replace(/\\s+/g, "") === "search_path=pg_catalog,public,pg_temp";
+      config[0].replace(/\s+/g, "") === "search_path=pg_catalog,public,pg_temp";
     assert(writer.exists && writer.security_definer && writer.trusted_owner &&
       !writer.runtime_owned && writer.can_execute && pinned,
       "controlled writer has unsafe owner, execution grant, SECURITY DEFINER or search_path: " +
