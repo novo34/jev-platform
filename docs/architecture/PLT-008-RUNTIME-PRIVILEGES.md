@@ -192,6 +192,19 @@ commit/CI, database privilege verification and restoration evidence.
   non-approved roles as well as a missing SECURITY DEFINER flag, owner,
   pinned search_path or runtime EXECUTE grant. Negative CI tests grant
   PUBLIC/foreign-role EXECUTE and confirm the gate fails.
+* **No unreviewed privileged function surface:** the live verifier enumerates
+  every non-extension, non-trigger SECURITY DEFINER routine in the canonical
+  `public` schema. Any function outside the seven individually audited
+  writer signatures fails the deployment gate, even when EXECUTE is currently
+  revoked. A PostgreSQL CI negative test creates an unreviewed definer,
+  observes rejection, and confirms removal restores the PASS condition.
+* **Migrator schema cannot drift:** the live verifier requires the actual
+  migrator session's `current_schema()` to be `public`. This matters because
+  the migration runner uses unqualified statements; a role-specific
+  `search_path` selecting a shadow schema would otherwise silently apply
+  migrations there. CI creates such a schema and role configuration and proves
+  the verifier rejects it. Production setup must keep migrator search_path
+  pinned to `public`, rather than merely granting CREATE on `public`.
 * Migrator ownership checks exclude PostgreSQL **extension-owned**
   objects (such as functions installed by pgcrypto), while requiring
   effective owner privileges on JEV tables, sequences, functions and
