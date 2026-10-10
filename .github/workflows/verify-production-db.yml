@@ -26,10 +26,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install
-        run: npm install
-      - name: Build DB guard
-        run: npm run build -w @jev/db
+      # Audit-only verifier dependency graph: exact versions and integrity
+      # hashes from scripts/package-lock.json, with no install-time scripts.
+      - name: Install pinned standalone verifier dependencies
+        run: npm ci --ignore-scripts --prefix scripts
       # No production credentials enter checkout, setup, install, or build.
       # In particular, package lifecycle scripts run without DB secrets.
       - name: Validate real production PostgreSQL identity and guarded ACLs
