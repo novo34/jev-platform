@@ -16,7 +16,7 @@ function retryableStatus(status: number): boolean {
 export function parseRetryAfterMs(header: string | null, nowMs = Date.now()): number | undefined {
   if (header === null) return undefined;
   const value = header.trim();
-  if (/^\\d+$/.test(value)) {
+  if (/^\d+$/.test(value)) {
     const seconds = Number(value);
     return Number.isFinite(seconds) ? seconds * 1000 : Number.POSITIVE_INFINITY;
   }
