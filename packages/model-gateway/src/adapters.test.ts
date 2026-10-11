@@ -100,6 +100,26 @@ describe("provider response body timeout", () => {
   });
 });
 
+describe("OpenAI response privacy", () => {
+  it("explicitly disables server-side response storage", async () => {
+    let submitted: Record<string, unknown> | undefined;
+    const adapter = new OpenAIAdapter(
+      async (_url, init) => {
+        submitted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse({
+          output_text: "ok",
+          usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 }
+        });
+      },
+      "https://example.test"
+    );
+    await adapter.execute("sk-test", {
+      model: "test", prompt: "private code", timeoutMs: 1000
+    });
+    expect(submitted).toMatchObject({ store: false, input: "private code" });
+  });
+});
+
 describe("OpenAI multi-part output", () => {
   it("concatenates every output_text part across response items", async () => {
     const adapter = new OpenAIAdapter(
