@@ -12,24 +12,36 @@ function retryableStatus(status: number): boolean {
   return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
-async function fetchWithTimeout(
+async function fetchJsonWithTimeout(
   fetchImpl: FetchLike,
   url: string,
   init: RequestInit,
   timeoutMs: number
-): Promise<Response> {
+): Promise<{ response: Response; body: any }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetchImpl(url, { ...init, signal: controller.signal });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    const response = await fetchImpl(url, { ...init, signal: controller.signal });
+    const body = await response.json().catch((error: unknown) => {
+      if (controller.signal.aborted) throw error;
+      return null;
+    });
+    if (!response.ok) {
       throw new ModelGatewayError(
-        "PROVIDER_TIMEOUT",
-        "provider request timed out",
-        true
+        "PROVIDER_HTTP_ERROR",
+        typeof body?.error?.message === "string"
+          ? body.error.message
+          : `provider returned HTTP ${response.status}`,
+        retryableStatus(response.status),
+        response.status
       );
     }
+    return { response, body };
+  } catch (error) {
+    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+      throw new ModelGatewayError("PROVIDER_TIMEOUT", "provider request timed out", true);
+    }
+    if (error instanceof ModelGatewayError) throw error;
     throw new ModelGatewayError(
       "PROVIDER_HTTP_ERROR",
       error instanceof Error ? error.message : "provider request failed",
@@ -38,21 +50,6 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-async function jsonOrProviderError(response: Response): Promise<any> {
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new ModelGatewayError(
-      "PROVIDER_HTTP_ERROR",
-      typeof body?.error?.message === "string"
-        ? body.error.message
-        : `provider returned HTTP ${response.status}`,
-      retryableStatus(response.status),
-      response.status
-    );
-  }
-  return body;
 }
 
 function textFromOpenAIResponse(body: any): string {
@@ -112,7 +109,7 @@ abstract class BaseHttpAdapter implements ProviderAdapter {
   async health(apiKey: string, timeoutMs = 10_000): Promise<ProviderHealth> {
     const started = Date.now();
     try {
-      const response = await fetchWithTimeout(
+      const { body } = await fetchJsonWithTimeout(
         this.fetchImpl,
         `${this.baseUrl}/models`,
         {
@@ -121,7 +118,6 @@ abstract class BaseHttpAdapter implements ProviderAdapter {
         },
         timeoutMs
       );
-      await jsonOrProviderError(response);
       return { ok: true, latencyMs: Date.now() - started };
     } catch (error) {
       return {
@@ -159,7 +155,7 @@ export class OpenAIAdapter extends BaseHttpAdapter {
       timeoutMs: number;
     }
   ): Promise<AdapterResult> {
-    const response = await fetchWithTimeout(
+    const { body } = await fetchJsonWithTimeout(
       this.fetchImpl,
       `${this.baseUrl}/responses`,
       {
@@ -176,7 +172,6 @@ export class OpenAIAdapter extends BaseHttpAdapter {
       },
       input.timeoutMs
     );
-    const body = await jsonOrProviderError(response);
     const usage = body?.usage;
     if (!usage) {
       throw new ModelGatewayError(
@@ -217,7 +212,7 @@ export class DeepSeekAdapter extends BaseHttpAdapter {
       timeoutMs: number;
     }
   ): Promise<AdapterResult> {
-    const response = await fetchWithTimeout(
+    const { body } = await fetchJsonWithTimeout(
       this.fetchImpl,
       `${this.baseUrl}/chat/completions`,
       {
@@ -234,7 +229,6 @@ export class DeepSeekAdapter extends BaseHttpAdapter {
       },
       input.timeoutMs
     );
-    const body = await jsonOrProviderError(response);
     const content = body?.choices?.[0]?.message?.content;
     if (typeof content !== "string") {
       throw new ModelGatewayError(
