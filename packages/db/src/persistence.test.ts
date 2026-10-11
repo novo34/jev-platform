@@ -249,7 +249,8 @@ describe("canonical PostgreSQL persistence", () => {
       "0015_controlled_approval_deployment_creation.sql",
       "0016_deployment_order_and_approval_references.sql",
       "0017_atomic_approved_task_rework.sql",
-      "0018_pin_order_status_trigger_search_path.sql"
+      "0018_pin_order_status_trigger_search_path.sql",
+      "0019_reject_whitespace_only_approval_evidence.sql"
     ]);
   });
 });
