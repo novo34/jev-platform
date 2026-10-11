@@ -147,6 +147,39 @@ describe("ModelGateway", () => {
     expect(calls).toBe(8);
   });
 
+  it("records failure when global budget ends before the local retry limit", async () => {
+    let attempts = 0;
+    const registry = new ProviderRegistry().register({
+      provider: "openai",
+      async execute() {
+        attempts += 1;
+        throw new ModelGatewayError("PROVIDER_HTTP_ERROR", "temporary upstream failure", true, 503);
+      },
+      async health() { return { ok: true }; }
+    });
+    const gateway = new ModelGateway(pool, credentials, registry,
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+    const requestId = randomUUID();
+    await expect(gateway.execute({
+      requestId, organizationId, projectId, orderId, taskId,
+      agentRole: "DEVELOPER", prompt: "Exhaust shared provider attempt budget",
+      targets: [
+        { provider: "openai", model: "model-one" },
+        { provider: "openai", model: "model-two" }
+      ],
+      maxRetries: 5
+    })).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(attempts).toBe(8);
+    const calls = await pool.query(
+      "SELECT model, outcome, attempt_count FROM model_provider_calls WHERE request_id = $1 ORDER BY model",
+      [requestId]
+    );
+    expect(calls.rows).toEqual([
+      expect.objectContaining({ model: "model-one", outcome: "FAILED", attempt_count: 6 }),
+      expect.objectContaining({ model: "model-two", outcome: "FAILED", attempt_count: 2 })
+    ]);
+  }, 25_000);
+
   it("does not lose task order attribution when orderId is omitted", async () => {
     const gateway = new ModelGateway(pool, credentials, new ProviderRegistry(),
       new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
