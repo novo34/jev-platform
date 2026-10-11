@@ -17,6 +17,12 @@ try {
   if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
     throw new Error("unsupported protocol");
   }
+  // node-postgres accepts query parameters that override hostname, port,
+  // database and credentials from the URL authority. No overrides are safe
+  // when this command can migrate or replace an ADMIN account.
+  if (parsed.search || parsed.hash) {
+    throw new Error("connection overrides are not allowed");
+  }
   databaseHost = parsed.hostname;
 } catch {
   throw new Error("development seed requires a valid PostgreSQL DATABASE_URL");
