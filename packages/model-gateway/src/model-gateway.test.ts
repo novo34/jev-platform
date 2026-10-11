@@ -80,6 +80,27 @@ describe("ProviderCredentialStore", () => {
   });
 });
 
+describe("PricingCatalog validation", () => {
+  it("rejects invalid prices before any provider can be called", () => {
+    const invalidRates = [
+      { inputPerMillionChf: -1, outputPerMillionChf: 1 },
+      { inputPerMillionChf: Infinity, outputPerMillionChf: 1 },
+      { inputPerMillionChf: 1, outputPerMillionChf: NaN },
+      { inputPerMillionChf: 1 },
+      { inputPerMillionChf: "1", outputPerMillionChf: 1 }
+    ];
+    for (const rate of invalidRates) {
+      expect(() => new PricingCatalog({ "openai:*": rate as never }))
+        .toThrowError(ModelGatewayError);
+    }
+    for (const raw of ['{"openai:*":{"inputPerMillionChf":-1,"outputPerMillionChf":1}}', '[]', 'null', '{']) {
+      expect(() => PricingCatalog.fromJson(raw)).toThrowError(ModelGatewayError);
+    }
+    expect(new PricingCatalog({ "openai:*": { inputPerMillionChf: 0, outputPerMillionChf: 0 } })
+      .has("openai", "gpt-test")).toBe(true);
+  });
+});
+
 describe("ModelGateway", () => {
   it("rejects invalid paid-call retry and timeout budgets before any provider execution", async () => {
     let calls = 0;
