@@ -626,6 +626,47 @@ try {
   ensure((await verify()).privilege_checks === "4/4 PASS",
     "approval constraint restoration did not restore release gate");
 
+  // Whitespace-only reference and READY URL values must be rejected by the
+  // actual migrated database CHECK expressions, not just by application code.
+  const whitespace = await admin.query(
+    "SELECT E' \\t\\n' ~ '[^[:space:]]' AS has_usable_text"
+  );
+  ensure(whitespace.rows[0].has_usable_text === false,
+    "PostgreSQL whitespace predicate accepted empty evidence");
+
+  const readyUrlConstraint = (await admin.query(
+    `SELECT pg_catalog.pg_get_constraintdef(c.oid) AS ddl
+       FROM pg_catalog.pg_constraint c
+       WHERE c.conrelid = 'public.deployments'::regclass
+         AND c.conname = 'deployments_ready_url_nonblank'`
+  )).rows[0].ddl;
+  await admin.query(
+    "ALTER TABLE public.deployments DROP CONSTRAINT deployments_ready_url_nonblank"
+  );
+  try {
+    await assert.rejects(verify(),
+      /approval nonblank reference CHECK constraint drifted/);
+    await admin.query(
+      "ALTER TABLE public.deployments ADD CONSTRAINT deployments_ready_url_nonblank " +
+      "CHECK (status <> 'READY' OR url IS NOT NULL)"
+    );
+    try {
+      await assert.rejects(verify(),
+        /approval nonblank reference CHECK constraint drifted/);
+    } finally {
+      await admin.query(
+        "ALTER TABLE public.deployments DROP CONSTRAINT deployments_ready_url_nonblank"
+      );
+    }
+  } finally {
+    await admin.query(
+      "ALTER TABLE public.deployments ADD CONSTRAINT deployments_ready_url_nonblank " +
+      readyUrlConstraint
+    );
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "READY URL constraint restoration did not restore release gate");
+
   // A constraint trigger may defer an audited AFTER ROW invariant until
   // commit, changing the security semantics without changing its function.
   const historyTrigger = "trg_record_order_state_history";
