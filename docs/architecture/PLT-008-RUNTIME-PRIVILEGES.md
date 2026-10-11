@@ -215,10 +215,19 @@ commit/CI, database privilege verification and restoration evidence.
   bindings from immutable migration SQL, checks event masks, update-column
   filters, table/function identity and enabled state, and compares the
   final PL/pgSQL body of each bound trigger function against the last
-  audited migration that defined it. CI proves detection of a disabled,
-  detached, or body-replaced approval-authorization trigger. A green
+  audited migration that defined it. Every bound trigger function must
+  retain the migration-0009 pinned search_path (pg_catalog, public, pg_temp).
+  The verifier rejects unexpected trigger WHEN predicates (tgqual).
+  CI proves detection of a disabled, detached, conditional, search-path-
+  altered, or body-replaced approval-authorization trigger. A green
   migration checksum ledger alone does not prove that live triggers remain
   attached or unmodified.
+* **No unreviewed database-wide event triggers:** pg_event_trigger is
+  audited separately from table-level pg_trigger. Every enabled event
+  trigger is prohibited until its implementation is independently reviewed
+  and explicitly allowlisted by a future controlled migration. The
+  PostgreSQL 16 smoke test installs one and proves the live gate rejects it,
+  then restores the clean topology.
 * **Migrator schema cannot drift:** the live verifier requires the actual
   migrator session's `current_schema()` to be `public`. This matters because
   the migration runner uses unqualified statements; a role-specific
