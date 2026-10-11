@@ -84,6 +84,13 @@ export class ModelGateway {
     if (distinctTargets.size !== request.targets.length) {
       throw new ModelGatewayError("INVALID_REQUEST", "duplicate provider target");
     }
+    if (request.maxOutputTokens !== undefined &&
+        (!Number.isSafeInteger(request.maxOutputTokens) ||
+          request.maxOutputTokens < 1 || request.maxOutputTokens > 32_768)) {
+      throw new ModelGatewayError(
+        "INVALID_REQUEST", "maxOutputTokens must be an integer between 1 and 32768"
+      );
+    }
     const timeoutMs = request.timeoutMs ?? 120_000;
     const maxRetries = request.maxRetries ?? 1;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
