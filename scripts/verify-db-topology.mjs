@@ -285,7 +285,8 @@ async function validateTriggerInvariants(pool) {
     "  t.tgtype::integer AS type, t.tgenabled AS enabled,",
     "  t.tgqual IS NULL AS no_when_clause,",
     "  l.lanname AS language, p.prosecdef AS security_definer,",
-    "  p.prosrc AS function_body, p.proowner = ledger.relowner AS trusted_owner,",
+    "  p.prosrc AS function_body, p.proconfig AS function_config,",
+    "  p.proowner = ledger.relowner AS trusted_owner,",
     "  ARRAY(SELECT a.attname::text FROM pg_catalog.pg_attribute a",
     "    WHERE a.attrelid = t.tgrelid AND a.attnum = ANY(t.tgattr::smallint[])",
     "    ORDER BY a.attname) AS update_columns",
@@ -305,7 +306,10 @@ async function validateTriggerInvariants(pool) {
     "application trigger set differs from the audited migration inventory");
   for (const trigger of result.rows) {
     const audited = expected.get(trigger.trigger_name);
-    assert(audited && trigger.table_name === audited.table &&
+    const functionConfig = trigger.function_config;
+    const pinnedPath = Array.isArray(functionConfig) && functionConfig.length === 1 &&
+      functionConfig[0].replace(/\s+/g, "") === "search_path=pg_catalog,public,pg_temp";
+    assert(audited && pinnedPath && trigger.table_name === audited.table &&
       trigger.function_name === audited.functionName &&
       trigger.nargs === 0 && trigger.type === audited.type &&
       trigger.enabled === "O" && trigger.no_when_clause &&
@@ -329,6 +333,20 @@ async function validateTriggerInvariants(pool) {
       "application trigger function body drifted from audited migration: " +
       trigger.trigger_name);
   }
+}
+
+/**
+ * Event triggers are database-wide DDL hooks and are not included in
+ * pg_trigger. An enabled, unreviewed event trigger can execute privileged
+ * code when the restricted runtime issues permitted DDL such as CREATE TEMP.
+ * There are no approved event triggers in the canonical JEV migrations.
+ */
+async function validateEventTriggers(pool) {
+  const result = await pool.query(
+    "SELECT evtname FROM pg_catalog.pg_event_trigger WHERE evtenabled <> 'D' ORDER BY evtname"
+  );
+  assert(result.rows.length === 0,
+    "unapproved enabled database event trigger exists");
 }
 
 /** Validate the actual DB endpoints supplied by the deployment secret manager. */
@@ -401,6 +419,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
     const writers = await validateControlledWriters(runtimePool);
     await validateDefinerSurface(runtimePool);
     await validateTriggerInvariants(runtimePool);
+    await validateEventTriggers(runtimePool);
     const managed = await validateMigratorOwnership(migrationPool);
     const counts = await validateMigrationHistory(runtimePool);
     return {
