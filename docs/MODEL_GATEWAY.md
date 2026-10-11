@@ -34,6 +34,18 @@ Pricing is configuration, not hard-coded provider truth. Runtime pricing is supp
 
 Missing pricing blocks a paid call instead of silently recording an incorrect cost.
 
+Provider requests are subject to bounded limits before any paid operation:
+at most four distinct provider/model targets and eight provider attempts
+across the complete fallback chain; up to five retries per target; 1–300,000
+milliseconds per HTTP request including the response body; and optional
+`maxOutputTokens` between 1 and 32,768. Invalid limits are rejected before
+fetch. Retryable failures use bounded exponential backoff; a server
+`Retry-After` header is honored, and backoffs over five seconds skip the
+repeated paid call. The final attempt is recorded even when the shared
+attempt budget expires. Every paid response requires valid usage and
+nonnegative finite configured pricing. The supplied order, task, project and
+organization must match exactly for cost attribution.
+
 ## Live verification
 
 CI uses deterministic fake adapters and real PostgreSQL. Final PLT-009 acceptance still requires live DeepSeek and OpenAI/Codex calls after credentials are configured through the secure credential path.
