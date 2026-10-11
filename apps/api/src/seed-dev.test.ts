@@ -27,6 +27,23 @@ describe("development seed preflight", () => {
     expect(result.output).toContain("requires NODE_ENV=development");
   });
 
+  it("rejects host or credential query overrides before any database migration", () => {
+    for (const suffix of [
+      "?host=production-db",
+      "?port=5432&host=db.example.com",
+      "?host=/var/run/postgresql",
+      "#unexpected"
+    ]) {
+      const result = attemptSeed({
+        NODE_ENV: "development",
+        JEV_ALLOW_DEV_SEED: "1",
+        DATABASE_URL: "postgresql://user:password@127.0.0.1:1/unsafe" + suffix
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("valid PostgreSQL DATABASE_URL");
+    }
+  });
+
   it("requires an explicit acknowledgement and rejects remote databases", () => {
     const unacknowledged = attemptSeed({
       NODE_ENV: "development",
