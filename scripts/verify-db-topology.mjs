@@ -283,6 +283,7 @@ async function validateTriggerInvariants(pool) {
     "SELECT t.tgname AS trigger_name, c.relname AS table_name,",
     "  p.proname AS function_name, p.pronargs AS nargs,",
     "  t.tgtype::integer AS type, t.tgenabled AS enabled,",
+    "  t.tgqual IS NULL AS no_when_clause,",
     "  l.lanname AS language, p.prosecdef AS security_definer,",
     "  p.prosrc AS function_body, p.proowner = ledger.relowner AS trusted_owner,",
     "  ARRAY(SELECT a.attname::text FROM pg_catalog.pg_attribute a",
@@ -307,7 +308,8 @@ async function validateTriggerInvariants(pool) {
     assert(audited && trigger.table_name === audited.table &&
       trigger.function_name === audited.functionName &&
       trigger.nargs === 0 && trigger.type === audited.type &&
-      trigger.enabled === "O" && trigger.language === "plpgsql" &&
+      trigger.enabled === "O" && trigger.no_when_clause &&
+      trigger.language === "plpgsql" &&
       trigger.security_definer === false && trigger.trusted_owner &&
       JSON.stringify(trigger.update_columns) === JSON.stringify(audited.updateColumns),
       "application trigger binding, events or enabled state drifted: " +
