@@ -245,6 +245,28 @@ describe("ModelGateway", () => {
     expect(calls).toBe(1);
   });
 
+  it("rejects missing, nonfinite or unsafe output caps without contacting paid providers", async () => {
+    let paidCalls = 0;
+    const registry = new ProviderRegistry().register({
+      provider: "openai",
+      async execute() {
+        paidCalls += 1;
+        throw new Error("paid call must not occur");
+      },
+      async health() { return { ok: true }; }
+    });
+    const gateway = new ModelGateway(pool, credentials, registry,
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+    for (const maxOutputTokens of [0, -3, NaN, Infinity, 1.5, 32769]) {
+      await expect(gateway.execute({
+        requestId: randomUUID(), organizationId, projectId, orderId, taskId,
+        agentRole: "DEVELOPER", prompt: "Safe cap",
+        targets: [{ provider: "openai", model: "test" }], maxOutputTokens
+      })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    }
+    expect(paidCalls).toBe(0);
+  });
+
   it("rejects invalid paid-call retry and timeout budgets before any provider execution", async () => {
     let calls = 0;
     const registry = new ProviderRegistry().register({
