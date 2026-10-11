@@ -17,7 +17,7 @@ try {
   if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
     throw new Error("unsupported protocol");
   }
-  databaseHost = parsed.hostname.replace(/^\\[|\\]$/g, "");
+  databaseHost = parsed.hostname;
 } catch {
   throw new Error("development seed requires a valid PostgreSQL DATABASE_URL");
 }
