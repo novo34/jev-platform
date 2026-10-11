@@ -37,6 +37,25 @@ describe("HTTP Retry-After metadata", () => {
 });
 
 describe("provider response body timeout", () => {
+  it("retains 429 Retry-After when the response body stalls", async () => {
+    const adapter = new OpenAIAdapter(
+      async (_url, init) => new Response(new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => {
+            controller.error(new DOMException("aborted", "AbortError"));
+          }, { once: true });
+        }
+      }), { status: 429, headers: { "Retry-After": "60" } }),
+      "https://example.test"
+    );
+    await expect(adapter.execute("sk-test", {
+      model: "test", prompt: "hello", timeoutMs: 25
+    })).rejects.toMatchObject({
+      code: "PROVIDER_TIMEOUT", status: 429,
+      retryable: true, retryAfterMs: 60_000
+    });
+  });
+
   it("aborts a stalled OpenAI response body after headers arrive", async () => {
     let aborted = false;
     const adapter = new OpenAIAdapter(
