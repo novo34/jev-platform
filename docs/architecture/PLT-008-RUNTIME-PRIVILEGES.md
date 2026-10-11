@@ -228,6 +228,18 @@ commit/CI, database privilege verification and restoration evidence.
   and explicitly allowlisted by a future controlled migration. The
   PostgreSQL 16 smoke test installs one and proves the live gate rejects it,
   then restores the clean topology.
+* **No owner-privileged runtime rewrite-rule surface:** the database
+  topology gate inventories nonstandard pg_rewrite rules on relations for
+  which the restricted runtime has table- or column-level DML privileges,
+  including queue tables. A rule can execute writes under its relation
+  owner's identity; even an unchanged migration ledger is insufficient.
+  CI installs and removes a malicious jobs INSERT rewrite rule to prove
+  rejection.
+* **No unreviewed callable pg_catalog SECURITY DEFINER routines:** in
+  addition to non-system schemas, the verifier checks runtime-executable
+  privileged functions and procedures in pg_catalog. CI installs an
+  owner-privileged routine with effective PUBLIC EXECUTE and proves the
+  gate rejects it, then checks that cleanup restores PASS.
 * **Migrator schema cannot drift:** the live verifier requires the actual
   migrator session's `current_schema()` to be `public`. This matters because
   the migration runner uses unqualified statements; a role-specific
