@@ -233,13 +233,21 @@ commit/CI, database privilege verification and restoration evidence.
   which the restricted runtime has table- or column-level DML privileges,
   including queue tables. A rule can execute writes under its relation
   owner's identity; even an unchanged migration ledger is insufficient.
-  CI installs and removes a malicious jobs INSERT rewrite rule to prove
-  rejection.
+  CI installs malicious jobs INSERT and protected tasks UPDATE rewrite
+  rules to prove rejection. Rules on all public application relations are
+  forbidden, including those reached through audited SECURITY DEFINER
+  writers rather than direct runtime DML.
 * **No unreviewed callable pg_catalog SECURITY DEFINER routines:** in
   addition to non-system schemas, the verifier checks runtime-executable
   privileged functions and procedures in pg_catalog. CI installs an
-  owner-privileged routine with effective PUBLIC EXECUTE and proves the
-  gate rejects it, then checks that cleanup restores PASS.
+  owner-privileged routines with effective PUBLIC EXECUTE in pg_catalog
+  and information_schema and proves the gate rejects them, then checks that
+  cleanup restores PASS.
+* **Approval-reference integrity:** the live gate attests the PostgreSQL 16
+  catalog definition of `approvals_approved_refs_nonblank`, including the
+  complete audited predicate and validation state. CI drops/replaces the
+  constraint and proves both alterations are rejected before restoring the
+  original definition.
 * **Migrator schema cannot drift:** the live verifier requires the actual
   migrator session's `current_schema()` to be `public`. This matters because
   the migration runner uses unqualified statements; a role-specific
