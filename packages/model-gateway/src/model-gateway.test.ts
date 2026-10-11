@@ -81,6 +81,36 @@ describe("ProviderCredentialStore", () => {
 });
 
 describe("ModelGateway", () => {
+  it("rejects invalid paid-call retry and timeout budgets before any provider execution", async () => {
+    let calls = 0;
+    const registry = new ProviderRegistry().register({
+      provider: "openai",
+      async execute() {
+        calls += 1;
+        throw new Error("provider must not be called for invalid limits");
+      },
+      async health() { return { ok: true }; }
+    });
+    const gateway = new ModelGateway(
+      pool, credentials, registry,
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } })
+    );
+    const base = {
+      organizationId, projectId, orderId, taskId,
+      agentRole: "DEVELOPER", prompt: "Validate budgets",
+      targets: [{ provider: "openai" as const, model: "gpt-test" }]
+    };
+    for (const maxRetries of [Infinity, NaN, -1, 0.5, 6]) {
+      await expect(gateway.execute({ ...base, requestId: randomUUID(), maxRetries }))
+        .rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    }
+    for (const timeoutMs of [Infinity, NaN, 0, -5, 1.5, 300_001]) {
+      await expect(gateway.execute({ ...base, requestId: randomUUID(), timeoutMs }))
+        .rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    }
+    expect(calls).toBe(0);
+  });
+
   it("records retries, fallback, normalized usage and CHF cost", async () => {
     await credentials.configure(organizationId, "deepseek", "ds-test-secret-5678", userId);
 
