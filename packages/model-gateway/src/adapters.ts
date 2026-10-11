@@ -34,8 +34,12 @@ async function fetchJsonWithTimeout(
 ): Promise<{ response: Response; body: any }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let receivedStatus: number | undefined;
+  let receivedRetryAfterMs: number | undefined;
   try {
     const response = await fetchImpl(url, { ...init, signal: controller.signal });
+    receivedStatus = response.status;
+    receivedRetryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
     const body = await response.json().catch((error: unknown) => {
       if (controller.signal.aborted) throw error;
       return null;
@@ -49,16 +53,21 @@ async function fetchJsonWithTimeout(
         retryableStatus(response.status),
         response.status
       );
-      const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
-      if (providerError.retryable && retryAfterMs !== undefined) {
-        Object.assign(providerError, { retryAfterMs });
+      if (providerError.retryable && receivedRetryAfterMs !== undefined) {
+        Object.assign(providerError, { retryAfterMs: receivedRetryAfterMs });
       }
       throw providerError;
     }
     return { response, body };
   } catch (error) {
     if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-      throw new ModelGatewayError("PROVIDER_TIMEOUT", "provider request timed out", true);
+      const timedOut = new ModelGatewayError(
+        "PROVIDER_TIMEOUT", "provider request timed out", true, receivedStatus
+      );
+      if (receivedRetryAfterMs !== undefined) {
+        Object.assign(timedOut, { retryAfterMs: receivedRetryAfterMs });
+      }
+      throw timedOut;
     }
     if (error instanceof ModelGatewayError) throw error;
     throw new ModelGatewayError(
