@@ -220,13 +220,13 @@ async function validateDefinerSurface(pool) {
     SELECT p.oid::pg_catalog.regprocedure::text AS signature
     FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace ns ON ns.oid = p.pronamespace
-    WHERE ns.nspname NOT IN ('information_schema', 'pg_toast')
+    WHERE ns.nspname <> 'pg_toast'
       AND ns.nspname NOT LIKE 'pg_temp_%'
       AND ns.nspname NOT LIKE 'pg_toast_temp_%'
       AND pg_catalog.has_schema_privilege(current_user, ns.oid, 'USAGE')
       -- pg_catalog is trusted only for routines inaccessible to the restricted
       -- runtime. New callable privileged routines must not be exempted.
-      AND (ns.nspname <> 'pg_catalog'
+      AND (ns.nspname NOT IN ('pg_catalog', 'information_schema')
         OR pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE'))
       AND p.prosecdef
       -- Do not limit to prokind='f': SECURITY DEFINER procedures (prokind='p')
@@ -362,8 +362,12 @@ async function validateRewriteRules(pool) {
        AND n.nspname NOT LIKE 'pg_temp_%'
        AND n.nspname NOT LIKE 'pg_toast_temp_%'
        AND pg_catalog.has_schema_privilege(current_user, n.oid, 'USAGE')
+       -- All public application relations are reachable from audited
+       -- owner-privileged controlled writers, even when no direct runtime
+       -- DML is granted. Other schemas require effective runtime DML rights.
        AND (
-         pg_catalog.has_table_privilege(current_user, c.oid, 'INSERT')
+         n.nspname = 'public'
+         OR pg_catalog.has_table_privilege(current_user, c.oid, 'INSERT')
          OR pg_catalog.has_table_privilege(current_user, c.oid, 'UPDATE')
          OR pg_catalog.has_table_privilege(current_user, c.oid, 'DELETE')
          OR pg_catalog.has_any_column_privilege(current_user, c.oid, 'INSERT')
