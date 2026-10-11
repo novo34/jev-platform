@@ -563,6 +563,69 @@ try {
   ensure((await verify()).privilege_checks === "4/4 PASS",
     "rewrite-rule cleanup did not restore the release gate");
 
+  // Controlled writers update protected relations as table owner. A rewrite
+  // rule on public.tasks must be rejected despite runtime lacking direct DML.
+  const protectedRule = "jev_unapproved_tasks_update_rule";
+  await admin.query(`
+    CREATE RULE ${protectedRule} AS ON UPDATE TO public.tasks
+    DO ALSO UPDATE public.approvals SET stale = stale WHERE FALSE
+  `);
+  try {
+    await assert.rejects(verify(),
+      /unapproved rewrite rule exists on runtime-writable relation/);
+  } finally {
+    await admin.query("DROP RULE IF EXISTS " + protectedRule + " ON public.tasks");
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "protected-table rewrite-rule cleanup did not restore release gate");
+
+  // information_schema is accessible to runtime, like pg_catalog, and
+  // must not be exempt from the SECURITY DEFINER inventory.
+  await admin.query(`
+    CREATE FUNCTION information_schema.jev_rogue_information_definer()
+    RETURNS integer LANGUAGE sql SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS 'SELECT 1'
+  `);
+  try {
+    await assert.rejects(verify(),
+      /unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist/);
+  } finally {
+    await admin.query("DROP FUNCTION information_schema.jev_rogue_information_definer()");
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "information_schema function cleanup did not restore release gate");
+
+  const originalApprovalConstraint = (await admin.query(
+    `SELECT pg_catalog.pg_get_constraintdef(c.oid) AS ddl
+       FROM pg_catalog.pg_constraint c
+       JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+      WHERE t.oid = 'public.approvals'::regclass
+        AND c.conname = 'approvals_approved_refs_nonblank'`
+  )).rows[0].ddl;
+  await admin.query("ALTER TABLE public.approvals DROP CONSTRAINT approvals_approved_refs_nonblank");
+  try {
+    await assert.rejects(verify(),
+      /approval nonblank reference CHECK constraint drifted/);
+    await admin.query(`
+      ALTER TABLE public.approvals ADD CONSTRAINT approvals_approved_refs_nonblank
+      CHECK (decision <> 'APPROVED' OR stale = TRUE OR revision IS NOT NULL)
+    `);
+    try {
+      await assert.rejects(verify(),
+        /approval nonblank reference CHECK constraint drifted/);
+    } finally {
+      await admin.query("ALTER TABLE public.approvals DROP CONSTRAINT approvals_approved_refs_nonblank");
+    }
+  } finally {
+    await admin.query(
+      "ALTER TABLE public.approvals ADD CONSTRAINT approvals_approved_refs_nonblank " +
+      originalApprovalConstraint
+    );
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "approval constraint restoration did not restore release gate");
+
   // Runtime must not be able to delegate its EXECUTE rights to attackers.
   await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
   try {
