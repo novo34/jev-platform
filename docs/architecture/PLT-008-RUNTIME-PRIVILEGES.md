@@ -239,10 +239,14 @@ commit/CI, database privilege verification and restoration evidence.
   writers rather than direct runtime DML.
 * **No unreviewed callable pg_catalog SECURITY DEFINER routines:** in
   addition to non-system schemas, the verifier checks runtime-executable
-  privileged functions and procedures in pg_catalog. CI installs an
+  privileged functions and procedures in pg_catalog. CI installs
   owner-privileged routines with effective PUBLIC EXECUTE in pg_catalog
   and information_schema and proves the gate rejects them, then checks that
   cleanup restores PASS.
+* **Trigger scheduling integrity:** all 15 audited application triggers must
+  remain ordinary, non-deferrable, non-constraint triggers. The live gate
+  verifies pg_trigger constraint/deferral catalog flags and the PostgreSQL 16
+  smoke test attempts a deferrable constraint-trigger replacement.
 * **Approval-reference integrity:** the live gate attests the PostgreSQL 16
   catalog definition of `approvals_approved_refs_nonblank`, including the
   complete audited predicate and validation state. CI drops/replaces the
