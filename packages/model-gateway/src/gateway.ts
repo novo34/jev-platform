@@ -37,7 +37,8 @@ export class ModelGateway {
         WHERE p.id = $1
           AND p.organization_id = $2
           AND t.id = $3
-          AND ($4::uuid IS NULL OR (o.id = $4 AND o.project_id = p.id))
+          AND t.order_id IS NOT DISTINCT FROM $4::uuid
+          AND ($4::uuid IS NULL OR o.project_id = p.id)
         LIMIT 1`,
       [
         request.projectId,
