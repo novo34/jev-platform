@@ -288,6 +288,9 @@ async function validateTriggerInvariants(pool) {
     "  p.proname AS function_name, p.pronargs AS nargs,",
     "  t.tgtype::integer AS type, t.tgenabled AS enabled,",
     "  t.tgqual IS NULL AS no_when_clause,",
+    "  t.tgconstraint = 0 AS ordinary_trigger,",
+    "  NOT t.tgdeferrable AS not_deferrable,",
+    "  NOT t.tginitdeferred AS not_initially_deferred,",
     "  l.lanname AS language, p.prosecdef AS security_definer,",
     "  p.prosrc AS function_body, p.proconfig AS function_config,",
     "  p.proowner = ledger.relowner AS trusted_owner,",
@@ -317,6 +320,8 @@ async function validateTriggerInvariants(pool) {
       trigger.function_name === audited.functionName &&
       trigger.nargs === 0 && trigger.type === audited.type &&
       trigger.enabled === "O" && trigger.no_when_clause &&
+      trigger.ordinary_trigger && trigger.not_deferrable &&
+      trigger.not_initially_deferred &&
       trigger.language === "plpgsql" &&
       trigger.security_definer === false && trigger.trusted_owner &&
       JSON.stringify(trigger.update_columns) === JSON.stringify(audited.updateColumns),
