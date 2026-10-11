@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DeepSeekAdapter, OpenAIAdapter } from "./adapters.js";
+import { DeepSeekAdapter, OpenAIAdapter, parseRetryAfterMs } from "./adapters.js";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -7,6 +7,34 @@ function jsonResponse(body: unknown): Response {
     headers: { "Content-Type": "application/json" }
   });
 }
+
+describe("HTTP Retry-After metadata", () => {
+  it("parses seconds and HTTP dates and ignores invalid headers", () => {
+    const now = Date.parse("2026-10-11T10:00:00.000Z");
+    expect(parseRetryAfterMs("2", now)).toBe(2000);
+    expect(parseRetryAfterMs("Sun, 11 Oct 2026 10:00:03 GMT", now)).toBe(3000);
+    expect(parseRetryAfterMs("Sun, 11 Oct 2026 09:59:59 GMT", now)).toBe(0);
+    expect(parseRetryAfterMs("nonsense", now)).toBeUndefined();
+    expect(parseRetryAfterMs(null, now)).toBeUndefined();
+    expect(parseRetryAfterMs("9999999999999999999999999999999999999999999999", now))
+      .toBeGreaterThan(5000);
+  });
+
+  it("carries the provider's 429 delay into the typed error", async () => {
+    const adapter = new OpenAIAdapter(
+      async () => new Response(JSON.stringify({ error: { message: "slow down" } }), {
+        status: 429, headers: { "Retry-After": "1" }
+      }),
+      "https://example.test"
+    );
+    await expect(adapter.execute("sk-test", {
+      model: "test", prompt: "hello", timeoutMs: 1000
+    })).rejects.toMatchObject({
+      code: "PROVIDER_HTTP_ERROR", status: 429,
+      retryable: true, retryAfterMs: 1000
+    });
+  });
+});
 
 describe("provider response body timeout", () => {
   it("aborts a stalled OpenAI response body after headers arrive", async () => {
