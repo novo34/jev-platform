@@ -207,6 +207,8 @@ export class OpenAIAdapter extends BaseHttpAdapter {
         body: JSON.stringify({
           model: input.model,
           input: input.prompt,
+          // Stateless code/task prompts must not be retained by the provider.
+          store: false,
           ...(input.maxOutputTokens ? { max_output_tokens: input.maxOutputTokens } : {})
         })
       },
