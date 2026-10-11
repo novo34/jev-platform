@@ -701,6 +701,38 @@ try {
   ensure((await verify()).privilege_checks === "4/4 PASS",
     "deferred trigger cleanup did not restore release gate");
 
+  // Even NOT VALID checks run on new writes, including privileged writer
+  // calls. A default SECURITY INVOKER function can acquire the writer's
+  // owner identity, so new CHECKs cannot be silently added.
+  await admin.query(`
+    CREATE FUNCTION public.jev_unapproved_check(value text)
+    RETURNS boolean LANGUAGE plpgsql AS $jev_check$
+    BEGIN
+      UPDATE public.approvals SET stale = stale WHERE FALSE;
+      RETURN true;
+    END;
+    $jev_check$
+  `);
+  try {
+    await admin.query(`
+      ALTER TABLE public.tasks ADD CONSTRAINT jev_unapproved_check_rule
+      CHECK (public.jev_unapproved_check(status)) NOT VALID
+    `);
+    try {
+      await assert.rejects(
+        verify(), /unapproved CHECK constraint inventory drifted/
+      );
+    } finally {
+      await admin.query(
+        "ALTER TABLE public.tasks DROP CONSTRAINT IF EXISTS jev_unapproved_check_rule"
+      );
+    }
+  } finally {
+    await admin.query("DROP FUNCTION public.jev_unapproved_check(text)");
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "unaudited executable CHECK cleanup did not restore release gate");
+
   // Runtime must not be able to delegate its EXECUTE rights to attackers.
   await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
   try {
