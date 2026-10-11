@@ -474,6 +474,7 @@ describe("ModelGateway", () => {
   it("rejects cross-tenant entity ownership before contacting a provider", async () => {
     const otherOrganizationId = randomUUID();
     const otherProjectId = randomUUID();
+    const otherRepositoryId = randomUUID();
     const otherTaskId = randomUUID();
     let calls = 0;
 
@@ -486,8 +487,12 @@ describe("ModelGateway", () => {
       [otherProjectId, otherOrganizationId]
     );
     await pool.query(
-      "INSERT INTO tasks (id, project_id, title) VALUES ($1, $2, 'Other Task')",
-      [otherTaskId, otherProjectId]
+      "INSERT INTO repositories (id, project_id, full_name, role) VALUES ($1, $2, $3, $4)",
+      [otherRepositoryId, otherProjectId, "other/tenant-repository", "backend"]
+    );
+    await pool.query(
+      "INSERT INTO tasks (id, project_id, repository_id, title) VALUES ($1, $2, $3, 'Other Task')",
+      [otherTaskId, otherProjectId, otherRepositoryId]
     );
 
     const registry = new ProviderRegistry().register({
@@ -528,6 +533,7 @@ describe("ModelGateway", () => {
     expect(calls).toBe(0);
 
     await pool.query("DELETE FROM tasks WHERE id = $1", [otherTaskId]);
+    await pool.query("DELETE FROM repositories WHERE id = $1", [otherRepositoryId]);
     await pool.query("DELETE FROM projects WHERE id = $1", [otherProjectId]);
     await pool.query("DELETE FROM organizations WHERE id = $1", [otherOrganizationId]);
   });
