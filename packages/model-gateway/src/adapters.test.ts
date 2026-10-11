@@ -82,6 +82,33 @@ describe("OpenAI multi-part output", () => {
 });
 
 describe("provider adapter usage validation", () => {
+  it("rejects coerced or fractional token counts from both providers", async () => {
+    const badValues: unknown[] = [null, "3", true, 1.5, -1, Number.MAX_SAFE_INTEGER + 1];
+    for (const bad of badValues) {
+      const openai = new OpenAIAdapter(
+        async () => jsonResponse({
+          output_text: "ok",
+          usage: { input_tokens: bad, output_tokens: 2, total_tokens: 5 }
+        }),
+        "https://example.test"
+      );
+      await expect(openai.execute("sk-test", {
+        model: "test", prompt: "hello", timeoutMs: 1000
+      })).rejects.toMatchObject({ code: "PROVIDER_RESPONSE_INVALID" });
+
+      const deepseek = new DeepSeekAdapter(
+        async () => jsonResponse({
+          choices: [{ message: { content: "ok" } }],
+          usage: { prompt_tokens: 2, completion_tokens: bad, total_tokens: 5 }
+        }),
+        "https://example.test"
+      );
+      await expect(deepseek.execute("ds-test", {
+        model: "test", prompt: "hello", timeoutMs: 1000
+      })).rejects.toMatchObject({ code: "PROVIDER_RESPONSE_INVALID" });
+    }
+  });
+
   it("rejects OpenAI responses that omit usage", async () => {
     const adapter = new OpenAIAdapter(
       async () =>
