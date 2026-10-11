@@ -274,7 +274,7 @@ export class ModelGateway {
                 );
           lastError = typed;
 
-          if (typed.retryable && attempts <= maxRetries) {
+          if (typed.retryable && attempts <= maxRetries && remainingProviderAttempts > 0) {
             const retryAfterMs = (typed as ModelGatewayError & {
               retryAfterMs?: number;
             }).retryAfterMs;
