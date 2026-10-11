@@ -399,23 +399,35 @@ async function validateEventTriggers(pool) {
  */
 async function validateApprovalReferenceConstraint(pool) {
   const result = await pool.query(`
-    SELECT constraint_row.convalidated AS validated,
+    SELECT relation.relname AS table_name,
+           constraint_row.conname AS constraint_name,
+           constraint_row.convalidated AS validated,
            pg_catalog.pg_get_constraintdef(constraint_row.oid) AS definition
       FROM pg_catalog.pg_constraint constraint_row
       JOIN pg_catalog.pg_class relation ON relation.oid = constraint_row.conrelid
       JOIN pg_catalog.pg_namespace schema ON schema.oid = relation.relnamespace
-     WHERE schema.nspname = 'public' AND relation.relname = 'approvals'
-       AND constraint_row.conname = 'approvals_approved_refs_nonblank'
-       AND constraint_row.contype = 'c'
+     WHERE schema.nspname = 'public' AND constraint_row.contype = 'c'
+       AND (
+         (relation.relname = 'approvals'
+           AND constraint_row.conname = 'approvals_approved_refs_nonblank')
+         OR (relation.relname = 'deployments'
+           AND constraint_row.conname = 'deployments_ready_url_nonblank')
+       )
   `);
-  // PostgreSQL 16's deparser renders the immutable 0016 migration predicate
-  // in this canonical form. Compare every operator, column and grouping.
-  const auditedDefinition =
-    "CHECK (((decision <> 'APPROVED'::text) OR (stale = true) OR ((btrim(COALESCE(revision, ''::text)) <> ''::text) AND (btrim(COALESCE(commit_sha, ''::text)) <> ''::text) AND (btrim(COALESCE(pull_request_url, ''::text)) <> ''::text))))";
-  assert(result.rows.length === 1 &&
-    result.rows[0].validated === true &&
-    result.rows[0].definition === auditedDefinition,
-    "approval nonblank reference CHECK constraint drifted from audited migration");
+  // Immutable migration 0019 supersedes the earlier approval CHECK and
+  // adds a READY deployment URL guard. Verify the exact PostgreSQL 16
+  // deparsed expressions: neither may be removed, relaxed or NOT VALID.
+  const expected = new Map([
+    ["approvals:approvals_approved_refs_nonblank",
+      "CHECK (((decision <> 'APPROVED'::text) OR (stale = true) OR ((COALESCE(revision, ''::text) ~ '[^[:space:]]'::text) AND (COALESCE(commit_sha, ''::text) ~ '[^[:space:]]'::text) AND (COALESCE(pull_request_url, ''::text) ~ '[^[:space:]]'::text))))"],
+    ["deployments:deployments_ready_url_nonblank",
+      "CHECK (((status <> 'READY'::text) OR (url IS NULL) OR (url ~ '[^[:space:]]'::text)))"]
+  ]);
+  assert(result.rows.length === expected.size &&
+    result.rows.every(row =>
+      row.validated === true &&
+      expected.get(row.table_name + ":" + row.constraint_name) === row.definition
+    ), "approval nonblank reference CHECK constraint drifted from audited migration");
 }
 
 /** Validate the actual DB endpoints supplied by the deployment secret manager. */
