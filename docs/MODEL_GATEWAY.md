@@ -4,6 +4,12 @@ PLT-009 introduces a provider-neutral Model Gateway and the minimum secure provi
 
 ## Providers
 
+OpenAI Responses requests explicitly send `store: false` so task prompts,
+code and generated output are not retained in the provider's default
+server-side response store. Provider-side abuse monitoring and other
+provider-level data processing are governed separately by the provider's
+contract and settings.
+
 The first production adapters are:
 
 - OpenAI through `POST https://api.openai.com/v1/responses`;
