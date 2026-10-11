@@ -8,6 +8,30 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+describe("provider response body timeout", () => {
+  it("aborts a stalled OpenAI response body after headers arrive", async () => {
+    let aborted = false;
+    const adapter = new OpenAIAdapter(
+      async (_url, init) => {
+        const signal = init?.signal;
+        return new Response(new ReadableStream({
+          start(controller) {
+            signal?.addEventListener("abort", () => {
+              aborted = true;
+              controller.error(new DOMException("aborted", "AbortError"));
+            }, { once: true });
+          }
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      },
+      "https://example.test"
+    );
+    await expect(adapter.execute("sk-test", {
+      model: "test", prompt: "hello", timeoutMs: 25
+    })).rejects.toMatchObject({ code: "PROVIDER_TIMEOUT", retryable: true });
+    expect(aborted).toBe(true);
+  });
+});
+
 describe("provider adapter usage validation", () => {
   it("rejects OpenAI responses that omit usage", async () => {
     const adapter = new OpenAIAdapter(
