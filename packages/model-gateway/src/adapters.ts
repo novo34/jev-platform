@@ -98,17 +98,17 @@ function normalizedUsage(
   totalValue: unknown,
   provider: string
 ) {
-  const inputTokens = Number(inputValue);
-  const outputTokens = Number(outputValue);
-  const totalTokens = Number(totalValue);
+  const inputTokens = inputValue;
+  const outputTokens = outputValue;
+  const totalTokens = totalValue;
 
   if (
-    !Number.isFinite(inputTokens) ||
-    !Number.isFinite(outputTokens) ||
-    !Number.isFinite(totalTokens) ||
-    inputTokens < 0 ||
-    outputTokens < 0 ||
-    totalTokens < 0
+    !Number.isSafeInteger(inputTokens) ||
+    !Number.isSafeInteger(outputTokens) ||
+    !Number.isSafeInteger(totalTokens) ||
+    (inputTokens as number) < 0 ||
+    (outputTokens as number) < 0 ||
+    (totalTokens as number) < 0
   ) {
     throw new ModelGatewayError(
       "PROVIDER_RESPONSE_INVALID",
@@ -116,7 +116,7 @@ function normalizedUsage(
     );
   }
 
-  return { inputTokens, outputTokens, totalTokens };
+  return { inputTokens: inputTokens as number, outputTokens: outputTokens as number, totalTokens: totalTokens as number };
 }
 
 abstract class BaseHttpAdapter implements ProviderAdapter {
