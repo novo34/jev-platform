@@ -5,11 +5,17 @@ import {
   type PriceRate
 } from "./types.js";
 
+// Deliberately conservative: database accounting columns are NUMERIC(14,6).
+// A misconfigured astronomical price must be rejected before a paid call.
+const MAX_RATE_CHF_PER_MILLION = 1_000_000;
+const MAX_RECORDED_COST_CHF = 99_999_999;
+
 function validRate(value: unknown): value is PriceRate {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const rate = value as Record<string, unknown>;
   return ["inputPerMillionChf", "outputPerMillionChf"].every(
-    key => typeof rate[key] === "number" && Number.isFinite(rate[key]) && rate[key] >= 0
+    key => typeof rate[key] === "number" && Number.isFinite(rate[key]) &&
+      rate[key] >= 0 && rate[key] <= MAX_RATE_CHF_PER_MILLION
   );
 }
 
@@ -47,10 +53,16 @@ export class PricingCatalog {
         `pricing is required before paid provider call: ${provider}/${model}`
       );
     }
-    return (
+    const estimatedChf =
       (usage.inputTokens / 1_000_000) * rate.inputPerMillionChf +
-      (usage.outputTokens / 1_000_000) * rate.outputPerMillionChf
-    );
+      (usage.outputTokens / 1_000_000) * rate.outputPerMillionChf;
+    if (!Number.isFinite(estimatedChf) || estimatedChf < 0 ||
+        estimatedChf > MAX_RECORDED_COST_CHF) {
+      throw new ModelGatewayError(
+        "PROVIDER_RESPONSE_INVALID", "estimated provider cost exceeds accounting range"
+      );
+    }
+    return estimatedChf;
   }
 
   has(provider: ModelProvider, model: string): boolean {
