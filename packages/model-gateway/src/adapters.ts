@@ -26,6 +26,15 @@ export function parseRetryAfterMs(header: string | null, nowMs = Date.now()): nu
   return Number.isFinite(dateMs) ? Math.max(0, dateMs - nowMs) : undefined;
 }
 
+function assertOutputTokenCap(value: number | undefined): void {
+  if (value !== undefined &&
+      (!Number.isSafeInteger(value) || value < 1 || value > 32_768)) {
+    throw new ModelGatewayError(
+      "INVALID_REQUEST", "maxOutputTokens must be an integer between 1 and 32768"
+    );
+  }
+}
+
 async function fetchJsonWithTimeout(
   fetchImpl: FetchLike,
   url: string,
@@ -185,6 +194,7 @@ export class OpenAIAdapter extends BaseHttpAdapter {
       timeoutMs: number;
     }
   ): Promise<AdapterResult> {
+    assertOutputTokenCap(input.maxOutputTokens);
     const { body } = await fetchJsonWithTimeout(
       this.fetchImpl,
       `${this.baseUrl}/responses`,
@@ -242,6 +252,7 @@ export class DeepSeekAdapter extends BaseHttpAdapter {
       timeoutMs: number;
     }
   ): Promise<AdapterResult> {
+    assertOutputTokenCap(input.maxOutputTokens);
     const { body } = await fetchJsonWithTimeout(
       this.fetchImpl,
       `${this.baseUrl}/chat/completions`,
