@@ -220,10 +220,14 @@ async function validateDefinerSurface(pool) {
     SELECT p.oid::pg_catalog.regprocedure::text AS signature
     FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace ns ON ns.oid = p.pronamespace
-    WHERE ns.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+    WHERE ns.nspname NOT IN ('information_schema', 'pg_toast')
       AND ns.nspname NOT LIKE 'pg_temp_%'
       AND ns.nspname NOT LIKE 'pg_toast_temp_%'
       AND pg_catalog.has_schema_privilege(current_user, ns.oid, 'USAGE')
+      -- pg_catalog is trusted only for routines inaccessible to the restricted
+      -- runtime. New callable privileged routines must not be exempted.
+      AND (ns.nspname <> 'pg_catalog'
+        OR pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE'))
       AND p.prosecdef
       -- Do not limit to prokind='f': SECURITY DEFINER procedures (prokind='p')
       -- are CALL-able with PUBLIC EXECUTE and are equally privileged.
@@ -341,6 +345,36 @@ async function validateTriggerInvariants(pool) {
  * code when the restricted runtime issues permitted DDL such as CREATE TEMP.
  * There are no approved event triggers in the canonical JEV migrations.
  */
+/**
+ * Rewrite rules execute with the target relation owner's privileges.
+ * The runtime must not be able to trigger an unreviewed owner-privileged
+ * INSERT/UPDATE/DELETE rule, even through a column-level grant.
+ */
+async function validateRewriteRules(pool) {
+  const result = await pool.query(`
+    SELECT n.nspname AS schema_name, c.relname AS relation_name,
+           r.rulename AS rule_name
+      FROM pg_catalog.pg_rewrite r
+      JOIN pg_catalog.pg_class c ON c.oid = r.ev_class
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE r.rulename <> '_RETURN'
+       AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+       AND n.nspname NOT LIKE 'pg_temp_%'
+       AND n.nspname NOT LIKE 'pg_toast_temp_%'
+       AND pg_catalog.has_schema_privilege(current_user, n.oid, 'USAGE')
+       AND (
+         pg_catalog.has_table_privilege(current_user, c.oid, 'INSERT')
+         OR pg_catalog.has_table_privilege(current_user, c.oid, 'UPDATE')
+         OR pg_catalog.has_table_privilege(current_user, c.oid, 'DELETE')
+         OR pg_catalog.has_any_column_privilege(current_user, c.oid, 'INSERT')
+         OR pg_catalog.has_any_column_privilege(current_user, c.oid, 'UPDATE')
+       )
+     ORDER BY n.nspname, c.relname, r.rulename
+  `);
+  assert(result.rows.length === 0,
+    "unapproved rewrite rule exists on runtime-writable relation");
+}
+
 async function validateEventTriggers(pool) {
   const result = await pool.query(
     "SELECT evtname FROM pg_catalog.pg_event_trigger WHERE evtenabled <> 'D' ORDER BY evtname"
@@ -420,6 +454,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
     await validateDefinerSurface(runtimePool);
     await validateTriggerInvariants(runtimePool);
     await validateEventTriggers(runtimePool);
+    await validateRewriteRules(runtimePool);
     const managed = await validateMigratorOwnership(migrationPool);
     const counts = await validateMigrationHistory(runtimePool);
     return {
