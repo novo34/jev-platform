@@ -452,7 +452,11 @@ async function validateCheckConstraintSurface(pool) {
     "orders:orders_status_check",
     "tasks:tasks_status_check",
     "approvals:approvals_approved_refs_nonblank",
-    "deployments:deployments_ready_url_nonblank"
+    "deployments:deployments_ready_url_nonblank",
+    "provider_credentials:provider_credentials_provider_check",
+    "model_provider_calls:model_provider_calls_provider_check",
+    "model_provider_calls:model_provider_calls_outcome_check",
+    "model_provider_calls:model_provider_calls_attempt_count_check"
   ]);
   const checks = await pool.query(`
     SELECT c.oid, table_object.relname AS table_name,

@@ -129,6 +129,10 @@ GRANT EXECUTE ON FUNCTION jev_create_deployment(uuid,uuid,uuid,uuid,text,text,te
   TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)
   TO jev_runtime;
+-- Model Gateway runtime contracts. Provider secrets are encrypted in the DB;
+-- never grant runtime schema ownership or DML on guarded lifecycle tables.
+GRANT INSERT, UPDATE, DELETE ON TABLE provider_credentials TO jev_runtime;
+GRANT INSERT ON TABLE model_provider_calls, cost_events TO jev_runtime;
 -- Controlled Approval and Deployment creation is available only via the
 -- named definer writers above; direct guarded INSERT remains forbidden.
 -- Never use GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public.
