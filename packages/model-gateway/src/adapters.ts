@@ -57,13 +57,15 @@ function textFromOpenAIResponse(body: any): string {
     return body.output_text;
   }
 
-  for (const item of body?.output ?? []) {
-    for (const content of item?.content ?? []) {
-      if (typeof content?.text === "string" && content.text) {
-        return content.text;
+  const parts: string[] = [];
+  for (const item of Array.isArray(body?.output) ? body.output : []) {
+    for (const content of Array.isArray(item?.content) ? item.content : []) {
+      if (content?.type === "output_text" && typeof content.text === "string") {
+        parts.push(content.text);
       }
     }
   }
+  if (parts.length > 0) return parts.join("");
 
   throw new ModelGatewayError(
     "PROVIDER_RESPONSE_INVALID",
