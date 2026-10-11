@@ -102,6 +102,61 @@ describe("PricingCatalog validation", () => {
 });
 
 describe("ModelGateway", () => {
+  it("rejects excessive or duplicate targets before contacting a provider", async () => {
+    const gateway = new ModelGateway(pool, credentials, new ProviderRegistry(),
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+    const base = {
+      organizationId, projectId, orderId, taskId, agentRole: "DEVELOPER",
+      prompt: "Do not invoke paid providers"
+    };
+    await expect(gateway.execute({
+      ...base, requestId: randomUUID(),
+      targets: Array.from({ length: 5 }, (_, i) => ({
+        provider: "openai" as const, model: "model-" + i
+      }))
+    })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    await expect(gateway.execute({
+      ...base, requestId: randomUUID(),
+      targets: [
+        { provider: "openai", model: "same-model" },
+        { provider: "openai", model: "same-model" }
+      ]
+    })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+  });
+
+  it("caps total paid attempts across all fallback models", async () => {
+    let calls = 0;
+    const registry = new ProviderRegistry().register({
+      provider: "openai",
+      async execute() {
+        calls += 1;
+        throw new ModelGatewayError("PROVIDER_HTTP_ERROR", "unavailable", true, 503);
+      },
+      async health() { return { ok: true }; }
+    });
+    const gateway = new ModelGateway(pool, credentials, registry,
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+    await expect(gateway.execute({
+      requestId: randomUUID(), organizationId, projectId, orderId, taskId,
+      agentRole: "DEVELOPER", prompt: "Bound total retries",
+      targets: Array.from({ length: 4 }, (_, i) => ({
+        provider: "openai" as const, model: "fallback-" + i
+      })),
+      maxRetries: 3
+    })).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(calls).toBe(8);
+  });
+
+  it("does not lose task order attribution when orderId is omitted", async () => {
+    const gateway = new ModelGateway(pool, credentials, new ProviderRegistry(),
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+    await expect(gateway.execute({
+      requestId: randomUUID(), organizationId, projectId, taskId,
+      agentRole: "DEVELOPER", prompt: "No ambiguous billing",
+      targets: [{ provider: "openai", model: "test" }]
+    })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+  });
+
   it("honors Retry-After before retrying a paid 429 response", async () => {
     let calls = 0;
     const callTimes: number[] = [];
