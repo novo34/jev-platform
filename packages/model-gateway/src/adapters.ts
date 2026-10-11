@@ -12,6 +12,20 @@ function retryableStatus(status: number): boolean {
   return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
+// HTTP Retry-After may be delta-seconds or an HTTP-date. Never trust it as an unbounded wait.
+export function parseRetryAfterMs(header: string | null, nowMs = Date.now()): number | undefined {
+  if (header === null) return undefined;
+  const value = header.trim();
+  if (/^\\d+$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isFinite(seconds) ? seconds * 1000 : Number.POSITIVE_INFINITY;
+  }
+  // Date.parse supports the standard IMF-fixdate (and legacy HTTP-date variants).
+  if (!value.includes(",") && !value.endsWith("GMT")) return undefined;
+  const dateMs = Date.parse(value);
+  return Number.isFinite(dateMs) ? Math.max(0, dateMs - nowMs) : undefined;
+}
+
 async function fetchJsonWithTimeout(
   fetchImpl: FetchLike,
   url: string,
@@ -27,7 +41,7 @@ async function fetchJsonWithTimeout(
       return null;
     });
     if (!response.ok) {
-      throw new ModelGatewayError(
+      const providerError = new ModelGatewayError(
         "PROVIDER_HTTP_ERROR",
         typeof body?.error?.message === "string"
           ? body.error.message
@@ -35,6 +49,11 @@ async function fetchJsonWithTimeout(
         retryableStatus(response.status),
         response.status
       );
+      const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
+      if (providerError.retryable && retryAfterMs !== undefined) {
+        Object.assign(providerError, { retryAfterMs });
+      }
+      throw providerError;
     }
     return { response, body };
   } catch (error) {
