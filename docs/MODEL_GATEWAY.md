@@ -43,7 +43,7 @@ fetch. Retryable failures use bounded exponential backoff; a server
 `Retry-After` header is honored, and backoffs over five seconds skip the
 repeated paid call. The final attempt is recorded even when the shared
 attempt budget expires. Every paid response requires valid usage and
-nonnegative finite configured pricing. The supplied order, task, project and
+nonnegative finite configured pricing, capped at CHF 1,000,000 per million tokens per usage category; estimates must fit the persisted NUMERIC(14,6) amount. The supplied order, task, project and
 organization must match exactly for cost attribution.
 
 ## Live verification
