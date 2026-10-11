@@ -387,6 +387,32 @@ async function validateEventTriggers(pool) {
     "unapproved enabled database event trigger exists");
 }
 
+/**
+ * The APPROVED lifecycle relies on this database CHECK in addition to its
+ * audited trigger functions. Catalog validation must detect removal,
+ * NOT VALID and predicate drift even if the migration ledger is unchanged.
+ */
+async function validateApprovalReferenceConstraint(pool) {
+  const result = await pool.query(`
+    SELECT constraint_row.convalidated AS validated,
+           pg_catalog.pg_get_constraintdef(constraint_row.oid) AS definition
+      FROM pg_catalog.pg_constraint constraint_row
+      JOIN pg_catalog.pg_class relation ON relation.oid = constraint_row.conrelid
+      JOIN pg_catalog.pg_namespace schema ON schema.oid = relation.relnamespace
+     WHERE schema.nspname = 'public' AND relation.relname = 'approvals'
+       AND constraint_row.conname = 'approvals_approved_refs_nonblank'
+       AND constraint_row.contype = 'c'
+  `);
+  // PostgreSQL 16's deparser renders the immutable 0016 migration predicate
+  // in this canonical form. Compare every operator, column and grouping.
+  const auditedDefinition =
+    "CHECK (((decision <> 'APPROVED'::text) OR (stale = true) OR ((btrim(COALESCE(revision, ''::text)) <> ''::text) AND (btrim(COALESCE(commit_sha, ''::text)) <> ''::text) AND (btrim(COALESCE(pull_request_url, ''::text)) <> ''::text))))";
+  assert(result.rows.length === 1 &&
+    result.rows[0].validated === true &&
+    result.rows[0].definition === auditedDefinition,
+    "approval nonblank reference CHECK constraint drifted from audited migration");
+}
+
 /** Validate the actual DB endpoints supplied by the deployment secret manager. */
 export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
   const runtime = parseConnection(runtimeUrl, "DATABASE_URL");
@@ -459,6 +485,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
     await validateTriggerInvariants(runtimePool);
     await validateEventTriggers(runtimePool);
     await validateRewriteRules(runtimePool);
+    await validateApprovalReferenceConstraint(runtimePool);
     const managed = await validateMigratorOwnership(migrationPool);
     const counts = await validateMigrationHistory(runtimePool);
     return {
