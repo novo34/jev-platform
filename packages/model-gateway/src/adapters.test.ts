@@ -8,6 +8,27 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+describe("direct provider output cap validation", () => {
+  it("rejects invalid maxOutputTokens without sending HTTP requests", async () => {
+    let requests = 0;
+    const http = async () => {
+      requests += 1;
+      throw new Error("must never fetch");
+    };
+    for (const adapter of [
+      new OpenAIAdapter(http, "https://example.test"),
+      new DeepSeekAdapter(http, "https://example.test")
+    ]) {
+      for (const maxOutputTokens of [0, -1, NaN, Infinity, 1.25, 32769]) {
+        await expect(adapter.execute("test-key", {
+          model: "test", prompt: "Safe", timeoutMs: 1000, maxOutputTokens
+        })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+      }
+    }
+    expect(requests).toBe(0);
+  });
+});
+
 describe("HTTP Retry-After metadata", () => {
   it("parses seconds and HTTP dates and ignores invalid headers", () => {
     const now = Date.parse("2026-10-11T10:00:00.000Z");
