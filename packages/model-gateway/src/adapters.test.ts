@@ -32,6 +32,27 @@ describe("provider response body timeout", () => {
   });
 });
 
+describe("OpenAI multi-part output", () => {
+  it("concatenates every output_text part across response items", async () => {
+    const adapter = new OpenAIAdapter(
+      async () => jsonResponse({
+        id: "resp_multi",
+        status: "completed",
+        output: [
+          { content: [{ type: "output_text", text: "Hello" }, { type: "refusal", refusal: "ignore" }] },
+          { content: [{ type: "output_text", text: " world" }] }
+        ],
+        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 }
+      }),
+      "https://example.test"
+    );
+    const result = await adapter.execute("sk-test", {
+      model: "test", prompt: "hello", timeoutMs: 1000
+    });
+    expect(result.content).toBe("Hello world");
+  });
+});
+
 describe("provider adapter usage validation", () => {
   it("rejects OpenAI responses that omit usage", async () => {
     const adapter = new OpenAIAdapter(
