@@ -62,9 +62,26 @@ export class ModelGateway {
       !request.projectId ||
       !request.taskId ||
       !request.prompt.trim() ||
-      request.targets.length === 0
+      !Array.isArray(request.targets) ||
+      request.targets.length === 0 ||
+      request.targets.length > 4
     ) {
       throw new ModelGatewayError("INVALID_REQUEST");
+    }
+    // Bound the fallback graph before credentials or paid execution.
+    if (request.targets.some((target) =>
+      !target || typeof target.provider !== "string" ||
+      typeof target.model !== "string" ||
+      !target.provider.trim() || !target.model.trim() ||
+      target.model.length > 128
+    )) {
+      throw new ModelGatewayError("INVALID_REQUEST", "invalid provider target");
+    }
+    const distinctTargets = new Set(
+      request.targets.map((target) => JSON.stringify([target.provider, target.model]))
+    );
+    if (distinctTargets.size !== request.targets.length) {
+      throw new ModelGatewayError("INVALID_REQUEST", "duplicate provider target");
     }
     const timeoutMs = request.timeoutMs ?? 120_000;
     const maxRetries = request.maxRetries ?? 1;
@@ -135,10 +152,13 @@ export class ModelGateway {
     await this.assertOwnership(request);
     const timeoutMs = request.timeoutMs ?? 120_000;
     const maxRetries = request.maxRetries ?? 1;
+    // A per-provider retry limit alone does not cap fallback spending.
+    let remainingProviderAttempts = 8;
     let previousProvider: ModelProvider | undefined;
     let lastError: unknown;
 
     for (const target of request.targets) {
+      if (remainingProviderAttempts === 0) break;
       if (!this.pricing.has(target.provider, target.model)) {
         await this.recordFailure(
           request,
@@ -231,8 +251,9 @@ export class ModelGateway {
       let attempts = 0;
       let response: AdapterResult | undefined;
 
-      while (attempts <= maxRetries) {
+      while (attempts <= maxRetries && remainingProviderAttempts > 0) {
         attempts += 1;
+        remainingProviderAttempts -= 1;
         try {
           response = await adapter.execute(apiKey, {
             model: target.model,
