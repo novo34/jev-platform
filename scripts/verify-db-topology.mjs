@@ -430,6 +430,69 @@ async function validateApprovalReferenceConstraint(pool) {
     ), "approval nonblank reference CHECK constraint drifted from audited migration");
 }
 
+/**
+ * The runtime may write through reviewed owner-privileged procedures. Any
+ * new CHECK (even NOT VALID) can execute user functions under that owner.
+ * Compare the entire public-schema CHECK inventory with the versioned
+ * migrations, not just the two approval/deployment constraints.
+ */
+async function validateCheckConstraintSurface(pool) {
+  const expected = new Set([
+    "repositories:repositories_role_check",
+    "environments:environments_kind_check",
+    "tasks:tasks_risk_check",
+    "approvals:approvals_decision_check",
+    "cost_events:cost_events_amount_check",
+    "users:users_role_check",
+    "project_memberships:project_memberships_role_check",
+    "jobs:jobs_status_check",
+    "jobs:jobs_attempt_count_check",
+    "jobs:jobs_max_attempts_check",
+    "worker_instances:worker_instances_status_check",
+    "orders:orders_status_check",
+    "tasks:tasks_status_check",
+    "approvals:approvals_approved_refs_nonblank",
+    "deployments:deployments_ready_url_nonblank"
+  ]);
+  const checks = await pool.query(`
+    SELECT c.oid, table_object.relname AS table_name,
+           c.conname AS constraint_name, c.convalidated AS validated
+      FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class table_object
+        ON table_object.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace ns ON ns.oid = table_object.relnamespace
+     WHERE ns.nspname = 'public'
+       AND c.contype = 'c'
+     ORDER BY table_object.relname, c.conname
+  `);
+  assert(checks.rows.length === expected.size &&
+    checks.rows.every(row =>
+      row.validated === true &&
+      expected.has(row.table_name + ":" + row.constraint_name)
+    ), "unapproved CHECK constraint inventory drifted");
+
+  // An altered constraint retaining a known name must not be allowed to
+  // smuggle invoker functions or custom operators into privileged writers.
+  const dependentCode = await pool.query(`
+    SELECT c.conname
+      FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class rel ON rel.oid = c.conrelid
+      JOIN pg_catalog.pg_namespace ns ON ns.oid = rel.relnamespace
+      JOIN pg_catalog.pg_depend dep
+        ON dep.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass
+       AND dep.objid = c.oid
+     WHERE ns.nspname = 'public' AND c.contype = 'c'
+       AND (
+         (dep.refclassid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+          AND dep.refobjid >= 16384)
+         OR (dep.refclassid = 'pg_catalog.pg_operator'::pg_catalog.regclass
+          AND dep.refobjid >= 16384)
+       )
+  `);
+  assert(dependentCode.rows.length === 0,
+    "CHECK constraint depends on unaudited executable code");
+}
+
 /** Validate the actual DB endpoints supplied by the deployment secret manager. */
 export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
   const runtime = parseConnection(runtimeUrl, "DATABASE_URL");
@@ -503,6 +566,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
     await validateEventTriggers(runtimePool);
     await validateRewriteRules(runtimePool);
     await validateApprovalReferenceConstraint(runtimePool);
+    await validateCheckConstraintSurface(runtimePool);
     const managed = await validateMigratorOwnership(migrationPool);
     const counts = await validateMigrationHistory(runtimePool);
     return {
