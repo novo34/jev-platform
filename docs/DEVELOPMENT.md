@@ -14,10 +14,15 @@ npm install
 
 ## Prepare local admin access
 
-The seed is development-only and refuses to run with `NODE_ENV=production`.
+The seed is destructive to an existing local admin credential. It runs only
+with `NODE_ENV=development`, an explicit `JEV_ALLOW_DEV_SEED=1` acknowledgement,
+and a locally addressed PostgreSQL `DATABASE_URL` (localhost/loopback).
+Do not forward a production database through a local tunnel when seeding.
 
 ```bash
-npm run seed:dev
+export NODE_ENV=development
+export JEV_ALLOW_DEV_SEED=1
+export DATABASE_URL="postgresql://<local-user>:<local-password>@127.0.0.1:5432/<local-dev-db>"
 ```
 
 Local test identity:
