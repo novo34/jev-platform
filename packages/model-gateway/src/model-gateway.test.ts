@@ -102,6 +102,33 @@ describe("PricingCatalog validation", () => {
 });
 
 describe("ModelGateway", () => {
+  it("delays a retryable 429 before the next paid attempt", async () => {
+    let calls = 0;
+    const callTimes: number[] = [];
+    const registry = new ProviderRegistry().register({
+      provider: "openai",
+      async execute() {
+        calls += 1;
+        callTimes.push(Date.now());
+        if (calls === 1) throw new ModelGatewayError("PROVIDER_HTTP_ERROR", "rate limited", true, 429);
+        return {
+          content: "ok",
+          usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 }
+        };
+      },
+      async health() { return { ok: true }; }
+    });
+    const gateway = new ModelGateway(pool, credentials, registry,
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+    const result = await gateway.execute({
+      requestId: randomUUID(), organizationId, projectId, orderId, taskId,
+      agentRole: "DEVELOPER", prompt: "Retry safely",
+      targets: [{ provider: "openai", model: "test" }], maxRetries: 1
+    });
+    expect(result.attempts).toBe(2);
+    expect(callTimes[1] - callTimes[0]).toBeGreaterThanOrEqual(200);
+  });
+
   it("rejects invalid paid-call retry and timeout budgets before any provider execution", async () => {
     let calls = 0;
     const registry = new ProviderRegistry().register({
