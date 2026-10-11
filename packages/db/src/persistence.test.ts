@@ -244,7 +244,7 @@ describe("canonical PostgreSQL persistence", () => {
       "0003_queue_worker.sql",
       "0004_project_registry.sql",
       "0005_work_order_task_lifecycle.sql",
-      "0006_model_gateway.sql"
+      "0020_model_gateway.sql"
     ]);
   });
 });
