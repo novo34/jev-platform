@@ -9,12 +9,33 @@ export type OrderStatus =
 export type TaskStatus =
   | "PLANNED"
   | "READY"
-  | "IN_PROGRESS"
-  | "BLOCKED"
+  | "RUNNING"
   | "VERIFYING"
-  | "COMPLETED"
+  | "VERIFIED"
+  | "STAGING"
+  | "AWAITING_HUMAN"
+  | "APPROVED"
+  | "DONE"
+  | "BLOCKED"
   | "FAILED"
-  | "CANCELLED";
+  | "CHANGES_REQUESTED"
+  | "REJECTED";
+
+export type TransitionContext =
+  | {
+      actorType: "SYSTEM";
+      actorId?: never;
+      cause: string;
+      evidence?: Record<string, unknown>;
+    }
+  | {
+      actorType: "USER" | "AGENT";
+      actorId: string;
+      cause: string;
+      evidence?: Record<string, unknown>;
+    };
+
+export type TransitionActorType = TransitionContext["actorType"];
 
 export interface RequirementInput {
   key: string;
@@ -57,6 +78,10 @@ export interface RequirementRecord {
 export interface StateHistoryEntry<TStatus extends string> {
   fromStatus: TStatus | null;
   toStatus: TStatus;
+  actorType: TransitionActorType;
+  actorId: string | null;
+  cause: string;
+  evidence: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -64,7 +89,7 @@ export interface TaskRecord {
   id: string;
   projectId: string;
   orderId: string;
-  repositoryId: string | null;
+  repositoryId: string;
   title: string;
   status: TaskStatus;
   risk: string;
@@ -96,6 +121,8 @@ export class WorkOrderError extends Error {
       | "ORDER_NOT_FOUND"
       | "TASK_NOT_FOUND"
       | "REQUIREMENT_NOT_FOUND"
+      | "REPOSITORY_NOT_FOUND"
+      | "AMBIGUOUS_REPOSITORY_TARGET"
       | "ILLEGAL_TRANSITION",
     message: string = code
   ) {
