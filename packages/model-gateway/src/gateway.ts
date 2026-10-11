@@ -253,9 +253,19 @@ export class ModelGateway {
           lastError = typed;
 
           if (typed.retryable && attempts <= maxRetries) {
-            const delayMs = Math.min(5000, 250 * 2 ** (attempts - 1));
-            await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-            continue;
+            const retryAfterMs = (typed as ModelGatewayError & {
+              retryAfterMs?: number;
+            }).retryAfterMs;
+            const delayMs = Math.max(
+              250 * 2 ** (attempts - 1),
+              retryAfterMs ?? 0
+            );
+            // Never retry before the server's delay; prefer fallback if it
+            // exceeds our bounded per-retry budget.
+            if (delayMs <= 5_000) {
+              await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+              continue;
+            }
           }
 
           const latencyMs = Date.now() - started;
