@@ -102,7 +102,7 @@ describe("PricingCatalog validation", () => {
 });
 
 describe("ModelGateway", () => {
-  it("delays a retryable 429 before the next paid attempt", async () => {
+  it("honors Retry-After before retrying a paid 429 response", async () => {
     let calls = 0;
     const callTimes: number[] = [];
     const registry = new ProviderRegistry().register({
@@ -110,7 +110,12 @@ describe("ModelGateway", () => {
       async execute() {
         calls += 1;
         callTimes.push(Date.now());
-        if (calls === 1) throw new ModelGatewayError("PROVIDER_HTTP_ERROR", "rate limited", true, 429);
+        if (calls === 1) {
+          throw Object.assign(
+            new ModelGatewayError("PROVIDER_HTTP_ERROR", "rate limited", true, 429),
+            { retryAfterMs: 1000 }
+          );
+        }
         return {
           content: "ok",
           usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 }
@@ -126,7 +131,30 @@ describe("ModelGateway", () => {
       targets: [{ provider: "openai", model: "test" }], maxRetries: 1
     });
     expect(result.attempts).toBe(2);
-    expect(callTimes[1] - callTimes[0]).toBeGreaterThanOrEqual(200);
+    expect(callTimes[1] - callTimes[0]).toBeGreaterThanOrEqual(900);
+  });
+
+  it("avoids a paid retry when provider Retry-After exceeds bounded budget", async () => {
+    let calls = 0;
+    const registry = new ProviderRegistry().register({
+      provider: "openai",
+      async execute() {
+        calls += 1;
+        throw Object.assign(
+          new ModelGatewayError("PROVIDER_HTTP_ERROR", "too many requests", true, 429),
+          { retryAfterMs: 60_000 }
+        );
+      },
+      async health() { return { ok: true }; }
+    });
+    const gateway = new ModelGateway(pool, credentials, registry,
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+    await expect(gateway.execute({
+      requestId: randomUUID(), organizationId, projectId, orderId, taskId,
+      agentRole: "DEVELOPER", prompt: "Respect provider deadline",
+      targets: [{ provider: "openai", model: "test" }], maxRetries: 5
+    })).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(calls).toBe(1);
   });
 
   it("rejects invalid paid-call retry and timeout budgets before any provider execution", async () => {
