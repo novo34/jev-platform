@@ -1,8 +1,28 @@
 import { createDatabasePool, migrate } from "@jev/db";
 import { hashPassword } from "@jev/auth";
 
-if (process.env.NODE_ENV === "production") {
-  throw new Error("development seed is disabled in production");
+// Seeding can overwrite an active ADMIN. Require explicit development
+// intent AND a local database URL before opening any connection or migrating.
+if (process.env.NODE_ENV !== "development" ||
+    process.env.JEV_ALLOW_DEV_SEED !== "1") {
+  throw new Error("development seed requires NODE_ENV=development and JEV_ALLOW_DEV_SEED=1");
+}
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("development seed requires an explicit local DATABASE_URL");
+}
+let databaseHost: string;
+try {
+  const parsed = new URL(databaseUrl);
+  if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
+    throw new Error("unsupported protocol");
+  }
+  databaseHost = parsed.hostname.replace(/^\\[|\\]$/g, "");
+} catch {
+  throw new Error("development seed requires a valid PostgreSQL DATABASE_URL");
+}
+if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(databaseHost)) {
+  throw new Error("development seed refuses non-local database endpoints");
 }
 
 const organizationId =
