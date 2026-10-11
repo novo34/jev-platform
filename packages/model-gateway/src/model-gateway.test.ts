@@ -16,6 +16,7 @@ const credentials = new ProviderCredentialStore(pool, encryptionKey);
 const organizationId = randomUUID();
 const userId = randomUUID();
 const projectId = randomUUID();
+const repositoryId = randomUUID();
 const orderId = randomUUID();
 const taskId = randomUUID();
 
@@ -32,14 +33,19 @@ beforeAll(async () => {
     [projectId, organizationId]
   );
   await pool.query(
+    `INSERT INTO repositories (id, project_id, full_name, role)
+     VALUES ($1, $2, $3, $4)`,
+    [repositoryId, projectId, "novo34/test-model-gateway", "backend"]
+  );
+  await pool.query(
     `INSERT INTO orders (id, project_id, author_user_id, objective)
      VALUES ($1, $2, $3, 'Gateway order')`,
     [orderId, projectId, userId]
   );
   await pool.query(
-    `INSERT INTO tasks (id, project_id, order_id, title)
-     VALUES ($1, $2, $3, 'Gateway task')`,
-    [taskId, projectId, orderId]
+    `INSERT INTO tasks (id, project_id, order_id, repository_id, title)
+     VALUES ($1, $2, $3, $4, 'Gateway task')`,
+    [taskId, projectId, orderId, repositoryId]
   );
 });
 
@@ -50,6 +56,7 @@ afterAll(async () => {
   await pool.query("DELETE FROM provider_credentials WHERE organization_id = $1", [organizationId]);
   await pool.query("DELETE FROM tasks WHERE project_id = $1", [projectId]);
   await pool.query("DELETE FROM orders WHERE project_id = $1", [projectId]);
+  await pool.query("DELETE FROM repositories WHERE id = $1", [repositoryId]);
   await pool.query("DELETE FROM projects WHERE id = $1", [projectId]);
   await pool.query("DELETE FROM users WHERE id = $1", [userId]);
   await pool.query("DELETE FROM organizations WHERE id = $1", [organizationId]);
