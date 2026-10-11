@@ -626,6 +626,40 @@ try {
   ensure((await verify()).privilege_checks === "4/4 PASS",
     "approval constraint restoration did not restore release gate");
 
+  // A constraint trigger may defer an audited AFTER ROW invariant until
+  // commit, changing the security semantics without changing its function.
+  const historyTrigger = "trg_record_order_state_history";
+  const historyDefinition = (await admin.query(
+    "SELECT pg_catalog.pg_get_triggerdef(t.oid) AS ddl FROM pg_catalog.pg_trigger t " +
+    "WHERE t.tgrelid='public.orders'::regclass AND t.tgname=$1",
+    [historyTrigger]
+  )).rows[0].ddl;
+  const deferredHistory = historyDefinition
+    .replace("CREATE TRIGGER", "CREATE CONSTRAINT TRIGGER")
+    .replace(/UPDATE OF status/i, "UPDATE")
+    .replace(/ FOR EACH ROW /i, " DEFERRABLE INITIALLY DEFERRED FOR EACH ROW ");
+  ensure(deferredHistory !== historyDefinition, "constraint trigger fixture unchanged");
+  await admin.query("DROP TRIGGER " + historyTrigger + " ON public.orders");
+  try {
+    await admin.query(deferredHistory);
+    const deferredFlags = (await admin.query(
+      "SELECT tgconstraint <> 0 AS constrained, tgdeferrable AS deferrable, " +
+      "tginitdeferred AS initially_deferred FROM pg_catalog.pg_trigger " +
+      "WHERE tgrelid='public.orders'::regclass AND tgname=$1",
+      [historyTrigger]
+    )).rows[0];
+    ensure(deferredFlags.constrained && deferredFlags.deferrable &&
+      deferredFlags.initially_deferred,
+      "deferred constraint trigger fixture was not installed");
+    await assert.rejects(verify(),
+      /application trigger binding, events or enabled state drifted/);
+  } finally {
+    await admin.query("DROP TRIGGER IF EXISTS " + historyTrigger + " ON public.orders");
+    await admin.query(historyDefinition);
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "deferred trigger cleanup did not restore release gate");
+
   // Runtime must not be able to delegate its EXECUTE rights to attackers.
   await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
   try {
