@@ -66,11 +66,19 @@ export class ModelGateway {
     ) {
       throw new ModelGatewayError("INVALID_REQUEST");
     }
-    if ((request.timeoutMs ?? 120_000) < 1) {
-      throw new ModelGatewayError("INVALID_REQUEST", "timeoutMs must be positive");
+    const timeoutMs = request.timeoutMs ?? 120_000;
+    const maxRetries = request.maxRetries ?? 1;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+      throw new ModelGatewayError(
+        "INVALID_REQUEST",
+        "timeoutMs must be a finite integer between 1 and 300000"
+      );
     }
-    if ((request.maxRetries ?? 1) < 0) {
-      throw new ModelGatewayError("INVALID_REQUEST", "maxRetries cannot be negative");
+    if (!Number.isSafeInteger(maxRetries) || maxRetries < 0 || maxRetries > 5) {
+      throw new ModelGatewayError(
+        "INVALID_REQUEST",
+        "maxRetries must be a finite integer between 0 and 5"
+      );
     }
   }
 
