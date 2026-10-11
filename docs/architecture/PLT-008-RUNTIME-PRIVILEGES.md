@@ -252,6 +252,13 @@ commit/CI, database privilege verification and restoration evidence.
   complete audited predicate and validation state. CI drops/replaces the
   constraint and proves both alterations are rejected before restoring the
   original definition.
+* **Whitespace-safe approval and deployment evidence:** forward-only migration
+  `0019_reject_whitespace_only_approval_evidence.sql` strengthens the
+  `approvals_approved_refs_nonblank` CHECK for tabs and newlines using a
+  non-whitespace regex, and adds `deployments_ready_url_nonblank`. Existing
+  active approved tasks with invalid evidence cause a fail-closed migration,
+  not a silent approval rewrite. The live topology gate attests both final
+  validated CHECK definitions and CI proves removal or weakening fails.
 * **Migrator schema cannot drift:** the live verifier requires the actual
   migrator session's `current_schema()` to be `public`. This matters because
   the migration runner uses unqualified statements; a role-specific
