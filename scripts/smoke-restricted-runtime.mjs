@@ -518,6 +518,51 @@ try {
   ensure((await verify()).privilege_checks === "4/4 PASS",
     "unapproved event trigger cleanup did not restore the release gate");
 
+  // P1: a newly-created pg_catalog SECURITY DEFINER has an implicit PUBLIC
+  // EXECUTE grant. It must not bypass the cross-schema inventory.
+  await admin.query(`
+    CREATE FUNCTION pg_catalog.jev_rogue_catalog_definer()
+    RETURNS integer LANGUAGE sql SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS 'SELECT 1'
+  `);
+  try {
+    const catalogRuntime = new Pool({ connectionString: runtimeURL.toString() });
+    try {
+      const invoked = await catalogRuntime.query(
+        "SELECT pg_catalog.jev_rogue_catalog_definer() AS result"
+      );
+      ensure(invoked.rows[0].result === 1,
+        "pg_catalog privileged routine was not callable by runtime");
+    } finally {
+      await catalogRuntime.end();
+    }
+    await assert.rejects(
+      verify(), /unapproved SECURITY DEFINER routine exists outside the controlled writer allowlist/
+    );
+  } finally {
+    await admin.query("DROP FUNCTION pg_catalog.jev_rogue_catalog_definer()");
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "pg_catalog privileged routine cleanup did not restore the release gate");
+
+  // P1: PostgreSQL rewrite rules execute using relation-owner privileges,
+  // including writes to protected tables from runtime-writable queue jobs.
+  const maliciousRule = "jev_unapproved_jobs_insert_rule";
+  await admin.query(`
+    CREATE RULE ${maliciousRule} AS ON INSERT TO public.jobs
+    DO ALSO UPDATE public.tasks SET status = status WHERE FALSE
+  `);
+  try {
+    await assert.rejects(
+      verify(), /unapproved rewrite rule exists on runtime-writable relation/
+    );
+  } finally {
+    await admin.query("DROP RULE IF EXISTS " + maliciousRule + " ON public.jobs");
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "rewrite-rule cleanup did not restore the release gate");
+
   // Runtime must not be able to delegate its EXECUTE rights to attackers.
   await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
   try {
