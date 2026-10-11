@@ -457,6 +457,26 @@ try {
   ensure((await verify()).privilege_checks === "4/4 PASS",
     "approval trigger binding restoration did not restore the release gate");
 
+  // P1 regression: a WHEN (false) predicate disables approval authorization
+  // while preserving the trigger name, timing, function, event mask and state.
+  const conditionalTrigger = originalTriggerDef.replace(
+    /\s+EXECUTE FUNCTION\s+/i, " WHEN (false) EXECUTE FUNCTION "
+  );
+  ensure(conditionalTrigger !== originalTriggerDef,
+    "could not construct conditional approval trigger regression fixture");
+  await admin.query("DROP TRIGGER " + approvalTrigger + " ON public.approvals");
+  try {
+    await admin.query(conditionalTrigger);
+    await assert.rejects(
+      verify(), /application trigger binding, events or enabled state drifted/
+    );
+  } finally {
+    await admin.query("DROP TRIGGER IF EXISTS " + approvalTrigger + " ON public.approvals");
+    await admin.query(originalTriggerDef);
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "conditional trigger cleanup did not restore the release gate");
+
   // Runtime must not be able to delegate its EXECUTE rights to attackers.
   await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
   try {
