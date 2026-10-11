@@ -16,7 +16,7 @@ npm install
 
 The seed is destructive to an existing local admin credential. It runs only
 with `NODE_ENV=development`, an explicit `JEV_ALLOW_DEV_SEED=1` acknowledgement,
-and a locally addressed PostgreSQL `DATABASE_URL` (localhost/loopback).
+and a locally addressed PostgreSQL `DATABASE_URL` (localhost/loopback), without query parameters or fragments that could override the effective connection target.
 Do not forward a production database through a local tunnel when seeding.
 
 ```bash
