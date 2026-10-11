@@ -87,7 +87,8 @@ describe("PricingCatalog validation", () => {
       { inputPerMillionChf: Infinity, outputPerMillionChf: 1 },
       { inputPerMillionChf: 1, outputPerMillionChf: NaN },
       { inputPerMillionChf: 1 },
-      { inputPerMillionChf: "1", outputPerMillionChf: 1 }
+      { inputPerMillionChf: "1", outputPerMillionChf: 1 },
+      { inputPerMillionChf: 1e15, outputPerMillionChf: 1 }
     ];
     for (const rate of invalidRates) {
       expect(() => new PricingCatalog({ "openai:*": rate as never }))
@@ -96,6 +97,12 @@ describe("PricingCatalog validation", () => {
     for (const raw of ['{"openai:*":{"inputPerMillionChf":-1,"outputPerMillionChf":1}}', '[]', 'null', '{']) {
       expect(() => PricingCatalog.fromJson(raw)).toThrowError(ModelGatewayError);
     }
+    const priced = new PricingCatalog({
+      "openai:*": { inputPerMillionChf: 1_000_000, outputPerMillionChf: 0 }
+    });
+    expect(() => priced.estimateChf("openai", "test", {
+      inputTokens: 100_000_000, outputTokens: 0, totalTokens: 100_000_000
+    })).toThrowError(ModelGatewayError);
     expect(new PricingCatalog({ "openai:*": { inputPerMillionChf: 0, outputPerMillionChf: 0 } })
       .has("openai", "gpt-test")).toBe(true);
   });
