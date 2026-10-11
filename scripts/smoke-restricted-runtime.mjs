@@ -477,6 +477,47 @@ try {
   ensure((await verify()).privilege_checks === "4/4 PASS",
     "conditional trigger cleanup did not restore the release gate");
 
+  // P1: a tampered function search_path permits untrusted temp-table shadowing.
+  await admin.query(
+    "ALTER FUNCTION public.validate_approval_actor() SET search_path = pg_catalog, pg_temp, public"
+  );
+  try {
+    await assert.rejects(
+      verify(), /application trigger binding, events or enabled state drifted/
+    );
+  } finally {
+    await admin.query(
+      "ALTER FUNCTION public.validate_approval_actor() SET search_path = pg_catalog, public, pg_temp"
+    );
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "approval trigger search_path restoration did not restore the release gate");
+
+  // P1: event triggers do not appear in pg_trigger. Reject enabled
+  // database-wide DDL hooks even if the backing routine is SECURITY INVOKER.
+  await admin.query(`
+    CREATE FUNCTION public.jev_unreviewed_ddl_event()
+    RETURNS event_trigger LANGUAGE plpgsql AS 'BEGIN END;'
+  `);
+  try {
+    await admin.query(`
+      CREATE EVENT TRIGGER jev_unreviewed_ddl_event_trigger
+      ON ddl_command_start WHEN TAG IN ('CREATE TABLE')
+      EXECUTE FUNCTION public.jev_unreviewed_ddl_event()
+    `);
+    try {
+      await assert.rejects(
+        verify(), /unapproved enabled database event trigger exists/
+      );
+    } finally {
+      await admin.query("DROP EVENT TRIGGER IF EXISTS jev_unreviewed_ddl_event_trigger");
+    }
+  } finally {
+    await admin.query("DROP FUNCTION public.jev_unreviewed_ddl_event()");
+  }
+  ensure((await verify()).privilege_checks === "4/4 PASS",
+    "unapproved event trigger cleanup did not restore the release gate");
+
   // Runtime must not be able to delegate its EXECUTE rights to attackers.
   await admin.query(`GRANT EXECUTE ON FUNCTION ${writer} TO jev_runtime WITH GRANT OPTION`);
   try {
