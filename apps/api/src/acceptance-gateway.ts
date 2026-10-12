@@ -82,7 +82,11 @@ async function main(): Promise<void> {
                   AND e.task_id = c.task_id
                   AND e.provider = c.provider
                   AND e.model = c.model
-                  AND e.created_at >= c.created_at - INTERVAL '5 seconds') AS cost_event_count
+                  AND e.currency = 'CHF'
+                  AND e.amount = c.estimated_cost_chf
+                  AND e.usage = c.usage
+                  AND e.created_at BETWEEN c.created_at - INTERVAL '5 seconds'
+                                       AND c.created_at + INTERVAL '5 seconds') AS cost_event_count
          FROM model_provider_calls c
         WHERE c.request_id = $1 AND c.organization_id = $2
         LIMIT 1`,
