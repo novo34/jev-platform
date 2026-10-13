@@ -114,3 +114,28 @@ jobs:
           name: jev-root-package-lock
           path: package-lock.json
           retention-days: 1
+
+  commit-root-lockfile:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == 'novo34/jev-platform' && github.event.pull_request.head.ref == 'feat/dokploy-staging-compose-20261013'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/dokploy-staging-compose-20261013
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate and commit dependency lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package-lock.json ]; then
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+            git add package-lock.json
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'build: pin root npm workspace dependency tree'
+            git push origin HEAD:refs/heads/feat/dokploy-staging-compose-20261013
+          fi
