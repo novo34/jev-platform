@@ -11,10 +11,8 @@ ownerUrl.password = owner;
 const pool = new Pool({ connectionString: ownerUrl.toString() });
 try {
   await migrate(pool);
-  const sql = await readFile(new URL("../../packages/db/security/provision-runtime-role.sql", import.meta.url), "utf8");
+  const sql = await readFile(new URL("./provision-runtime-grants.sql", import.meta.url), "utf8");
   await pool.query(sql);
-  const quoted = (await pool.query("SELECT pg_catalog.quote_literal($1::text) AS literal", [runtime])).rows[0].literal;
-  await pool.query("ALTER ROLE jev_runtime PASSWORD " + quoted);
   await pool.query(
     "INSERT INTO organizations (id, name, status) VALUES ($1, $2, 'ACTIVE') ON CONFLICT (id) DO NOTHING",
     ["00000000-0000-4000-8000-000000000001", "JEV Staging"]
