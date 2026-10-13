@@ -132,4 +132,4 @@ jobs:
           docker compose -f docker-compose.staging.yml up --build -d --wait --wait-timeout 180
           docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT rolsuper::text || ',' || rolcreaterole::text FROM pg_roles WHERE rolname='jev_owner'" | grep -x 'false,false'
           docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member OR r.oid=m.roleid WHERE r.rolname='jev_runtime'" | grep -x '0'
-          docker compose -f docker-compose.staging.yml exec -T web wget -q -O /dev/null http://localhost:8080/
+          docker compose -f docker-compose.staging.yml exec -T web wget -q -O /dev/null http://127.0.0.1:8080/
