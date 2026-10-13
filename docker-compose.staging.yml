@@ -95,6 +95,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${JEV_STAGING_DB_BOOTSTRAP_PASSWORD:?bootstrap password required}
       JEV_STAGING_DB_OWNER_PASSWORD: ${JEV_STAGING_DB_OWNER_PASSWORD:?owner secret required}
+      JEV_STAGING_RUNTIME_DB_PASSWORD: ${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}
     volumes:
       - jev_staging_pgdata:/var/lib/postgresql/data
       - ./deploy/staging/init-db.sh:/docker-entrypoint-initdb.d/10-jev-owner.sh:ro
