@@ -48,7 +48,7 @@ services:
       NODE_ENV: production
       WORKER_HOST: 0.0.0.0
       WORKER_HEALTH_PORT: "3002"
-      DATABASE_URL: ${JEV_STAGING_RUNTIME_DATABASE_URL:?restricted runtime DB URL required}
+      DATABASE_URL: postgresql://jev_runtime:${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}@postgres:5432/jev_staging
     networks: [database]
     mem_limit: 256m
     cpus: 0.35
