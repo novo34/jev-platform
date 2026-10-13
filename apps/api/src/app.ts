@@ -18,6 +18,17 @@ export function buildApi(options: BuildApiOptions = {}) {
   app.get("/health", async () => createHealthStatus("api"));
 
   if (options.pool) {
+    app.get("/ready", async (_request, reply) => {
+      try {
+        await options.pool!.query("SELECT 1");
+        return reply.send({ status: "ready" });
+      } catch {
+        return reply.code(503).send({ status: "unavailable" });
+      }
+    });
+  }
+
+  if (options.pool) {
     registerAuthRoutes(app, options.pool);
     registerControlRoutes(app, options.pool);
     registerProviderRoutes(app, options.pool, {
