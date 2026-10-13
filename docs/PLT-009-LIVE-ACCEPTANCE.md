@@ -1,35 +1,36 @@
 # PLT-009 — live provider acceptance (deployment-independent)
 
-**Canonical code baseline:** `jev-platform/main` at merge `6f4b822fb651dffae983e00b4d088b4e9160ad03`. Check the current `main` HEAD again before executing this checklist.
+**Canonical baseline:** check the current `jev-platform/main` HEAD and the latest Foundation `main` before recording acceptance; do not treat an older SHA in this document as canonical.
 
-**Status:** implementation merged and CI passed; **LIVE_PROVIDER_ACCEPTANCE=PENDING**. This is not evidence of a deployed or production-ready instance.
+**State:** OpenAI and DeepSeek **health checks** were observed as `ok: true` in the operator's local UI on 2026-10-12. They are not proof of a charged generation or persisted cost. PR #15 added the executable, explicitly authorized *development-only* paid-call harness and was merged as `88151347d7d7846efdeed74fa72be32869aba075`. **LIVE_PAID_CALL_ACCEPTANCE=PENDING.** No production/deployment approval follows from this checklist.
 
-## Preconditions
+## Preconditions and secret-safe setup
 
-1. Use an authorized non-production JEV organization and dedicated test credentials for OpenAI and DeepSeek. Never paste keys, authentication cookies, database URLs or encryption keys into issues, PRs, logs or chat.
-2. Use a local or isolated PostgreSQL database and the development instructions in `docs/DEVELOPMENT.md`. Do **not** point a development seed at an existing environment.
-3. Supply `JEV_SECRET_ENCRYPTION_KEY` privately as specified in `docs/MODEL_GATEWAY.md`. Confirm migrations through `0020_model_gateway.sql` have been applied.
-4. Configure explicit verified CHF pricing using `JEV_MODEL_PRICING_JSON` before any paid gateway request; enforce a small external spend cap and use harmless, non-sensitive test inputs. A successful `/providers/:provider/test` call alone does not test gateway cost persistence.
-5. Confirm the test organization, project, work order and task IDs exist and are related correctly. Use only an authorized ADMIN session.
+1. Use a dedicated nonproduction organization, scoped project/task and credentials. Keep tokens, provider API keys, encryption key and database URLs out of chat, GitHub, screenshots, logs and shell history.
+2. Use the isolated local PostgreSQL instance with migrations through `0020_model_gateway.sql`. Never run `seed:dev` against a live environment. The paid acceptance harness actively rejects non-loopback DB URLs and requires `NODE_ENV=development`.
+3. Set the **original** `JEV_SECRET_ENCRYPTION_KEY` as a process environment variable without logging it, and prepare `DATABASE_URL` without embedding credentials in a command line or shell history. For Windows PowerShell, use interactive `Read-Host -AsSecureString` for each sensitive value, convert in memory to the environment variable, and clear the temporary variables. For bash, use `read -rs` into an environment variable without echoing it or adding credentials to any shell command; avoid tracing (`set -x`). Never paste the real URL as a literal in `export DATABASE_URL=...`.
+4. Explicitly verify input/output pricing in CHF for each selected provider/model and set `JEV_MODEL_PRICING_JSON`; put a small **external** account-level spending cap in place. The application-level hard budget (PLT-017) is not a substitute yet and is not claimed as present.
+5. Use existing UUIDs for an organization, project and task that belong together. The operator must be authorized to use that local environment. The harness is an operator CLI, **not** an authenticated production API route.
 
-## Evidence procedure (never include secrets)
+## Evidence procedure (no secrets or provider content)
 
-- [ ] Record exact `main` commit and passing `platform-ci` run.
-- [ ] Log in to the local Web UI (`http://localhost:3000` by default), open **Settings → Providers** and configure each key. Confirm `GET /providers` reports only metadata and does not return plaintext or ciphertext.
-- [ ] For each provider, invoke **Test** in the UI (backed by `POST /providers/:provider/test`). Record provider name, UTC time and sanitized success/failure code, not the response body if it contains sensitive data.
-- [ ] Using the actual ModelGateway API/worker call path with a pre-existing scoped task/order/project, issue one minimal, harmless paid request per provider under verified pricing. No credentials in command-line history.
-- [ ] Verify persisted `model_provider_calls`, provider/model identity, linked tenant/task/order, normalized token usage and estimated CHF cost. Check that the recorded amount is nonnegative and follows the configured input/output pricing.
-- [ ] Execute a negative cross-organization access test using separate authorized test identities. Validate no credential metadata, secret, call or cost leakage.
-- [ ] Verify bounded retry/fallback behavior through deterministic tests/CI, not by deliberately exhausting live provider quotas.
-- [ ] Run `npm run check`; collect sanitized PASS evidence and issue links. Request independent security review for the exact candidate commit if any code changed.
-- [ ] Only then propose updating Foundation `PLT-009` from `IN_PROGRESS` to `DONE` through its development-control PR and ensure both repositories remain traceable.
+- [x] Operator-observed UI health check: DeepSeek `ok: true` (369ms), OpenAI `ok: true` (2176ms). Record these only as connectivity evidence; dates may be taken from the operator session.
+- [ ] Record current `main` commit and successful CI/review for the executable harness and this document.
+- [ ] Confirm configured provider credentials through the local UI's **Settings → Providers**. `GET /providers` must expose metadata only.
+- [ ] Prepare local environment variables for **one explicit provider at a time**: `JEV_ACCEPT_ORGANIZATION_ID`, `JEV_ACCEPT_PROJECT_ID`, `JEV_ACCEPT_TASK_ID`, `JEV_ACCEPT_PROVIDER` (`openai` or `deepseek`), `JEV_ACCEPT_MODEL`, `JEV_MODEL_PRICING_JSON`, `DATABASE_URL`, and `JEV_SECRET_ENCRYPTION_KEY`. Prices must be sourced from current provider rates converted to CHF; don't guess rates.
+- [ ] **Only with the operator's explicit approval for a paid request** set `JEV_LIVE_PROVIDER_ACCEPTANCE=I_AUTHORIZE_ONE_PAID_CALL` and run `npm run accept:gateway -w @jev/api` exactly once per provider. The script invokes `ModelGateway.execute` for a fixed harmless prompt with no fallback, `maxRetries=0`, 16 maximum output tokens and a 15-second timeout. Do not run without a verified external spending cap.
+- [ ] Confirm the output reports `persistedCall: true` and `persistedCostEvent: true` with `requestId`, provider/model, normalized usage and estimated CHF cost. The harness queries scoped `model_provider_calls` and `cost_events`, matching the embedded `usage.requestId`, three token counts, CHF currency and exact amount. It does **not** rely on a creation-time window.
+- [ ] Confirm a negative cross-organization test with distinct authorized identities, checking that no credential, model call or cost leakage is possible. Use deterministic local/integration tests; do not deliberately trigger extra real paid calls for negative scenarios.
+- [ ] Verify bounded retries and fallback via deterministic tests only. Run `npm run check` and preserve sanitized CI/security-review evidence.
+- [ ] **Mandatory teardown before approval:** remove *dedicated acceptance credentials* using the authenticated ADMIN `DELETE /providers/openai/credential` and `DELETE /providers/deepseek/credential` routes; revoke/rotate the provider-side test keys; stop local processes, clear sensitive process environment variables and securely destroy the isolated disposable test database if applicable. Do not delete the user's long-lived personal/provider credentials unless they were specifically created for this disposable acceptance environment and authorized for removal. Record sanitized teardown confirmation.
+- [ ] Only after every check and teardown succeeds, submit the evidence to issue #12 and propose changing Foundation PLT-009 to `DONE` through a reviewed PR. Otherwise retain `IN_PROGRESS`.
 
-## Separate deployment acceptance
+## Deployment boundary
 
-The actual server, restricted production PostgreSQL role, production secrets, rollback and deployment smoke belong to the existing **deployment gate issue #11**. This runbook does not waive those conditions or turn their absence into a reason to repeat already merged code.
+Server rollout, restricted production PostgreSQL credentials, rollback and production smoke tests remain separately tracked under deployment gate #11. This checklist does not waive them or require the user's Windows computer to remain powered on while GitHub engineering proceeds.
 
-## Failure / exit rule
+## Failure rule
 
-Any failed provider or cross-tenant test means **BLOCKED** with the sanitized error code and evidence reference. Never claim PLT-009 fully verified or activate paid production traffic until the missing check is demonstrably satisfied.
+Any failed paid call, persistence/correlation check, tenancy test or teardown remains **BLOCKED** with sanitized evidence. Never infer paid acceptance from provider health or automated mock-backed tests.
 
-**Tracking:** existing PLT-009 live acceptance issue; `docs/MODEL_GATEWAY.md`; `docs/DEVELOPMENT.md`; Foundation `backlog/jev-master-tasks.yaml`.
+**References:** `docs/PLT-009-PAID-CALL-HARNESS.md`, `docs/MODEL_GATEWAY.md`, issue #12, deployment issue #11 and Foundation `backlog/jev-master-tasks.yaml`.
