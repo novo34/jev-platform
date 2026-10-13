@@ -112,3 +112,24 @@ jobs:
         run: docker build -f deploy/staging/Dockerfile.web -t jev-staging-web-test .
       - name: Check nginx proxy syntax
         run: docker run --rm --add-host api:127.0.0.1 jev-staging-web-test nginx -t
+
+  staging-runtime-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot isolated staging stack on disposable CI Docker network
+        env:
+          JEV_STAGING_DB_BOOTSTRAP_PASSWORD: 7b4f5d18abdec593b9184a7ae32cff46
+          JEV_STAGING_DB_OWNER_PASSWORD: 9a1b7a8b6f3254027811de5f82073ab1
+          JEV_STAGING_RUNTIME_DB_PASSWORD: 4712ab3c5804ad8e69197a9b2c4d0e6f
+          JEV_STAGING_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          JEV_STAGING_ADMIN_PASSWORD: ci-disposable-admin-password-never-use
+        run: |
+          set -euo pipefail
+          docker network create dokploy-network
+          trap 'docker compose -f docker-compose.staging.yml logs --tail 80 || true; docker compose -f docker-compose.staging.yml down -v --remove-orphans || true' EXIT
+          docker compose -f docker-compose.staging.yml up --build -d --wait --wait-timeout 180
+          docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT rolsuper::text || ',' || rolcreaterole::text FROM pg_roles WHERE rolname='jev_owner'" | grep -x 'false,false'
+          docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member OR r.oid=m.roleid WHERE r.rolname='jev_runtime'" | grep -x '0'
+          docker compose -f docker-compose.staging.yml exec -T web wget -q -O /dev/null http://localhost:8080/
