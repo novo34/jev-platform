@@ -12,7 +12,7 @@ This is a **development-only**, explicitly authorized **one paid call** operator
 6. Run `npm run accept:gateway -w @jev/api` once per provider, in the same local session as the above environment variables. No arbitrary prompt input or fallback; request is the static harmless string `Reply with OK.`, limited to 16 output tokens and no retries. Do not run against production.
 7. Save only sanitized outcome, provider/model, request ID, usage tokens and CHF cost and the relevant CI/review references. Verify credentials are revoked or rotated in the local test environment once acceptance is complete.
 
-The runner makes a real call through `ModelGateway.execute`, verifies scoped `model_provider_calls` and corresponding `cost_events` persistence, and prints no provider content. The exact cost event linkage is currently corroborated by scoped fields and creation time; future production changes should use an explicit request ID foreign-key link.
+The runner makes a real call through `ModelGateway.execute`, verifies scoped `model_provider_calls` and corresponding `cost_events` persistence, and prints no provider content. The evidence query correlates the cost event using the request ID embedded in `cost_events.usage.requestId` plus the three normalized token counts, scoped organization/task/provider/model, CHF currency and identical cost amount. No timestamp heuristic is used. A future production migration should enforce request-level linkage with an explicit relational key and constraints.
 
 A failed run remains **FAILED**. Do not mark PLT-009 DONE from CI-only adapters, provider health checks or a dry run.
 
