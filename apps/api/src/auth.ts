@@ -32,6 +32,20 @@ export async function requireAuthenticatedUser(
   return authenticateToken(pool, bearerToken(request.headers.authorization));
 }
 
+const loginBuckets = new Map<string, { count: number; resetAt: number }>();
+function checkLoginLimit(email: string, organizationId: string): boolean {
+  const key = organizationId + ":" + email.trim().toLowerCase();
+  const now = Date.now();
+  if (loginBuckets.size > 10000) {
+    for (const [k, v] of loginBuckets) if (v.resetAt < now) loginBuckets.delete(k);
+    if (loginBuckets.size > 10000) return false;
+  }
+  const old = loginBuckets.get(key);
+  const bucket = old && old.resetAt > now ? old : { count: 0, resetAt: now + 60000 };
+  bucket.count++;
+  loginBuckets.set(key, bucket);
+  return bucket.count <= 5;
+}
 export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
   app.post<{ Body: LoginBody }>(
     "/auth/login",
@@ -50,6 +64,9 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
       }
     },
     async (request, reply) => {
+      if (!checkLoginLimit(request.body.email, request.body.organizationId)) {
+        return reply.code(429).send({ error: "RATE_LIMITED" });
+      }
       try {
         const result = await login(pool, request.body);
         return reply.code(200).send(result);
