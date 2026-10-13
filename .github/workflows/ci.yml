@@ -99,3 +99,15 @@ jobs:
             exit 1
           fi
 
+
+  staging-image-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build actual staging API image with pinned dependencies
+        run: docker build -f deploy/staging/Dockerfile.runtime -t jev-staging-api-test .
+      - name: Build actual staging web image
+        run: docker build -f deploy/staging/Dockerfile.web -t jev-staging-web-test .
+      - name: Check nginx proxy syntax
+        run: docker run --rm jev-staging-web-test nginx -t
