@@ -86,6 +86,7 @@ jobs:
       - name: Validate isolated Dokploy staging Compose
         env:
           JEV_STAGING_RUNTIME_DATABASE_URL: postgresql://jev_runtime:placeholder@postgres:5432/jev_staging
+          JEV_STAGING_RUNTIME_DB_PASSWORD: placeholder
           JEV_STAGING_DB_OWNER_PASSWORD: not-a-real-secret
           JEV_STAGING_ENCRYPTION_KEY: not-a-real-secret
         run: |
