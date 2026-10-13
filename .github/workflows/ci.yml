@@ -97,3 +97,20 @@ jobs:
             echo 'Unexpected published port in staging compose' >&2
             exit 1
           fi
+
+  lockfile-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate root lockfile without executing package scripts
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Upload generated root lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: jev-root-package-lock
+          path: package-lock.json
+          retention-days: 1
