@@ -10,6 +10,12 @@ const ownerUrl = new URL("postgresql://jev_owner@postgres:5432/jev_staging");
 ownerUrl.password = owner;
 const pool = new Pool({ connectionString: ownerUrl.toString() });
 try {
+  const roles = await pool.query(
+    "SELECT rolname, rolsuper, rolcreaterole, rolcreatedb, rolbypassrls FROM pg_roles WHERE rolname IN ('jev_owner','jev_runtime')"
+  );
+  if (roles.rows.length !== 2 || roles.rows.some((r) => r.rolsuper || r.rolcreaterole || r.rolcreatedb || r.rolbypassrls)) {
+    throw new Error("Unsafe or legacy PostgreSQL role topology: explicit operator migration required");
+  }
   await migrate(pool);
   const sql = await readFile(new URL("./provision-runtime-grants.sql", import.meta.url), "utf8");
   await pool.query(sql);
