@@ -110,4 +110,4 @@ jobs:
       - name: Build actual staging web image
         run: docker build -f deploy/staging/Dockerfile.web -t jev-staging-web-test .
       - name: Check nginx proxy syntax
-        run: docker run --rm jev-staging-web-test nginx -t
+        run: docker run --rm --add-host api:127.0.0.1 jev-staging-web-test nginx -t
