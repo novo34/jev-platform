@@ -38,7 +38,11 @@ function checkLoginLimit(email: string, organizationId: string): boolean {
   const now = Date.now();
   if (loginBuckets.size > 10000) {
     for (const [k, v] of loginBuckets) if (v.resetAt < now) loginBuckets.delete(k);
-    if (loginBuckets.size > 10000) return false;
+    while (loginBuckets.size > 10000) {
+      const oldest = loginBuckets.keys().next().value;
+      if (oldest === undefined) break;
+      loginBuckets.delete(oldest);
+    }
   }
   const old = loginBuckets.get(key);
   const bucket = old && old.resetAt > now ? old : { count: 0, resetAt: now + 60000 };
