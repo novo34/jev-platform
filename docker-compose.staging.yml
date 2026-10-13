@@ -92,15 +92,17 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: jev_staging
-      POSTGRES_USER: jev_owner
-      POSTGRES_PASSWORD: ${JEV_STAGING_DB_OWNER_PASSWORD:?owner secret required}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${JEV_STAGING_DB_BOOTSTRAP_PASSWORD:?bootstrap password required}
+      JEV_STAGING_DB_OWNER_PASSWORD: ${JEV_STAGING_DB_OWNER_PASSWORD:?owner secret required}
     volumes:
       - jev_staging_pgdata:/var/lib/postgresql/data
+      - ./deploy/staging/init-db.sh:/docker-entrypoint-initdb.d/10-jev-owner.sh:ro
     networks: [database]
     mem_limit: 384m
     cpus: 0.35
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jev_owner -d jev_staging"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jev_staging"]
       interval: 10s
       timeout: 3s
       retries: 8
