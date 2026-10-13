@@ -21,13 +21,17 @@ services:
     build:
       context: .
       dockerfile: deploy/staging/Dockerfile.runtime
-    command: ["node", "apps/api/dist/server.js"]
+    command: ["node", "deploy/staging/start.mjs"]
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
     restart: unless-stopped
     environment:
       NODE_ENV: production
       API_HOST: 0.0.0.0
       API_PORT: "3001"
-      DATABASE_URL: postgresql://jev_runtime:${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}@postgres:5432/jev_staging
+      JEV_STAGING_RUNTIME_DB_PASSWORD: ${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}
+      JEV_ENTRYPOINT: api
       JEV_SECRET_ENCRYPTION_KEY: ${JEV_STAGING_ENCRYPTION_KEY:?encryption key required}
       JEV_REQUIRE_SECRET_KEY: "1"
     expose: ["3001"]
@@ -45,7 +49,10 @@ services:
     build:
       context: .
       dockerfile: deploy/staging/Dockerfile.runtime
-    command: ["node", "apps/worker/dist/server.js"]
+    command: ["node", "deploy/staging/start.mjs"]
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -61,6 +68,22 @@ services:
       start_period: 20s
     mem_limit: 256m
     cpus: 0.35
+
+  migrator:
+    build:
+      context: .
+      dockerfile: deploy/staging/Dockerfile.runtime
+    command: ["node", "deploy/staging/provision.mjs"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JEV_STAGING_DB_OWNER_PASSWORD: ${JEV_STAGING_DB_OWNER_PASSWORD:?owner secret required}
+      JEV_STAGING_RUNTIME_DB_PASSWORD: ${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}
+    networks: [database]
+    mem_limit: 256m
+    cpus: 0.30
 
   postgres:
     image: postgres:16-alpine
