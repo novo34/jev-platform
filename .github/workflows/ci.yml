@@ -76,3 +76,23 @@ jobs:
             cat /tmp/jev-dev.log
             exit 1
           fi
+
+  staging-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate isolated Dokploy staging Compose
+        env:
+          JEV_STAGING_RUNTIME_DATABASE_URL: postgresql://jev_runtime:placeholder@postgres:5432/jev_staging
+          JEV_STAGING_DB_OWNER_PASSWORD: not-a-real-secret
+          JEV_STAGING_ENCRYPTION_KEY: not-a-real-secret
+        run: |
+          docker compose -f docker-compose.staging.yml config --quiet
+          if docker compose -f docker-compose.staging.yml config --format json | jq -e '[.services | to_entries[] | select(.value.ports != null)] | length == 0' >/dev/null; then
+            echo 'No public host ports in staging compose'
+          else
+            echo 'Unexpected published port in staging compose' >&2
+            exit 1
+          fi
