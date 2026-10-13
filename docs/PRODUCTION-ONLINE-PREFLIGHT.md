@@ -13,7 +13,7 @@
 ## Before server access (GitHub work)
 
 1. Audit dependency vulnerabilities and existing CI; do not apply major-version autofixes without tests.
-2. Define distinct `migration` and restricted `runtime` PostgreSQL roles and follow the existing topology verifier. No application process may use the schema-owner account in production.
+2. Define distinct `migration` and restricted `runtime` PostgreSQL roles and follow the existing topology verifier. No application process may use the schema-owner account in production. Provision the migration credential **only** to a short-lived migration/verifier job, never as part of a shared environment bundle. Explicitly inspect the API and worker runtime process/container environments to confirm `MIGRATION_DATABASE_URL` and any schema-owner credential are absent; `checkDatabase()` alone does not prove secret separation.
 3. Produce a production-specific, non-credentialled orchestration configuration *after* resolving the actual server constraints. Keep PostgreSQL isolated on an internal container network, persistent volume with verified restore, and deny public ingress to DB/worker.
 4. Define readiness/liveness, graceful shutdown, HTTPS TLS termination, authentication/session/cookie settings, secret rotation and audit-log retention. Do not place `JEV_SECRET_ENCRYPTION_KEY` or provider keys in Git or Docker image layers.
 5. Decide domain/subdomains and DNS only after the operator confirms server details; don't invent URLs or open ports preemptively.
@@ -23,7 +23,7 @@
 ## On the actual server
 
 - Confirm OS, access path, CPU/RAM/disk, public/private IPs, firewall, Docker support and whether existing services occupy 80/443/3000–3002/5432. Confirm DNS ownership and TLS method.
-- Create dedicated service identity, firewall allowlist, secret injection mechanism, encrypted backup target and restore drill; record retention and recovery objectives.
+- Create dedicated service identity, firewall allowlist, secret injection mechanism, encrypted **off-host/account-isolated** backup target and restore drill performed using the remote copy; record retention and recovery objectives. Confirm API/worker cannot access any migration/schema-owner credentials at process or container scope.
 - Test migrations with **separate** migration credential, then run the existing production DB verification workflow (issue #11) using restricted role; check audit and least privilege.
 - Deploy immutable SHA/image to a protected environment; check HTTP health, auth, per-tenant authorization, provider credential lifecycle, worker queue, signed webhooks when implemented, and backward-compatible rollback.
 - Run negative and smoke tests using non-production credentials before allowing paid provider traffic. Enforce spend caps and rate limits.
