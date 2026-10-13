@@ -34,7 +34,7 @@ export async function requireAuthenticatedUser(
 
 const loginBuckets = new Map<string, { count: number; resetAt: number }>();
 function checkLoginLimit(email: string, organizationId: string): boolean {
-  const key = organizationId + ":" + email.trim().toLowerCase();
+  const key = organizationId.replace(/-/g, "").toLowerCase() + ":" + email.trim().toLowerCase();
   const now = Date.now();
   if (loginBuckets.size > 10000) {
     for (const [k, v] of loginBuckets) if (v.resetAt < now) loginBuckets.delete(k);
@@ -60,7 +60,7 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
           additionalProperties: false,
           required: ["organizationId", "email", "password"],
           properties: {
-            organizationId: { type: "string", pattern: "^[0-9a-fA-F-]{36}$" },
+            organizationId: { type: "string", pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" },
             email: { type: "string", minLength: 3, maxLength: 320 },
             password: { type: "string", minLength: 1, maxLength: 1024 }
           }
