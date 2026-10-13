@@ -82,6 +82,7 @@ services:
     environment:
       JEV_STAGING_DB_OWNER_PASSWORD: ${JEV_STAGING_DB_OWNER_PASSWORD:?owner secret required}
       JEV_STAGING_RUNTIME_DB_PASSWORD: ${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}
+      JEV_STAGING_ADMIN_PASSWORD: ${JEV_STAGING_ADMIN_PASSWORD:?initial admin password required}
     networks: [database]
     mem_limit: 256m
     cpus: 0.30
