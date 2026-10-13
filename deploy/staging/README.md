@@ -4,6 +4,7 @@
 - Set Compose Path to `./docker-compose.staging.yml` only after this deployment PR is merged and reviewed.
 - Deploy is **not safe** using the root `./docker-compose.yml` (development-only).
 - Configure secrets in Dokploy's Compose-specific protected environment, **not** shared project-wide:
+  - `JEV_STAGING_DB_BOOTSTRAP_PASSWORD`: distinct private bootstrap superuser secret, stored exclusively in postgres (not API, worker or migrator).
   - `JEV_STAGING_DB_OWNER_PASSWORD`: high-entropy, unique private PostgreSQL owner password.
   - `JEV_STAGING_RUNTIME_DB_PASSWORD`: distinct high-entropy runtime role password; script percent-encodes URL special characters.
   - `JEV_STAGING_ENCRYPTION_KEY`: exactly 32 random bytes encoded as base64. Preserve this permanently with encrypted database backups.
