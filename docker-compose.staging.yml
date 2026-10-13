@@ -1,0 +1,77 @@
+# Dokploy staging only. Never use the root development docker-compose.yml.
+# Preflight: provision the existing DB with separate migration and restricted
+# runtime PostgreSQL roles before starting the API/worker containers.
+services:
+  web:
+    build:
+      context: .
+      dockerfile: deploy/staging/Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks: [frontend, app]
+    mem_limit: 192m
+    cpus: 0.30
+    expose: ["8080"]
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/staging/Dockerfile.runtime
+    command: ["node", "apps/api/dist/server.js"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: "3001"
+      DATABASE_URL: ${JEV_STAGING_RUNTIME_DATABASE_URL:?restricted runtime DB URL required}
+      JEV_SECRET_ENCRYPTION_KEY: ${JEV_STAGING_ENCRYPTION_KEY:?encryption key required}
+    expose: ["3001"]
+    networks: [app, database]
+    mem_limit: 256m
+    cpus: 0.35
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/staging/Dockerfile.runtime
+    command: ["node", "apps/worker/dist/server.js"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      WORKER_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: "3002"
+      DATABASE_URL: ${JEV_STAGING_RUNTIME_DATABASE_URL:?restricted runtime DB URL required}
+    networks: [database]
+    mem_limit: 256m
+    cpus: 0.35
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jev_staging
+      POSTGRES_USER: jev_owner
+      POSTGRES_PASSWORD: ${JEV_STAGING_DB_OWNER_PASSWORD:?owner secret required}
+    volumes:
+      - jev_staging_pgdata:/var/lib/postgresql/data
+    networks: [database]
+    mem_limit: 384m
+    cpus: 0.35
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jev_owner -d jev_staging"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+
+networks:
+  frontend:
+    external: true
+    name: dokploy-network
+  app:
+    internal: true
+  database:
+    internal: true
+
+volumes:
+  jev_staging_pgdata:
