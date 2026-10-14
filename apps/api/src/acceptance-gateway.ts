@@ -74,39 +74,60 @@ async function main(): Promise<void> {
       timeoutMs: 15_000,
       maxRetries: 0
     });
-    const evidence = await pool.query(
-      `SELECT c.provider, c.model, c.outcome,
-              c.usage, c.estimated_cost_chf,
-              (SELECT COUNT(*)::int FROM cost_events e
-                WHERE e.organization_id = c.organization_id
-                  AND e.task_id = c.task_id
-                  AND e.provider = c.provider
-                  AND e.model = c.model
-                  AND e.currency = 'CHF'
-                  AND e.amount = c.estimated_cost_chf
-                  AND e.usage->>'requestId' = c.request_id
-                  AND e.usage->>'inputTokens' = c.usage->>'inputTokens'
-                  AND e.usage->>'outputTokens' = c.usage->>'outputTokens'
-                  AND e.usage->>'totalTokens' = c.usage->>'totalTokens') AS cost_event_count
-         FROM model_provider_calls c
-        WHERE c.request_id = $1 AND c.organization_id = $2
-        LIMIT 1`,
-      [requestId, ids[0]]
-    );
-    const persisted = evidence.rows[0];
+    // Query all request-linked rows; filtering invalid evidence before counting hides duplicates.
+    const [calls, costs] = await Promise.all([
+      pool.query(
+        `SELECT provider, model, outcome, attempt_count, usage, estimated_cost_chf, task_id
+           FROM model_provider_calls
+          WHERE request_id = $1 AND organization_id = $2`,
+        [requestId, ids[0]]
+      ),
+      pool.query(
+        `SELECT provider, model, currency, amount, usage, task_id
+           FROM cost_events
+          WHERE organization_id = $1 AND usage->>'requestId' = $2`,
+        [ids[0], requestId]
+      )
+    ]);
+    const persisted = calls.rows[0];
+    const cost = costs.rows[0];
+    const normalizedChf = (amount: number): string => amount.toFixed(6);
+    const validUsage = (usage: unknown): usage is {
+      inputTokens: number; outputTokens: number; totalTokens: number;
+    } => {
+      if (typeof usage !== "object" || usage === null) return false;
+      const u = usage as Record<string, unknown>;
+      return ["inputTokens", "outputTokens", "totalTokens"].every(
+        key => typeof u[key] === "number" && Number.isSafeInteger(u[key]) && (u[key] as number) >= 0
+      );
+    };
     if (
       result.provider !== provider ||
       result.model !== model ||
       result.attempts !== 1 ||
-      evidence.rowCount !== 1 ||
+      calls.rowCount !== 1 ||
+      costs.rowCount !== 1 ||
+      persisted?.task_id !== ids[2] ||
       persisted?.provider !== result.provider ||
       persisted?.model !== result.model ||
       persisted?.outcome !== "SUCCESS" ||
-      persisted?.cost_event_count !== 1 ||
-      Number(persisted?.estimated_cost_chf) !== result.estimatedCostChf ||
-      persisted?.usage?.inputTokens !== result.usage.inputTokens ||
-      persisted?.usage?.outputTokens !== result.usage.outputTokens ||
-      persisted?.usage?.totalTokens !== result.usage.totalTokens
+      persisted?.attempt_count !== result.attempts ||
+      !validUsage(persisted?.usage) ||
+      !validUsage(result.usage) ||
+      !Number.isFinite(Number(persisted?.estimated_cost_chf)) ||
+      normalizedChf(Number(persisted?.estimated_cost_chf)) !== normalizedChf(result.estimatedCostChf) ||
+      cost?.task_id !== ids[2] ||
+      cost?.provider !== result.provider ||
+      cost?.model !== result.model ||
+      cost?.currency !== "CHF" ||
+      !Number.isFinite(Number(cost?.amount)) ||
+      normalizedChf(Number(cost?.amount)) !== normalizedChf(result.estimatedCostChf) ||
+      !validUsage(cost?.usage) ||
+      cost?.usage?.requestId !== requestId ||
+      ["inputTokens", "outputTokens", "totalTokens"].some(
+        key => persisted?.usage?.[key] !== result.usage[key as keyof typeof result.usage] ||
+          cost?.usage?.[key] !== result.usage[key as keyof typeof result.usage]
+      )
     ) {
       throw new Error("Paid-call persistence acceptance failed");
     }
