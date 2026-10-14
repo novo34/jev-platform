@@ -1,0 +1,122 @@
+# Dokploy staging only. Never use the root development docker-compose.yml.
+# Preflight: provision the existing DB with separate migration and restricted
+# runtime PostgreSQL roles before starting the API/worker containers.
+services:
+  web:
+    build:
+      context: .
+      dockerfile: deploy/staging/Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    networks: [frontend, app]
+    mem_limit: 192m
+    cpus: 0.30
+    expose: ["8080"]
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/staging/Dockerfile.runtime
+    command: ["node", "deploy/staging/start.mjs"]
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: "3001"
+      JEV_STAGING_RUNTIME_DB_PASSWORD: ${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}
+      JEV_ENTRYPOINT: api
+      JEV_SECRET_ENCRYPTION_KEY: ${JEV_STAGING_ENCRYPTION_KEY:?encryption key required}
+      JEV_REQUIRE_SECRET_KEY: "1"
+    expose: ["3001"]
+    networks: [app, database, egress]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 0.35
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/staging/Dockerfile.runtime
+    command: ["node", "deploy/staging/start.mjs"]
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      WORKER_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: "3002"
+      JEV_STAGING_RUNTIME_DB_PASSWORD: ${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}
+      JEV_ENTRYPOINT: worker
+    networks: [database]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 0.35
+
+  migrator:
+    build:
+      context: .
+      dockerfile: deploy/staging/Dockerfile.runtime
+    command: ["node", "deploy/staging/provision.mjs"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JEV_STAGING_DB_OWNER_PASSWORD: ${JEV_STAGING_DB_OWNER_PASSWORD:?owner secret required}
+      JEV_STAGING_RUNTIME_DB_PASSWORD: ${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}
+      JEV_STAGING_ADMIN_PASSWORD: ${JEV_STAGING_ADMIN_PASSWORD:?initial admin password required}
+    networks: [database]
+    mem_limit: 256m
+    cpus: 0.30
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jev_staging
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${JEV_STAGING_DB_BOOTSTRAP_PASSWORD:?bootstrap password required}
+      JEV_STAGING_DB_OWNER_PASSWORD: ${JEV_STAGING_DB_OWNER_PASSWORD:?owner secret required}
+      JEV_STAGING_RUNTIME_DB_PASSWORD: ${JEV_STAGING_RUNTIME_DB_PASSWORD:?runtime password required}
+    volumes:
+      - jev_staging_pgdata:/var/lib/postgresql/data
+      - ./deploy/staging/init-db.sh:/docker-entrypoint-initdb.d/10-jev-owner.sh:ro
+    networks: [database]
+    mem_limit: 384m
+    cpus: 0.35
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jev_staging"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+
+networks:
+  frontend:
+    external: true
+    name: dokploy-network
+  app:
+    internal: true
+  egress: {}
+  database:
+    internal: true
+
+volumes:
+  jev_staging_pgdata:

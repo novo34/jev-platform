@@ -40,7 +40,7 @@ jobs:
           node-version: 22
 
       - name: Install
-        run: npm install
+        run: npm ci
 
       - name: Install lockfile-pinned production verifier dependencies
         run: npm ci --ignore-scripts --prefix scripts
@@ -76,3 +76,60 @@ jobs:
             cat /tmp/jev-dev.log
             exit 1
           fi
+
+  staging-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate isolated Dokploy staging Compose
+        env:
+          JEV_STAGING_RUNTIME_DATABASE_URL: postgresql://jev_runtime:placeholder@postgres:5432/jev_staging
+          JEV_STAGING_RUNTIME_DB_PASSWORD: placeholder
+          JEV_STAGING_DB_OWNER_PASSWORD: not-a-real-secret
+          JEV_STAGING_DB_BOOTSTRAP_PASSWORD: not-a-real-secret
+          JEV_STAGING_ENCRYPTION_KEY: not-a-real-secret
+          JEV_STAGING_ADMIN_PASSWORD: not-a-real-secret-placeholder
+        run: |
+          docker compose -f docker-compose.staging.yml config --quiet
+          if docker compose -f docker-compose.staging.yml config --format json | jq -e '[.services | to_entries[] | select(.value.ports != null)] | length == 0' >/dev/null; then
+            echo 'No public host ports in staging compose'
+          else
+            echo 'Unexpected published port in staging compose' >&2
+            exit 1
+          fi
+
+
+  staging-image-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build actual staging API image with pinned dependencies
+        run: docker build -f deploy/staging/Dockerfile.runtime -t jev-staging-api-test .
+      - name: Build actual staging web image
+        run: docker build -f deploy/staging/Dockerfile.web -t jev-staging-web-test .
+      - name: Check nginx proxy syntax
+        run: docker run --rm --add-host api:127.0.0.1 jev-staging-web-test nginx -t
+
+  staging-runtime-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot isolated staging stack on disposable CI Docker network
+        env:
+          JEV_STAGING_DB_BOOTSTRAP_PASSWORD: 7b4f5d18abdec593b9184a7ae32cff46
+          JEV_STAGING_DB_OWNER_PASSWORD: 9a1b7a8b6f3254027811de5f82073ab1
+          JEV_STAGING_RUNTIME_DB_PASSWORD: 4712ab3c5804ad8e69197a9b2c4d0e6f
+          JEV_STAGING_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          JEV_STAGING_ADMIN_PASSWORD: ci-disposable-admin-password-never-use
+        run: |
+          set -euo pipefail
+          docker network create dokploy-network
+          trap 'docker compose -f docker-compose.staging.yml logs --tail 80 || true; docker compose -f docker-compose.staging.yml down -v --remove-orphans || true' EXIT
+          docker compose -f docker-compose.staging.yml up --build -d --wait --wait-timeout 180
+          docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT rolsuper::text || ',' || rolcreaterole::text FROM pg_roles WHERE rolname='jev_owner'" | grep -x 'false,false'
+          docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member OR r.oid=m.roleid WHERE r.rolname='jev_runtime'" | grep -x '0'
+          docker compose -f docker-compose.staging.yml exec -T web wget -q -O /dev/null http://127.0.0.1:8080/

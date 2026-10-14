@@ -32,6 +32,24 @@ export async function requireAuthenticatedUser(
   return authenticateToken(pool, bearerToken(request.headers.authorization));
 }
 
+const loginBuckets = new Map<string, { count: number; resetAt: number }>();
+function checkLoginLimit(email: string, organizationId: string): boolean {
+  const key = organizationId.replace(/-/g, "").toLowerCase() + ":" + email.trim().toLowerCase();
+  const now = Date.now();
+  if (loginBuckets.size > 10000) {
+    for (const [k, v] of loginBuckets) if (v.resetAt < now) loginBuckets.delete(k);
+    while (loginBuckets.size > 10000) {
+      const oldest = loginBuckets.keys().next().value;
+      if (oldest === undefined) break;
+      loginBuckets.delete(oldest);
+    }
+  }
+  const old = loginBuckets.get(key);
+  const bucket = old && old.resetAt > now ? old : { count: 0, resetAt: now + 60000 };
+  bucket.count++;
+  loginBuckets.set(key, bucket);
+  return bucket.count <= 5;
+}
 export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
   app.post<{ Body: LoginBody }>(
     "/auth/login",
@@ -42,7 +60,7 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
           additionalProperties: false,
           required: ["organizationId", "email", "password"],
           properties: {
-            organizationId: { type: "string", pattern: "^[0-9a-fA-F-]{36}$" },
+            organizationId: { type: "string", pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" },
             email: { type: "string", minLength: 3, maxLength: 320 },
             password: { type: "string", minLength: 1, maxLength: 1024 }
           }
@@ -50,6 +68,9 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
       }
     },
     async (request, reply) => {
+      if (!checkLoginLimit(request.body.email, request.body.organizationId)) {
+        return reply.code(429).send({ error: "RATE_LIMITED" });
+      }
       try {
         const result = await login(pool, request.body);
         return reply.code(200).send(result);

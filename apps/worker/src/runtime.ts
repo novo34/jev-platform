@@ -32,6 +32,10 @@ export class WorkerRuntime {
     };
   }
 
+  get isRunning(): boolean {
+    return this.running;
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;

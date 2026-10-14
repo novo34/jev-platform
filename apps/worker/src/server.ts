@@ -13,6 +13,16 @@ const queue = new QueueService(pool);
 const runtime = new WorkerRuntime(queue, { workerId });
 const app = buildWorkerHealthServer();
 
+app.get("/ready", async (_request, reply) => {
+  if (!runtime.isRunning) return reply.code(503).send({ status: "unavailable" });
+  try {
+    await pool.query("SELECT 1");
+    return reply.send({ status: "ready" });
+  } catch {
+    return reply.code(503).send({ status: "unavailable" });
+  }
+});
+
 app.addHook("onClose", async () => {
   await runtime.stop();
   await pool.end();
