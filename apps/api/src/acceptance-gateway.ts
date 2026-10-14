@@ -93,8 +93,21 @@ async function main(): Promise<void> {
         LIMIT 1`,
       [requestId, ids[0]]
     );
-    if (evidence.rowCount !== 1 || evidence.rows[0].outcome !== "SUCCESS" ||
-        evidence.rows[0].cost_event_count < 1) {
+    const persisted = evidence.rows[0];
+    if (
+      result.provider !== provider ||
+      result.model !== model ||
+      result.attempts !== 1 ||
+      evidence.rowCount !== 1 ||
+      persisted?.provider !== result.provider ||
+      persisted?.model !== result.model ||
+      persisted?.outcome !== "SUCCESS" ||
+      persisted?.cost_event_count !== 1 ||
+      Number(persisted?.estimated_cost_chf) !== result.estimatedCostChf ||
+      persisted?.usage?.inputTokens !== result.usage.inputTokens ||
+      persisted?.usage?.outputTokens !== result.usage.outputTokens ||
+      persisted?.usage?.totalTokens !== result.usage.totalTokens
+    ) {
       throw new Error("Paid-call persistence acceptance failed");
     }
     console.log(JSON.stringify({
