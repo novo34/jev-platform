@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     process.env.JEV_ACCEPT_ORGANIZATION_ID,
     process.env.JEV_ACCEPT_PROJECT_ID,
     process.env.JEV_ACCEPT_TASK_ID
-  ];
+  ].map(value => value?.toLowerCase());
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (ids.some(id => !id || !uuid.test(id))) {
     throw new Error("Existing organization, project and task UUIDs are required");
@@ -74,27 +74,68 @@ async function main(): Promise<void> {
       timeoutMs: 15_000,
       maxRetries: 0
     });
-    const evidence = await pool.query(
-      `SELECT c.provider, c.model, c.outcome,
-              c.usage, c.estimated_cost_chf,
-              (SELECT COUNT(*)::int FROM cost_events e
-                WHERE e.organization_id = c.organization_id
-                  AND e.task_id = c.task_id
-                  AND e.provider = c.provider
-                  AND e.model = c.model
-                  AND e.currency = 'CHF'
-                  AND e.amount = c.estimated_cost_chf
-                  AND e.usage->>'requestId' = c.request_id
-                  AND e.usage->>'inputTokens' = c.usage->>'inputTokens'
-                  AND e.usage->>'outputTokens' = c.usage->>'outputTokens'
-                  AND e.usage->>'totalTokens' = c.usage->>'totalTokens') AS cost_event_count
-         FROM model_provider_calls c
-        WHERE c.request_id = $1 AND c.organization_id = $2
-        LIMIT 1`,
-      [requestId, ids[0]]
-    );
-    if (evidence.rowCount !== 1 || evidence.rows[0].outcome !== "SUCCESS" ||
-        evidence.rows[0].cost_event_count < 1) {
+    // Query all request-linked rows; filtering invalid evidence before counting hides duplicates.
+    const [calls, costs, rounded] = await Promise.all([
+      pool.query(
+        `SELECT provider, model, outcome, attempt_count, usage, estimated_cost_chf, task_id, project_id, order_id
+           FROM model_provider_calls
+          WHERE request_id = $1 AND organization_id = $2`,
+        [requestId, ids[0]]
+      ),
+      pool.query(
+        `SELECT provider, model, currency, amount, usage, task_id, project_id, order_id
+           FROM cost_events
+          WHERE organization_id = $1 AND usage->>'requestId' = $2`,
+        [ids[0], requestId]
+      ),
+      pool.query("SELECT ROUND($1::numeric, 6)::text AS chf", [result.estimatedCostChf])
+    ]);
+    const persisted = calls.rows[0];
+    const cost = costs.rows[0];
+    // PostgreSQL NUMERIC rounding is decimal and rounds positive half-micro CHF away from zero.
+    const expectedChf = rounded.rows[0]?.chf;
+    const validUsage = (usage: unknown): usage is {
+      inputTokens: number; outputTokens: number; totalTokens: number;
+    } => {
+      if (typeof usage !== "object" || usage === null) return false;
+      const u = usage as Record<string, unknown>;
+      return ["inputTokens", "outputTokens", "totalTokens"].every(
+        key => typeof u[key] === "number" && Number.isSafeInteger(u[key]) && (u[key] as number) >= 0
+      );
+    };
+    if (
+      result.provider !== provider ||
+      result.model !== model ||
+      result.attempts !== 1 ||
+      calls.rowCount !== 1 ||
+      costs.rowCount !== 1 ||
+      persisted?.task_id !== ids[2] ||
+      persisted?.project_id !== ids[1] ||
+      persisted?.order_id !== null ||
+      persisted?.provider !== result.provider ||
+      persisted?.model !== result.model ||
+      persisted?.outcome !== "SUCCESS" ||
+      persisted?.attempt_count !== result.attempts ||
+      !validUsage(persisted?.usage) ||
+      !validUsage(result.usage) ||
+      persisted?.estimated_cost_chf == null ||
+      !Number.isFinite(Number(persisted?.estimated_cost_chf)) ||
+      Number(persisted?.estimated_cost_chf) !== Number(expectedChf) ||
+      cost?.task_id !== ids[2] ||
+      cost?.project_id !== ids[1] ||
+      cost?.order_id !== null ||
+      cost?.provider !== result.provider ||
+      cost?.model !== result.model ||
+      cost?.currency !== "CHF" ||
+      !Number.isFinite(Number(cost?.amount)) ||
+      Number(cost?.amount) !== Number(expectedChf) ||
+      !validUsage(cost?.usage) ||
+      cost?.usage?.requestId !== requestId ||
+      ["inputTokens", "outputTokens", "totalTokens"].some(
+        key => persisted?.usage?.[key] !== result.usage[key as keyof typeof result.usage] ||
+          cost?.usage?.[key] !== result.usage[key as keyof typeof result.usage]
+      )
+    ) {
       throw new Error("Paid-call persistence acceptance failed");
     }
     console.log(JSON.stringify({

@@ -14,6 +14,8 @@ This is a **development-only**, explicitly authorized **one paid call** operator
 
 The runner makes a real call through `ModelGateway.execute`, verifies scoped `model_provider_calls` and corresponding `cost_events` persistence, and prints no provider content. The evidence query correlates the cost event using the request ID embedded in `cost_events.usage.requestId` plus the three normalized token counts, scoped organization/task/provider/model, CHF currency and identical cost amount. No timestamp heuristic is used. A future production migration should enforce request-level linkage with an explicit relational key and constraints.
 
+Acceptance is fail-closed: the returned provider/model, one-attempt bound, token usage and estimated CHF cost must agree with the persisted provider call, and exactly one matching scoped cost event must exist. Duplicate cost evidence or mismatched metadata is a failure, not a pass.
+
 A failed run remains **FAILED**. Do not mark PLT-009 DONE from CI-only adapters, provider health checks or a dry run.
 
 ## Never commit secrets
