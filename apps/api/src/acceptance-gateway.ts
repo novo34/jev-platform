@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     process.env.JEV_ACCEPT_ORGANIZATION_ID,
     process.env.JEV_ACCEPT_PROJECT_ID,
     process.env.JEV_ACCEPT_TASK_ID
-  ];
+  ].map(value => value?.toLowerCase());
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (ids.some(id => !id || !uuid.test(id))) {
     throw new Error("Existing organization, project and task UUIDs are required");
@@ -75,23 +75,25 @@ async function main(): Promise<void> {
       maxRetries: 0
     });
     // Query all request-linked rows; filtering invalid evidence before counting hides duplicates.
-    const [calls, costs] = await Promise.all([
+    const [calls, costs, rounded] = await Promise.all([
       pool.query(
-        `SELECT provider, model, outcome, attempt_count, usage, estimated_cost_chf, task_id
+        `SELECT provider, model, outcome, attempt_count, usage, estimated_cost_chf, task_id, project_id
            FROM model_provider_calls
           WHERE request_id = $1 AND organization_id = $2`,
         [requestId, ids[0]]
       ),
       pool.query(
-        `SELECT provider, model, currency, amount, usage, task_id
+        `SELECT provider, model, currency, amount, usage, task_id, project_id
            FROM cost_events
           WHERE organization_id = $1 AND usage->>'requestId' = $2`,
         [ids[0], requestId]
-      )
+      ),
+      pool.query("SELECT ROUND($1::numeric, 6)::text AS chf", [result.estimatedCostChf])
     ]);
     const persisted = calls.rows[0];
     const cost = costs.rows[0];
-    const normalizedChf = (amount: number): string => amount.toFixed(6);
+    // PostgreSQL NUMERIC rounding is decimal and rounds positive half-micro CHF away from zero.
+    const expectedChf = rounded.rows[0]?.chf;
     const validUsage = (usage: unknown): usage is {
       inputTokens: number; outputTokens: number; totalTokens: number;
     } => {
@@ -108,6 +110,7 @@ async function main(): Promise<void> {
       calls.rowCount !== 1 ||
       costs.rowCount !== 1 ||
       persisted?.task_id !== ids[2] ||
+      persisted?.project_id !== ids[1] ||
       persisted?.provider !== result.provider ||
       persisted?.model !== result.model ||
       persisted?.outcome !== "SUCCESS" ||
@@ -115,13 +118,14 @@ async function main(): Promise<void> {
       !validUsage(persisted?.usage) ||
       !validUsage(result.usage) ||
       !Number.isFinite(Number(persisted?.estimated_cost_chf)) ||
-      normalizedChf(Number(persisted?.estimated_cost_chf)) !== normalizedChf(result.estimatedCostChf) ||
+      Number(persisted?.estimated_cost_chf) !== Number(expectedChf) ||
       cost?.task_id !== ids[2] ||
+      cost?.project_id !== ids[1] ||
       cost?.provider !== result.provider ||
       cost?.model !== result.model ||
       cost?.currency !== "CHF" ||
       !Number.isFinite(Number(cost?.amount)) ||
-      normalizedChf(Number(cost?.amount)) !== normalizedChf(result.estimatedCostChf) ||
+      Number(cost?.amount) !== Number(expectedChf) ||
       !validUsage(cost?.usage) ||
       cost?.usage?.requestId !== requestId ||
       ["inputTokens", "outputTokens", "totalTokens"].some(
