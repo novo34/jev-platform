@@ -77,13 +77,13 @@ async function main(): Promise<void> {
     // Query all request-linked rows; filtering invalid evidence before counting hides duplicates.
     const [calls, costs, rounded] = await Promise.all([
       pool.query(
-        `SELECT provider, model, outcome, attempt_count, usage, estimated_cost_chf, task_id, project_id
+        `SELECT provider, model, outcome, attempt_count, usage, estimated_cost_chf, task_id, project_id, order_id
            FROM model_provider_calls
           WHERE request_id = $1 AND organization_id = $2`,
         [requestId, ids[0]]
       ),
       pool.query(
-        `SELECT provider, model, currency, amount, usage, task_id, project_id
+        `SELECT provider, model, currency, amount, usage, task_id, project_id, order_id
            FROM cost_events
           WHERE organization_id = $1 AND usage->>'requestId' = $2`,
         [ids[0], requestId]
@@ -111,16 +111,19 @@ async function main(): Promise<void> {
       costs.rowCount !== 1 ||
       persisted?.task_id !== ids[2] ||
       persisted?.project_id !== ids[1] ||
+      persisted?.order_id !== null ||
       persisted?.provider !== result.provider ||
       persisted?.model !== result.model ||
       persisted?.outcome !== "SUCCESS" ||
       persisted?.attempt_count !== result.attempts ||
       !validUsage(persisted?.usage) ||
       !validUsage(result.usage) ||
+      persisted?.estimated_cost_chf == null ||
       !Number.isFinite(Number(persisted?.estimated_cost_chf)) ||
       Number(persisted?.estimated_cost_chf) !== Number(expectedChf) ||
       cost?.task_id !== ids[2] ||
       cost?.project_id !== ids[1] ||
+      cost?.order_id !== null ||
       cost?.provider !== result.provider ||
       cost?.model !== result.model ||
       cost?.currency !== "CHF" ||
