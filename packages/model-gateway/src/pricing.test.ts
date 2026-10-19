@@ -64,8 +64,15 @@ describe("PLT-009 pricing guardrails", () => {
     expect(catalog.estimateChf(
       "deepseek", "test", { inputTokens: 99_999_999, outputTokens: 0, totalTokens: 99_999_999 }
     )).toBe(99_999_999);
-    expect(() => catalog.estimateChf(
-      "deepseek", "test", { inputTokens: 100_000_000, outputTokens: 0, totalTokens: 100_000_000 }
-    )).toThrow(/estimated provider cost exceeds accounting range/);
+    try {
+      catalog.estimateChf(
+        "deepseek", "test", { inputTokens: 100_000_000, outputTokens: 0, totalTokens: 100_000_000 }
+      );
+      expect.fail("Expected accounting range rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ModelGatewayError);
+      expect((error as ModelGatewayError).code).toBe("PROVIDER_RESPONSE_INVALID");
+      expect((error as Error).message).toMatch(/estimated provider cost exceeds accounting range/);
+    }
   });
 });
