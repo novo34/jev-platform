@@ -18,6 +18,15 @@ describe("PLT-009 pricing guardrails", () => {
     }
   });
 
+  it("accepts an explicit zero-rate model without selecting another provider", () => {
+    const catalog = new PricingCatalog({
+      "deepseek:free-test": { inputPerMillionChf: 0, outputPerMillionChf: 0 }
+    });
+    expect(catalog.has("deepseek", "free-test")).toBe(true);
+    expect(catalog.estimateChf("deepseek", "free-test", usage)).toBe(0);
+    expect(catalog.has("openai", "free-test")).toBe(false);
+  });
+
   it("uses exact model rates before provider wildcard rates", () => {
     const catalog = new PricingCatalog({
       "openai:*": { inputPerMillionChf: 100, outputPerMillionChf: 100 },
