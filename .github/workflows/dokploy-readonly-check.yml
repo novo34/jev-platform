@@ -1,0 +1,48 @@
+name: JEV Dokploy read-only connectivity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dokploy-readonly:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: jev-staging-readonly
+    timeout-minutes: 5
+    steps:
+      - name: Verify Dokploy API connectivity without exposing application data
+        env:
+          DOKPLOY_API_KEY: ${{ secrets.JEV_DOKPLOY_READONLY_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DOKPLOY_API_KEY:-}" ]; then
+            echo "::error::Missing JEV_DOKPLOY_READONLY_API_KEY in protected environment"
+            exit 1
+          fi
+          # This workflow must never perform deployment, mutation, exec, or secret enumeration.
+          # Only call one fixed documented GET endpoint; do not print response body or headers.
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 25 --retry 0 \
+            --output "$response_file" --write-out '%{http_code}' \
+            --header "x-api-key: ${DOKPLOY_API_KEY}" \
+            --header "Accept: application/json" \
+            'https://dokploy.nuvurent.com/api/application.search?name=jev-staging-es4gdq&limit=5')"
+          if [ "$status" != "200" ]; then
+            echo "::error::Dokploy read-only API check failed (HTTP $status)"
+            exit 1
+          fi
+          # No application configuration or response data is emitted to GitHub logs.
+          python3 - "$response_file" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as fh:
+              json.load(fh)
+          print("PASS: Dokploy read-only API returned HTTP 200 and valid JSON.")
+          print("This does NOT prove service health, least privilege or Model Gateway acceptance.")
+          PY
