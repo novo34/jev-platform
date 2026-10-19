@@ -8,7 +8,7 @@ describe("PLT-009 pricing guardrails", () => {
     const catalog = new PricingCatalog();
     expect(catalog.has("openai", "gpt-test")).toBe(false);
     expect(() => catalog.estimateChf("openai", "gpt-test", usage)).toThrow(
-      expect.objectContaining({ code: "PRICING_REQUIRED" })
+      /pricing is required before paid provider call/
     );
   });
 
@@ -39,6 +39,6 @@ describe("PLT-009 pricing guardrails", () => {
     });
     expect(() => catalog.estimateChf(
       "deepseek", "test", { inputTokens: 100_000_000, outputTokens: 0, totalTokens: 100_000_000 }
-    )).toThrow(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+    )).toThrow(/estimated provider cost exceeds accounting range/);
   });
 });
