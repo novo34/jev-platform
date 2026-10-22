@@ -7,7 +7,7 @@ import {
   type ProviderCredentialMetadata
 } from "./types.js";
 
-function parseKey(value: string | undefined): Buffer {
+export function parseKey(value: string | undefined): Buffer {
   if (!value) {
     throw new ModelGatewayError(
       "SECRET_STORE_UNAVAILABLE",
@@ -143,6 +143,7 @@ export class ProviderCredentialStore {
 
   async getSecret(organizationId: string, providerInput: string): Promise<string> {
     assertProvider(providerInput);
+    const key = parseKey(this.encryptionKey);
     const result = await this.pool.query<{
       ciphertext: string;
       iv: string;
@@ -163,7 +164,6 @@ export class ProviderCredentialStore {
       );
     }
 
-    const key = parseKey(this.encryptionKey);
     const decipher = createDecipheriv(
       "aes-256-gcm",
       key,
