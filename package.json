@@ -17,10 +17,12 @@
     "db:migrate": "npm run migrate -w @jev/db",
     "check": "npm run typecheck && npm run test && npm run build",
     "smoke:restricted-runtime": "node scripts/smoke-restricted-runtime.mjs",
-    "seed:dev": "npm run seed:dev -w @jev/api"
+    "seed:dev": "npm run seed:dev -w @jev/api",
+    "accept:github-readonly": "node scripts/accept-github-app-readonly.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
     "typescript": "^5.9.3"
   }
 }
+
