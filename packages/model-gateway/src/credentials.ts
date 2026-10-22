@@ -15,8 +15,16 @@ function parseKey(value: string | undefined): Buffer {
     );
   }
 
+  // Node base64 decoding is permissive: reject ignored characters, bad padding
+  // and non-canonical representations before treating the input as a key.
+  if (!/^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/.test(value)) {
+    throw new ModelGatewayError(
+      "SECRET_STORE_UNAVAILABLE",
+      "JEV_SECRET_ENCRYPTION_KEY must be canonical base64 for 32 bytes"
+    );
+  }
   const decoded = Buffer.from(value, "base64");
-  if (decoded.length !== 32) {
+  if (decoded.length !== 32 || decoded.toString("base64") !== value) {
     throw new ModelGatewayError(
       "SECRET_STORE_UNAVAILABLE",
       "JEV_SECRET_ENCRYPTION_KEY must be 32 bytes encoded as base64"
