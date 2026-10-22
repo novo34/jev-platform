@@ -37,7 +37,8 @@ async function api<T>(
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: "REQUEST_FAILED" }));
-    throw new Error(body.message ?? body.error ?? `HTTP ${response.status}`);
+    throw new Error(body.message ??
+      (typeof body.error === "object" ? body.error?.message : body.error) ?? `HTTP ${response.status}`);
   }
 
   if (response.status === 204) {
@@ -238,6 +239,53 @@ function ProviderCard({
   );
 }
 
+function GitHubSettings({ session }: { session: LoginResponse }) {
+  const [projectId, setProjectId] = useState("");
+  const [repositoryId, setRepositoryId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const uuidPattern = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+
+  async function connect(action: "START_GITHUB_INSTALLATION" | "CONNECT_GITHUB_IDENTITY") {
+    setBusy(true); setError("");
+    try {
+      const result = await api<{ data: { installUrl: string } }>("/control/commands", {
+        method: "POST", body: JSON.stringify({ commandId: crypto.randomUUID(), action, projectId, payload: { repositoryId } })
+      }, session.token);
+      const url = new URL(result.data.installUrl);
+      if (url.origin !== "https://github.com") throw new Error("Destino de autorización inválido");
+      window.location.assign(url.toString());
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "No se pudo iniciar la conexión";
+      setError(message === "GITHUB_INVALID_CONFIGURATION" ? "La GitHub App todavía no está configurada en este entorno." : message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <article className="provider-card" aria-label="GitHub App">
+      <h2>GitHub App</h2>
+      <p className="muted">Vincula un repositorio del registro de JEV o verifica tu identidad en GitHub.</p>
+      <form onSubmit={(event) => { event.preventDefault(); void connect("CONNECT_GITHUB_IDENTITY"); }}>
+        <label>Proyecto del registro (ID)
+          <input required pattern={uuidPattern} value={projectId} onChange={(event) => setProjectId(event.target.value)} />
+        </label>
+        <label>Repositorio del registro (ID)
+          <input required pattern={uuidPattern} value={repositoryId} onChange={(event) => setRepositoryId(event.target.value)} />
+        </label>
+        <div className="actions">
+          <button type="submit" disabled={busy}>Conectar mi identidad GitHub</button>
+          <button className="primary" type="button" disabled={busy || session.user.role !== "ADMIN"}
+            onClick={(event) => { if (event.currentTarget.form?.reportValidity()) void connect("START_GITHUB_INSTALLATION"); }}>
+            Instalar o vincular GitHub App
+          </button>
+        </div>
+      </form>
+      {error ? <p className="error" role="alert">{error}</p> : null}
+    </article>
+  );
+}
+
 function Settings({
   session,
   onLogout
@@ -309,6 +357,7 @@ function Settings({
             );
           })}
         </div>
+        <GitHubSettings session={session} />
       </section>
     </main>
   );
@@ -338,3 +387,4 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>
 );
+

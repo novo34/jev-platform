@@ -41,13 +41,17 @@ function positiveId(id: number): void {
   }
 }
 
+export function assertGitHubRepositoryName(fullName: string): void {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*\/[a-zA-Z0-9_.-]+$/.test(fullName) ||
+      [".", ".."].includes(fullName.split("/")[1])) {
+    throw new GitHubError("GITHUB_INVALID_REQUEST");
+  }
+}
+
 function repositoryPath(scope: GitHubRepositoryScope): string {
   positiveId(scope.installationId);
   positiveId(scope.repositoryId);
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*\/[a-zA-Z0-9_.-]+$/.test(scope.fullName) ||
-      [".", ".."].includes(scope.fullName.split("/")[1])) {
-    throw new GitHubError("GITHUB_INVALID_REQUEST");
-  }
+  assertGitHubRepositoryName(scope.fullName);
   return `/repos/${scope.fullName}`;
 }
 
@@ -100,7 +104,8 @@ export class GitHubAppClient {
     return `${unsigned}.${sign("RSA-SHA256", Buffer.from(unsigned), this.key).toString("base64url")}`;
   }
 
-  private async request<T>(path: string, token: string, method = "GET", body?: unknown): Promise<T> {
+  private async request<T>(path: string, token: string, method = "GET", body?: unknown, beforeSend?: () => Promise<void>): Promise<T> {
+    if (beforeSend) await beforeSend();
     let response: Response;
     try {
       response = await this.fetcher(`https://api.github.com${path}`, {
@@ -184,17 +189,29 @@ export class GitHubAppClient {
     return result;
   }
 
-  async createBranch(scope: GitHubRepositoryScope, branch: string, baseSha: string): Promise<{ ref: string; object: { sha: string } }> {
+  async createBranch(scope: GitHubRepositoryScope, branch: string, baseSha: string, beforeSend?: () => Promise<void>): Promise<{ ref: string; object: { sha: string } }> {
     assertTaskBranch(branch);
     assertSha(baseSha);
-    return this.request(`${repositoryPath(scope)}/git/refs`, await this.token(scope, { contents: "write" }), "POST", {
+    const result = await this.request<{ ref: string; object: { sha: string } }>(`${repositoryPath(scope)}/git/refs`, await this.token(scope, { contents: "write" }), "POST", {
       ref: `refs/heads/${branch}`, sha: baseSha
-    });
+    }, beforeSend);
+    if (result?.ref !== `refs/heads/${branch}` || result?.object?.sha !== baseSha) throw new GitHubError("GITHUB_UNAVAILABLE");
+    return result;
+  }
+
+  async branch(scope: GitHubRepositoryScope, branch: string): Promise<{ commit: { sha: string } }> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(branch) || branch.includes("..")) {
+      throw new GitHubError("GITHUB_INVALID_REQUEST");
+    }
+    const result = await this.request<{ commit: { sha: string } }>(
+      `${repositoryPath(scope)}/branches/${encodeURIComponent(branch)}`, await this.token(scope, { contents: "read" }));
+    if (!result.commit || !/^[a-f0-9]{40}$/.test(result.commit.sha)) throw new GitHubError("GITHUB_UNAVAILABLE");
+    return result;
   }
 
   async writeFile(scope: GitHubRepositoryScope, input: {
     branch: string; path: string; content: string; message: string; previousBlobSha?: string;
-  }): Promise<{ commit: { sha: string } }> {
+  }, beforeSend?: () => Promise<void>): Promise<{ commit: { sha: string } }> {
     assertTaskBranch(input.branch);
     if (!input.path || input.path.length > 1024 ||
         input.path.split("/").some((part) => !part || part === "." || part === ".." || part.toLowerCase() === ".git") ||
@@ -207,12 +224,12 @@ export class GitHubAppClient {
         branch: input.branch, message: input.message,
         content: Buffer.from(input.content).toString("base64"),
         ...(input.previousBlobSha ? { sha: input.previousBlobSha } : {})
-      });
+      }, beforeSend);
   }
 
   async createPullRequest(scope: GitHubRepositoryScope, input: {
     branch: string; base: string; title: string; body: string;
-  }): Promise<{ number: number; html_url: string; head: { sha: string } }> {
+  }, beforeSend?: () => Promise<void>): Promise<{ number: number; html_url: string; head: { sha: string } }> {
     assertTaskBranch(input.branch);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,199}$/.test(input.base) ||
         input.base.includes("..") || input.base === input.branch ||
@@ -221,16 +238,26 @@ export class GitHubAppClient {
     }
     return this.request(`${repositoryPath(scope)}/pulls`, await this.token(scope, { contents: "read", pull_requests: "write" }), "POST", {
       head: input.branch, base: input.base, title: input.title, body: input.body
-    });
+    }, beforeSend);
   }
 
   async pullRequest(scope: GitHubRepositoryScope, number: number): Promise<{
     number: number; state: string; draft: boolean; html_url: string;
     head: { sha: string; ref: string; repo: { id: number } };
     base: { ref: string; repo: { id: number } };
+    user: { id: number; login: string };
   }> {
     positiveId(number);
     return this.request(`${repositoryPath(scope)}/pulls/${number}`, await this.token(scope, { pull_requests: "read" }));
+  }
+
+  async mergePullRequest(scope: GitHubRepositoryScope, number: number, approvedSha: string, beforeSend?: () => Promise<void>): Promise<{ merged: boolean; sha: string }> {
+    positiveId(number); assertSha(approvedSha);
+    const result = await this.request<{ merged: boolean; sha: string }>(`${repositoryPath(scope)}/pulls/${number}/merge`,
+      await this.token(scope, { contents: "write", pull_requests: "write" }), "PUT", { sha: approvedSha, merge_method: "squash" }, beforeSend);
+    if (result.merged === false) throw new GitHubError("GITHUB_CONFLICT");
+    if (result.merged !== true || !/^[a-f0-9]{40}$/.test(result.sha)) throw new GitHubError("GITHUB_UNAVAILABLE");
+    return { merged: result.merged, sha: result.sha };
   }
 
   async checks(scope: GitHubRepositoryScope, sha: string): Promise<{

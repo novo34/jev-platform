@@ -9,6 +9,7 @@ import {
   type ControlCommand,
   type ControlFailure
 } from "@jev/control";
+import { GitHubError } from "@jev/control";
 import { AuthError } from "@jev/auth";
 import { requireAuthenticatedUser } from "./auth.js";
 
@@ -30,6 +31,10 @@ function errorStatus(code: ControlFailure["error"]["code"]): number {
       return 404;
     case "CONFLICT":
       return 409;
+    case "RATE_LIMITED":
+      return 429;
+    case "UPSTREAM_UNAVAILABLE":
+      return 503;
     case "INVALID_COMMAND":
       return 400;
     case "INTERNAL_ERROR":
@@ -38,6 +43,17 @@ function errorStatus(code: ControlFailure["error"]["code"]): number {
 }
 
 function asFailure(error: unknown, commandId?: string): ControlFailure {
+  if (error instanceof GitHubError) {
+    return {
+      ok: false, commandId,
+      error: { code: error.code === "GITHUB_FORBIDDEN" ? "FORBIDDEN" :
+        error.code === "GITHUB_INVALID_REQUEST" ? "INVALID_COMMAND" :
+        error.code === "GITHUB_CONFLICT" ? "CONFLICT" :
+        error.code === "GITHUB_RATE_LIMITED" ? "RATE_LIMITED" : "UPSTREAM_UNAVAILABLE",
+        message: error.code,
+        ...(error.retryAfterSeconds ? { details: { retryAfterSeconds: error.retryAfterSeconds } } : {}) }
+    };
+  }
   if (error instanceof ControlError) {
     return {
       ok: false,
@@ -100,6 +116,7 @@ export function registerControlRoutes(
       }
     },
     async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
       const commandId = request.body.commandId ?? randomUUID();
 
       try {
@@ -118,11 +135,60 @@ export function registerControlRoutes(
             typeof request.id === "string" ? request.id : String(request.id)
         });
 
+        if (command.action === "START_GITHUB_INSTALLATION" || command.action === "CONNECT_GITHUB_IDENTITY") {
+          const data = result.data as { installUrl: string; cookieState: string };
+          reply.header("Set-Cookie", `__Host-jev_github_install=${data.cookieState}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
+          return reply.code(200).send({ ...result, data: { installUrl: data.installUrl } });
+        }
+
         return reply.code(200).send(result);
       } catch (error) {
+        if (error instanceof GitHubError && error.retryAfterSeconds) reply.header("Retry-After", error.retryAfterSeconds);
         const failure = asFailure(error, commandId);
         return reply.code(errorStatus(failure.error.code)).send(failure);
       }
     }
   );
+
+  app.get<{ Querystring: { state?: string; installation_id?: string; code?: string; setup_action?: string; error?: string } }>(
+    "/integrations/github/callback",
+    { schema: { querystring: {
+      type: "object", additionalProperties: false,
+      properties: {
+        state: { type: "string", pattern: "^[A-Za-z0-9_-]{43}$" },
+        installation_id: { type: "string", pattern: "^[1-9][0-9]{0,15}$" },
+        code: { type: "string", minLength: 1, maxLength: 256 },
+        setup_action: { type: "string", enum: ["install", "update"] },
+        error: { type: "string", maxLength: 128 }
+      }
+    } } },
+    async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      reply.header("Referrer-Policy", "no-referrer");
+      const clearCookie = () => reply.header("Set-Cookie", "__Host-jev_github_install=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+      try {
+        if (request.query.error) throw new GitHubError("GITHUB_FORBIDDEN");
+        const cookies = request.headers.cookie?.split(";").map((item) => item.trim()).filter((item) => item.startsWith("__Host-jev_github_install=")) ?? [];
+        const result = await control.completeGitHubInstallation({
+          state: request.query.state,
+          cookieState: cookies.length === 1 ? cookies[0].slice("__Host-jev_github_install=".length) : undefined,
+          installationId: request.query.installation_id ? Number(request.query.installation_id) : undefined,
+          code: request.query.code
+        }, request.id);
+        if ("authorizeUrl" in result) return reply.redirect(result.authorizeUrl);
+        clearCookie();
+        if (request.headers.accept?.includes("text/html")) {
+          return reply.type("text/html; charset=utf-8").send(
+            '<!doctype html><html lang="es"><meta charset="utf-8"><title>GitHub conectado</title><body><h1>Conexión GitHub completada</h1><p>La autorización se ha registrado. Vuelve a JEV e inicia sesión para continuar.</p><a href="/">Volver a JEV</a></body></html>'
+          );
+        }
+        return reply.send({ ok: true, ...result });
+      } catch (error) {
+        clearCookie();
+        const failure = asFailure(error);
+        return reply.code(errorStatus(failure.error.code)).send(failure);
+      }
+    }
+  );
 }
+

@@ -30,7 +30,9 @@ Local development and validation instructions live in `docs/DEVELOPMENT.md`.
 PostgreSQL setup and migration rules live in `docs/DATABASE.md`.
 Authentication and RBAC rules live in `docs/AUTH_RBAC.md`.
 Control-plane boundaries and contracts live in `docs/CONTROL_PLANE.md`.
+GitHub App installation, guarded operations and pending real acceptance are documented in `docs/GITHUB_APP.md`.
 Queue and worker runtime behavior lives in `docs/QUEUE_WORKER.md`.
 Project Registry and multi-repository rules live in `docs/PROJECT_REGISTRY.md`.
 
 The next backlog task must not be implemented until PLT-002 is verified and closed by the Development Control Gate.
+

@@ -1,10 +1,16 @@
 import type { AuthenticatedUser, ProjectPermission } from "@jev/auth";
 
+export const GITHUB_ACTIONS = ["GITHUB_READ_REPOSITORY", "GITHUB_CREATE_BRANCH", "GITHUB_WRITE_FILE",
+  "GITHUB_CREATE_PR", "GITHUB_READ_PR", "GITHUB_READ_CHECKS", "GITHUB_READ_REVIEWS", "GITHUB_MERGE_PR"] as const;
+
 export const CONTROL_ACTIONS = [
   "GET_PROJECT_STATUS",
   "CREATE_ORDER",
   "PAUSE_PROJECT",
-  "RESUME_PROJECT"
+  "RESUME_PROJECT",
+  "START_GITHUB_INSTALLATION",
+  "CONNECT_GITHUB_IDENTITY",
+  ...GITHUB_ACTIONS
 ] as const;
 
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
@@ -39,6 +45,8 @@ export type ControlFailure = {
       | "FORBIDDEN"
       | "NOT_FOUND"
       | "CONFLICT"
+      | "RATE_LIMITED"
+      | "UPSTREAM_UNAVAILABLE"
       | "INTERNAL_ERROR";
     message: string;
     details?: Record<string, unknown>;
@@ -60,3 +68,4 @@ export interface ActionPolicy {
   permission: ProjectPermission;
   mutating: boolean;
 }
+

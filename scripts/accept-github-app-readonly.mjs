@@ -23,7 +23,7 @@ try {
     realApiObserved: true, installationId: installation.id,
     repositoryId: repository.id, repository: repository.full_name,
     observedAt: new Date().toISOString(),
-    limitations: ["install-flow-unverified", "control-integration-incomplete", "write-and-merge-unverified"]
+    limitations: ["install-flow-unverified", "control-path-unverified", "write-and-merge-unverified"]
   }));
 } catch (error) {
   console.error(JSON.stringify({

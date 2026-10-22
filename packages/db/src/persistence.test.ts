@@ -251,7 +251,11 @@ describe("canonical PostgreSQL persistence", () => {
       "0017_atomic_approved_task_rework.sql",
       "0018_pin_order_status_trigger_search_path.sql",
       "0019_reject_whitespace_only_approval_evidence.sql",
-      "0020_model_gateway.sql"
+      "0020_model_gateway.sql",
+      "0021_github_app_installation.sql",
+      "0022_github_operation_idempotency.sql",
+        "0023_github_verified_identities.sql"
     ]);
   });
 });
+

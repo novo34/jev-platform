@@ -112,7 +112,7 @@ const ROLE_PERMISSIONS: Record<Exclude<HumanRole, "ADMIN">, ReadonlySet<ProjectP
 };
 
 export async function authorizeProject(
-  pool: Pool,
+  pool: Pick<Pool, "query">,
   actor: AuthenticatedUser,
   projectId: string,
   permission: ProjectPermission
@@ -156,3 +156,4 @@ export function bearerToken(authorization: string | undefined): string | undefin
   const [scheme, token] = authorization.split(" ");
   return scheme?.toLowerCase() === "bearer" && token ? token : undefined;
 }
+

@@ -205,3 +205,34 @@ test("review history paginates and refuses to silently truncate", async () => {
   await assert.rejects(bounded.client.reviews(scope, 1), { code: "GITHUB_UNAVAILABLE" });
   assert.equal(bounded.calls.length, 11);
 });
+
+test("policy is rechecked after token issuance and before each mutating HTTP request", async () => {
+  const operations = [
+    (client, gate) => client.createBranch(scope, "feat/task", sha, gate),
+    (client, gate) => client.writeFile(scope, { branch: "feat/task", path: "x", content: "x", message: "feat: x" }, gate),
+    (client, gate) => client.createPullRequest(scope, { branch: "feat/task", base: "main", title: "feat: x", body: "x" }, gate),
+    (client, gate) => client.mergePullRequest(scope, 1, sha, gate)
+  ];
+  for (const operation of operations) {
+    const { client, calls } = fixture();
+    await assert.rejects(operation(client, async () => { throw new GitHubError("GITHUB_FORBIDDEN"); }), { code: "GITHUB_FORBIDDEN" });
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].url.endsWith("/access_tokens"));
+  }
+});
+
+test("merge sends an exact approved SHA without bypass flags", async () => {
+  const { client, calls } = fixture(() => ({ merged: true, sha }));
+  assert.deepEqual(await client.mergePullRequest(scope, 1, sha), { merged: true, sha });
+  assert.equal(calls[1].init.method, "PUT");
+  assert.deepEqual(JSON.parse(calls[1].init.body), { sha, merge_method: "squash" });
+  assert.deepEqual(JSON.parse(calls[0].init.body).permissions, { contents: "write", pull_requests: "write" });
+});
+
+ test("branch creation rejects malformed or mismatched successful upstream responses", async () => {
+  for (const body of [{}, null, { ref: "refs/heads/feat/other", object: { sha } }, { ref: "refs/heads/feat/task", object: { sha: "b".repeat(40) } }]) {
+    const { client, calls } = fixture(() => body);
+    await assert.rejects(client.createBranch(scope, "feat/task", sha), { code: "GITHUB_UNAVAILABLE" });
+    assert.equal(calls.length, 2);
+  }
+});

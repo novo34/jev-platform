@@ -93,6 +93,14 @@ jobs:
           JEV_STAGING_ADMIN_PASSWORD: not-a-real-secret-placeholder
         run: |
           docker compose -f docker-compose.staging.yml config --quiet
+          # Validate the opt-in GitHub overlay using disposable non-secret placeholders.
+          JEV_STAGING_GITHUB_APP_ID=123 \
+          JEV_STAGING_GITHUB_APP_SLUG=jev-ci \
+          JEV_STAGING_GITHUB_CLIENT_ID=ci-client \
+          JEV_STAGING_GITHUB_CLIENT_SECRET=ci-only-not-a-real-secret \
+          JEV_STAGING_GITHUB_CALLBACK_URL=https://jev.nuvurent.com/api/integrations/github/callback \
+          JEV_STAGING_GITHUB_PRIVATE_KEY_FILE=/dev/null \
+          docker compose -f docker-compose.staging.yml -f deploy/staging/github-app.compose.yml config --quiet
           if docker compose -f docker-compose.staging.yml config --format json | jq -e '[.services | to_entries[] | select(.value.ports != null)] | length == 0' >/dev/null; then
             echo 'No public host ports in staging compose'
           else
@@ -133,3 +141,4 @@ jobs:
           docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT rolsuper::text || ',' || rolcreaterole::text FROM pg_roles WHERE rolname='jev_owner'" | grep -x 'false,false'
           docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member OR r.oid=m.roleid WHERE r.rolname='jev_runtime'" | grep -x '0'
           docker compose -f docker-compose.staging.yml exec -T web wget -q -O /dev/null http://127.0.0.1:8080/
+
