@@ -85,6 +85,36 @@ try {
     runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
   });
   ensure(topology.privilege_checks === "4/4 PASS", "privilege diagnostic failed");
+  // PLT-010: the release gate accepts only the eight canonical GitHub CHECKs.
+  // Test missing, weakened and NOT VALID constraints independently of the ledger.
+  const githubChecks = (await admin.query(`
+    SELECT rel.relname AS table_name, c.conname AS name,
+           pg_catalog.pg_get_constraintdef(c.oid) AS definition
+    FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class rel ON rel.oid=c.conrelid
+    JOIN pg_catalog.pg_namespace ns ON ns.oid=rel.relnamespace
+    WHERE ns.nspname='public' AND c.contype='c' AND starts_with(rel.relname, 'github_')
+  `)).rows;
+  ensure(githubChecks.length === 8, "PLT-010 CHECK regression inventory must contain eight constraints");
+  for (const check of githubChecks) {
+    ensure(/^[a-z_]+$/.test(check.table_name) && /^[a-z_]+$/.test(check.name), "invalid CHECK fixture identifier");
+    const target = "public." + check.table_name;
+    const drop = "ALTER TABLE " + target + " DROP CONSTRAINT " + check.name;
+    const add = "ALTER TABLE " + target + " ADD CONSTRAINT " + check.name + " ";
+    for (const variant of ["missing", "weakened", "unvalidated"]) {
+      await admin.query(drop);
+      try {
+        if (variant === "weakened") await admin.query(add + "CHECK (true)");
+        if (variant === "unvalidated") await admin.query(add + check.definition + " NOT VALID");
+        await assert.rejects(verifyDatabaseTopology({ runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString() }),
+          variant === "weakened" ? /GitHub CHECK constraint predicate drifted/ : /unapproved CHECK constraint inventory drifted/);
+      } finally {
+        await admin.query("ALTER TABLE " + target + " DROP CONSTRAINT IF EXISTS " + check.name);
+        await admin.query(add + check.definition);
+      }
+    }
+  }
+  ensure((await verifyDatabaseTopology({ runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString() })).privilege_checks === "4/4 PASS",
+    "GitHub CHECK restoration did not restore release gate");
   // A privileged URL can request a role switch at connection startup.
   // Neither the deployment verifier nor API/Worker startup may accept it.
   const spoofedURL = new URL(adminURL);
@@ -841,3 +871,4 @@ try {
   }
   await admin.end();
 }
+

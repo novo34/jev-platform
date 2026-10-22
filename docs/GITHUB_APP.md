@@ -283,3 +283,11 @@ scan found no private-key bodies or GitHub/provider tokens. Manual consumer revi
 and independent Codex review found no remaining P0/P1/P2 in the consolidated source.
 These checks do not constitute real GitHub App acceptance. Exact published commit,
 Actions results and SHA-bound review evidence are recorded in PR #23.
+
+
+The consolidated remote run also exposed the release verifier's pre-PLT-010 CHECK
+inventory. It now includes the eight constraints from migrations 0021–0023 and
+pins their exact PostgreSQL 16 expressions. The complete restricted production
+API/Worker smoke passes locally with 23 verified migrations and 4/4 privilege
+checks, including 24 new negative cases (each GitHub CHECK missing, weakened or
+NOT VALID). Existing writer, trigger, ACL and executable-code gates are preserved.
