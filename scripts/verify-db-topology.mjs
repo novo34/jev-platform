@@ -18,7 +18,8 @@ const controlled = [
   "jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)",
   "jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)",
   "jev_set_deployment_status(uuid,uuid[],text)",
-  "jev_lock_project_scope(uuid)"
+  "jev_lock_project_scope(uuid)",
+  "jev_lock_actor_authorization(uuid,uuid)"
 ];
 
 /**
@@ -33,7 +34,8 @@ const auditedWriterFiles = new Map([
   ["jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)", "0015_controlled_approval_deployment_creation.sql"],
   ["jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)", "0017_atomic_approved_task_rework.sql"],
   ["jev_set_deployment_status(uuid,uuid[],text)", "0011_scope_controlled_writer_to_schema.sql"],
-  ["jev_lock_project_scope(uuid)", "0014_controlled_project_scope_lock.sql"]
+  ["jev_lock_project_scope(uuid)", "0014_controlled_project_scope_lock.sql"],
+  ["jev_lock_actor_authorization(uuid,uuid)", "0024_github_authorization_serialization.sql"]
 ]);
 
 function extractAuditedWriterBody(sql, signature) {

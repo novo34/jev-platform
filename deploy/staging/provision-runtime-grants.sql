@@ -69,7 +69,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO jev_runtime;
 
 -- Definer writer privileges are explicit and non-delegable. Historical
 -- PUBLIC/foreign grants must fail the verifier; sanitize PUBLIC and runtime
--- GRANT OPTION before reinstating the seven approved EXECUTE grants.
+-- GRANT OPTION before reinstating the eight approved EXECUTE grants.
 DO $jev_writers$
 DECLARE
   signature text;
@@ -80,6 +80,7 @@ BEGIN
     'jev_create_task(uuid,uuid,uuid,text,text,jsonb)',
     'jev_create_environment(uuid,uuid,text,text,text,jsonb)',
     'jev_lock_project_scope(uuid)',
+    'jev_lock_actor_authorization(uuid,uuid)',
     'jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)',
     'jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)'
   ]
@@ -115,6 +116,7 @@ GRANT INSERT, UPDATE ON TABLE jobs, worker_instances TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_task(uuid, uuid, uuid, text, text, jsonb) TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_environment(uuid, uuid, text, text, text, jsonb) TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_lock_project_scope(uuid) TO jev_runtime;
+GRANT EXECUTE ON FUNCTION jev_lock_actor_authorization(uuid,uuid) TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)
   TO jev_runtime;
 GRANT EXECUTE ON FUNCTION jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)

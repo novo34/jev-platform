@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { authorizeProject, type AuthenticatedUser, type ProjectPermission } from "@jev/auth";
+import { authorizeProject, lockActorAuthorization, type AuthenticatedUser, type ProjectPermission } from "@jev/auth";
 import { z } from "zod";
 import { GitHubAppClient, GitHubError, assertTaskBranch, type GitHubRepositoryScope } from "./github-app.js";
 import type { ControlCommand, ControlContext } from "./types.js";
@@ -122,6 +122,7 @@ export class GitHubOperations {
       ownedReservation = true;
       await db.query("BEGIN");
       await db.query("SELECT jev_lock_project_scope($1::uuid)", [command.projectId]);
+      await lockActorAuthorization(db, context.actor.id, command.projectId);
       const activeActor = await this.activeActor(db, context, command.projectId, permission);
       const lockedScope = await this.scope(db, command, context);
       if (JSON.stringify(lockedScope) !== JSON.stringify(scope)) throw new GitHubError("GITHUB_CONFLICT");
@@ -222,7 +223,19 @@ export class GitHubOperations {
           AND o.status IN ('PENDING','SUCCESS','UNKNOWN')`,
       [context.actor.organizationId, command.projectId, scope.repositoryKey, input.taskId]);
     if (!writers.rowCount || writers.rows.some((row) => !row.github_user_id)) throw new GitHubError("GITHUB_FORBIDDEN");
+    // Every PR commit must have been produced by the controlled App path.
+    // This rejects an unrecorded direct GitHub writer, including a trusted reviewer.
+    const commits = z.array(z.object({ sha })).min(1).max(249).safeParse(await this.app.pullRequestCommits(scope, input.number));
+    if (!commits.success || commits.data.at(-1)?.sha !== input.approvedSha) throw new GitHubError("GITHUB_FORBIDDEN");
+    const recorded = await db.query(
+      `SELECT result->'commit'->>'sha' AS sha FROM github_operations
+        WHERE organization_id=$1 AND project_id=$2 AND repository_id=$3 AND task_id=$4
+          AND action='GITHUB_WRITE_FILE' AND status='SUCCESS'`,
+      [context.actor.organizationId, command.projectId, scope.repositoryKey, input.taskId]);
+    const controlledCommits = new Set(recorded.rows.map(row => row.sha));
+    if (commits.data.some(commit => !controlledCommits.has(commit.sha))) throw new GitHubError("GITHUB_FORBIDDEN");
     const writerIdentities = new Set(writers.rows.map((row) => Number(row.github_user_id)));
+    await this.assertServerMergePolicy(scope, writerIdentities, pr.user.id);
     const latest = new Map<number, typeof reviews.data[number]>();
     for (const review of reviews.data.sort((a, b) => a.id - b.id)) {
       if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)) latest.set(review.user.id, review);
@@ -234,4 +247,47 @@ export class GitHubOperations {
             review.user.id !== pr.user.id && !writerIdentities.has(review.user.id);
         })) throw new GitHubError("GITHUB_FORBIDDEN");
   }
+
+  /** Read-only Administration permission inspects complete classic protection;
+   * GitHub enforces these requirements atomically at merge. No bypass is granted.
+   */
+  private async assertServerMergePolicy(scope: Scope, writers: Set<number>, prAuthorId: number): Promise<void> {
+    if (!this.policy) throw new GitHubError("GITHUB_FORBIDDEN");
+    const empty = z.array(z.unknown()).max(0);
+    const protection = z.object({
+      enforce_admins: z.object({ enabled: z.literal(true) }),
+      allow_force_pushes: z.object({ enabled: z.literal(false) }),
+      allow_deletions: z.object({ enabled: z.literal(false) }),
+      required_status_checks: z.object({ strict: z.literal(true), checks: z.array(z.object({ context: z.string(), app_id: number })) }),
+      required_pull_request_reviews: z.object({ required_approving_review_count: z.number().int().min(1),
+        dismiss_stale_reviews: z.literal(true), require_code_owner_reviews: z.literal(true), require_last_push_approval: z.literal(true),
+        bypass_pull_request_allowances: z.object({ users: empty, teams: empty, apps: empty }).optional() })
+    }).safeParse(await this.app.branchProtection(scope, scope.defaultBranch));
+    if (!protection.success || !this.policy.requiredChecks.every(required => protection.data.required_status_checks.checks.some(check => check.context === required.name && check.app_id === required.appId))) throw new GitHubError("GITHUB_FORBIDDEN");
+    if (protection.data.required_pull_request_reviews.bypass_pull_request_allowances === undefined) {
+      // REST may omit this optional field. Require an explicit zero from the
+      // matching GraphQL rule; unknown, hidden, null or partial data is denied.
+      const bypass = z.object({ errors: empty.optional(), data: z.object({ repository: z.object({ ref: z.object({
+        branchProtectionRule: z.object({ bypassPullRequestAllowances: z.object({ totalCount: z.literal(0) }) })
+      }) }) }) }).safeParse(await this.app.branchBypassAllowances(scope, scope.defaultBranch));
+      if (!bypass.success) throw new GitHubError("GITHUB_FORBIDDEN");
+    }
+    const errors = z.object({ errors: empty }).safeParse(await this.app.codeOwnerErrors(scope, scope.defaultBranch));
+    if (!errors.success) throw new GitHubError("GITHUB_FORBIDDEN");
+    const file = z.object({ type: z.literal("file"), encoding: z.literal("base64"), content: z.string(), size: z.number().int().min(1).max(8192) })
+      .safeParse(await this.app.codeOwners(scope, scope.defaultBranch));
+    if (!file.success) throw new GitHubError("GITHUB_FORBIDDEN");
+    const lines = Buffer.from(file.data.content, "base64").toString("utf8").split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+    if (lines.length !== 1 || !/^\*\s+@[A-Za-z0-9-]+(?:\s+@[A-Za-z0-9-]+)*$/.test(lines[0])) throw new GitHubError("GITHUB_FORBIDDEN");
+    const owners = lines[0].split(/\s+/).slice(1);
+    if (!owners.length || owners.length > 20) throw new GitHubError("GITHUB_FORBIDDEN");
+    for (const owner of owners) {
+      const identity = z.object({ id: number }).safeParse(await this.app.publicIdentity(scope, owner.slice(1)));
+      if (!identity.success || !this.policy.trustedReviewerIds.includes(identity.data.id) || writers.has(identity.data.id) || identity.data.id === prAuthorId) throw new GitHubError("GITHUB_FORBIDDEN");
+      const access = z.object({ permission: z.enum(["admin", "write", "maintain"]), user: z.object({ id: number }) })
+        .safeParse(await this.app.collaboratorPermission(scope, owner.slice(1)));
+      if (!access.success || access.data.user.id !== identity.data.id) throw new GitHubError("GITHUB_FORBIDDEN");
+    }
+  }
+
 }

@@ -33,7 +33,7 @@ export interface GitHubRepositoryScope {
 }
 
 type Fetch = typeof globalThis.fetch;
-type GitHubPermissions = Partial<Record<"contents" | "pull_requests" | "checks" | "actions", "read" | "write">>;
+type GitHubPermissions = Partial<Record<"contents" | "pull_requests" | "checks" | "actions", "read" | "write">> & { administration?: "read" };
 
 function positiveId(id: number): void {
   if (!Number.isSafeInteger(id) || id <= 0) {
@@ -273,6 +273,54 @@ export class GitHubAppClient {
     ]);
     // Raw observations are evidence, never an automatic merge authorization.
     return { checkRuns, status, workflowRuns, observationsOnly: true };
+  }
+
+  async pullRequestCommits(scope: GitHubRepositoryScope, number: number): Promise<unknown[]> {
+    positiveId(number);
+    const path = repositoryPath(scope);
+    const token = await this.token(scope, { pull_requests: "read" });
+    const commits: unknown[] = [];
+    for (let page = 1; page <= 3; page++) {
+      const result = await this.request<unknown[]>(`${path}/pulls/${number}/commits?per_page=100&page=${page}`, token);
+      if (!Array.isArray(result)) throw new GitHubError("GITHUB_UNAVAILABLE");
+      commits.push(...result);
+      // GitHub caps this endpoint at 250 commits; never accept its truncated limit.
+      if (commits.length >= 250) throw new GitHubError("GITHUB_FORBIDDEN");
+      if (result.length < 100) return commits;
+    }
+    throw new GitHubError("GITHUB_UNAVAILABLE");
+  }
+
+  async branchProtection(scope: GitHubRepositoryScope, branch: string): Promise<unknown> {
+    return this.request(`${repositoryPath(scope)}/branches/${encodeURIComponent(branch)}/protection`, await this.token(scope, { administration: "read" }));
+  }
+
+  async branchBypassAllowances(scope: GitHubRepositoryScope, branch: string): Promise<unknown> {
+    repositoryPath(scope);
+    const [owner, name] = scope.fullName.split("/");
+    return this.request("/graphql", await this.token(scope, { administration: "read", contents: "read" }), "POST", {
+      query: "query JEVBranchBypass($owner:String!,$name:String!,$ref:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$ref){branchProtectionRule{bypassPullRequestAllowances(first:1){totalCount}}}}}",
+      variables: { owner, name, ref: `refs/heads/${branch}` }
+    });
+  }
+
+  async codeOwnerErrors(scope: GitHubRepositoryScope, branch: string): Promise<unknown> {
+    return this.request(`${repositoryPath(scope)}/codeowners/errors?ref=${encodeURIComponent(branch)}`, await this.token(scope, { contents: "read" }));
+  }
+
+  async collaboratorPermission(scope: GitHubRepositoryScope, login: string): Promise<unknown> {
+    if (!/^[A-Za-z0-9-]{1,39}$/.test(login)) throw new GitHubError("GITHUB_INVALID_REQUEST");
+    return this.request(`${repositoryPath(scope)}/collaborators/${login}/permission`, await this.token(scope, {}));
+  }
+
+  async codeOwners(scope: GitHubRepositoryScope, branch: string): Promise<unknown> {
+    return this.request(`${repositoryPath(scope)}/contents/.github/CODEOWNERS?ref=${encodeURIComponent(branch)}`,
+      await this.token(scope, { contents: "read" }));
+  }
+
+  async publicIdentity(scope: GitHubRepositoryScope, login: string): Promise<unknown> {
+    if (!/^[A-Za-z0-9-]{1,39}$/.test(login)) throw new GitHubError("GITHUB_INVALID_REQUEST");
+    return this.request(`/users/${login}`, await this.token(scope, {}));
   }
 
   async reviews(scope: GitHubRepositoryScope, number: number): Promise<unknown[]> {

@@ -236,3 +236,36 @@ test("merge sends an exact approved SHA without bypass flags", async () => {
     assert.equal(calls.length, 2);
   }
 });
+
+
+test("merge policy inspection uses explicit read-only App permissions", async () => {
+  const { client, calls } = fixture(() => ({}));
+  await client.branchProtection(scope, "main");
+  await client.codeOwners(scope, "main");
+  await client.codeOwnerErrors(scope, "main");
+  await client.publicIdentity(scope, "trusted-reviewer");
+  await client.collaboratorPermission(scope, "trusted-reviewer");
+  const permissions = calls.filter(call => call.url.endsWith("/access_tokens")).map(call => JSON.parse(call.init.body).permissions);
+  assert.deepEqual(permissions, [{ administration: "read" }, { contents: "read" }, { contents: "read" }, {}, {}]);
+  assert.ok(calls.filter(call => !call.url.endsWith("/access_tokens")).every(call => call.init.method === "GET"));
+  await assert.rejects(client.publicIdentity(scope, "../attacker"), { code: "GITHUB_INVALID_REQUEST" });
+});
+
+test("PR commit provenance paginates and refuses GitHub's 250-commit truncation limit", async () => {
+  const { client } = fixture(url => url.endsWith("page=1") ? Array(100).fill({ sha }) : [{ sha }]);
+  assert.equal((await client.pullRequestCommits(scope, 9)).length, 101);
+  const capped = fixture(url => url.endsWith("page=3") ? Array(50).fill({ sha }) : Array(100).fill({ sha }));
+  await assert.rejects(capped.client.pullRequestCommits(scope, 9), { code: "GITHUB_FORBIDDEN" });
+});
+
+
+test("optional bypass inspection is a fixed read-only GraphQL query with variables", async () => {
+  const { client, calls } = fixture(() => ({}));
+  await client.branchBypassAllowances(scope, "main");
+  const body = JSON.parse(calls[1].init.body);
+  assert.equal(calls[1].url, "https://api.github.com/graphql");
+  assert.match(body.query, /^query JEVBranchBypass/);
+  assert.equal(body.query.includes("mutation"), false);
+  assert.equal(body.variables.ref, "refs/heads/main");
+  assert.deepEqual(JSON.parse(calls[0].init.body).permissions, { administration: "read", contents: "read" });
+});

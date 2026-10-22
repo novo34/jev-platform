@@ -157,3 +157,12 @@ export function bearerToken(authorization: string | undefined): string | undefin
   return scheme?.toLowerCase() === "bearer" && token ? token : undefined;
 }
 
+
+
+/** Hold user/membership rows through a transaction's external GitHub mutation.
+ * Call after the project scope lock and re-read authority after it is acquired.
+ * The narrow audited helper grants no UPDATE access to authentication rows.
+ */
+export async function lockActorAuthorization(db: Pick<Pool, "query">, actorId: string, projectId: string): Promise<void> {
+  await db.query("SELECT jev_lock_actor_authorization($1::uuid,$2::uuid)", [actorId, projectId]);
+}

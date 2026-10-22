@@ -77,7 +77,10 @@ production/staging branch targets are rejected.
 
 Code writes require RUNNING; merge requires APPROVED. Verified GitHub identities
 are required for writers. The existing controlled project lock serializes operations
-with lifecycle/approval/staging writers. Active session, role and membership are
+with lifecycle/approval/staging writers. The narrow audited
+jev_lock_actor_authorization helper then locks user and membership rows before
+session locks; concurrent role/status changes or membership/user deletion wait
+until the mutation transaction finishes. It grants no UPDATE on authorization tables. Active session, role and membership are
 rechecked after the lock and after token issuance, immediately before mutation.
 A missing GitHub configuration fails with 503; denied actions return 403, malformed
 input 400, command conflicts 409, and GitHub rate limits 429 with bounded retry hints.
@@ -121,6 +124,29 @@ A persisted non-stale human JEV approval must match the same task, commit and PR
 The final current role must still be ADMIN. GitHub receives the approved SHA and
 squash method without any bypass flags; external branch protections still apply.
 
+Every PR commit must match a SUCCESS GITHUB_WRITE_FILE commit recorded for the
+same tenant/project/repository/task. Unrecorded direct pushes and PRs reaching
+GitHub's 250-commit listing limit fail closed. Human writers are taken from the
+ledger, not inferred from the App bot's PR authorship.
+
+GitHub must also enforce the policy atomically at merge. The App reads classic
+branch protection with Administration **read-only**; it never changes settings.
+Require strict checks with the configured check App IDs; PR approval count >=1;
+dismiss stale approvals; CODEOWNER approval; approval of the most recent push;
+enforce administrators; disallow force pushes/deletions; and no PR bypass actors.
+REST bypass allowances may be omitted; in that case a read-only GraphQL query
+must return an explicit zero bypass allowances on the matching branch protection
+rule, with no errors. Null, hidden or unknown protection state denies merge. Ruleset-only repositories
+are not accepted by this deliberately narrow protection profile.
+
+The base branch's .github/CODEOWNERS must contain one global rule, for example
+`* @actual-independent-reviewer` (actual account chosen by the operator), plus
+optional blank/comment lines. Each owner must resolve to a configured trusted
+numeric GitHub ID, have repository write access, and be neither a task writer nor
+the PR author. GitHub's CODEOWNERS errors endpoint must return no errors. This
+makes GitHub enforce independent approval even if a previously observed approval
+is dismissed before the merge call. Teams and overriding path rules are denied.
+
 A COMMENTED Codex review or an arbitrary caller boolean is **not** an APPROVED
 review. Configure a genuine independent approving reviewer for the live merge
 test; never whitelist the implementer or fabricate approval evidence.
@@ -152,7 +178,8 @@ https://github.com/settings/apps/new under the authorized owning account.
 | Repository Checks | Read-only |
 | Repository Metadata | Read-only, automatically required |
 | Organization/account permissions | None |
-| Administration, Workflows and other repository permissions | None |
+| Repository Administration | Read-only, solely to inspect complete classic branch protection |
+| Workflows and other repository permissions | None |
 
 For the current novo34 staging scope, restrict installation to the owning account
 and **Only select repositories**. Install only on the explicitly authorized
@@ -160,6 +187,28 @@ acceptance repository. Registering, installing or changing an existing App and
 deploying the staging SHA require the operator's specific authorization.
 Do not use an official production repository as a disposable target without
 explicit approval.
+
+## Acceptance repository protection prerequisites
+
+Before authorizing the real test merge, inspect the acceptance repository's
+Settings → Branches → classic branch protection for its canonical default branch.
+Preserve all stronger existing protections. The profile must enforce:
+
+- Require a pull request, at least one approval, dismiss stale approvals, require
+  CODEOWNER review, and require approval of the most recent reviewable push.
+- Require the configured checks from their actual GitHub App sources, and require
+  branches to be up to date. Record check names and numeric App IDs in merge policy.
+- Do not allow bypassing protections (including administrators); no PR bypass
+  users, teams or Apps; no force pushes or branch deletion.
+- A valid base .github/CODEOWNERS global rule naming only trusted independent
+  reviewer accounts with repository write permission. Use actual verified numeric
+  IDs in JEV_GITHUB_MERGE_POLICY. GitHub must report no CODEOWNERS errors.
+
+Configuration changes to the real repository require specific operator approval;
+this implementation does not perform them. An unsupported ruleset-only profile,
+missing inspection permission or an unknown bypass result blocks merge. GitHub
+Administration **read** is needed only for inspection; never grant write or add
+this App to a bypass list to make a test pass.
 
 ## Secrets and staging configuration
 
@@ -264,30 +313,32 @@ vulnerabilities, with the complete regression required afterward.
 No old implementation, compatibility shim or temporary prototype is retained.
 
 
-### Consolidated local evidence — 2026-10-22 UTC
+### Consolidated validation evidence — 2026-10-22 UTC
 
-`DATABASE_URL=<disposable PostgreSQL 16> npm run check` passed on the consolidated
-worktree: 172 workspace source tests, 18 native transport tests, 4 Chromium UI tests,
-all workspace type checks and production builds. The database suite includes
-restricted-runtime grants and the installation callback under the runtime role;
-GitHub HTTP remains simulated. New lock-wait regressions reject expired sessions
-and a revoked administrator role before installation/identity persistence.
-CREATE_BRANCH validates the exact returned ref and SHA; malformed successful
-responses remain ambiguous, never replayed automatically.
+- Complete local `npm run check`: PASS — workspace type checks/builds,
+  186 source cases, 21 native transport cases and 4 real Chromium UI cases.
+  Final focused control regression: 57/57 PASS, including the additional
+  pre-lock membership-revocation denial (187 distinct workspace source cases).
+- Complete restricted production API/Worker smoke on real PostgreSQL 16 and
+  Node 22.23.3 (matching CI): PASS — 24 migrations, 8 source-pinned helpers,
+  4/4 privilege checks. Includes 24 CHECK-drift negative cases and concurrent
+  role/status/membership/user-delete authorization regressions.
+- `npm audit --json`: zero vulnerabilities in every severity.
+- Canonical Foundation repository-hygiene scan, scoped to Platform
+  apps/packages/scripts/deploy plus .mjs and excluding generated dist/coverage:
+  PASS, no findings, zero allowlist entries. `git diff --check`: PASS.
+- Changed-file credential-pattern scan: no private-key bodies or GitHub/provider
+  tokens. Consumer/independent review covers reuse, authorization and removal of
+  provisional code; no parallel integration implementation is retained.
 
-`npm audit --json`: zero vulnerabilities in every severity. Foundation's canonical
-repository-hygiene scanner, scoped to Platform apps/packages/scripts/deploy plus
-.mjs and excluding generated dist/coverage, returned PASS with no findings and
-zero allowlist entries. `git diff --check` passed; changed-file credential-pattern
-scan found no private-key bodies or GitHub/provider tokens. Manual consumer review
-and independent Codex review found no remaining P0/P1/P2 in the consolidated source.
-These checks do not constitute real GitHub App acceptance. Exact published commit,
-Actions results and SHA-bound review evidence are recorded in PR #23.
+Fresh disposable fixtures apply migrations from zero; no published migration or
+production ledger is rewritten. The release verifier includes all eight GitHub
+CHECK constraints with exact PostgreSQL 16 expressions and the narrow eighth
+actor-lock helper with explicit ACL/source parity. Existing writer, trigger,
+column privilege and executable-code controls remain enforced. Process smoke
+failures expose only static error codes, never raw child logs or credential URLs.
 
-
-The consolidated remote run also exposed the release verifier's pre-PLT-010 CHECK
-inventory. It now includes the eight constraints from migrations 0021–0023 and
-pins their exact PostgreSQL 16 expressions. The complete restricted production
-API/Worker smoke passes locally with 23 verified migrations and 4/4 privilege
-checks, including 24 new negative cases (each GitHub CHECK missing, weakened or
-NOT VALID). Existing writer, trigger, ACL and executable-code gates are preserved.
+GitHub HTTP/API responses in automated suites are simulated. No real App
+installation, staged App deployment or authorized merge acceptance has run.
+Exact published commit, Actions results and final SHA-bound independent review
+are recorded in PR #23. These technical checks do not mark PLT-010 DONE.

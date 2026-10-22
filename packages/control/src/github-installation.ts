@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 import type { AuthenticatedUser } from "@jev/auth";
-import { authorizeProject } from "@jev/auth";
+import { authorizeProject, lockActorAuthorization } from "@jev/auth";
 import { GitHubAppClient, GitHubError, assertGitHubRepositoryName } from "./github-app.js";
 import { recordAudit } from "./audit.js";
 
@@ -172,6 +172,8 @@ export class GitHubInstallationFlow {
         const db = await pool.connect();
         try {
           await db.query("BEGIN");
+          await db.query("SELECT jev_lock_project_scope($1::uuid)", [pending.project_id]);
+          await lockActorAuthorization(db, pending.user_id, pending.project_id);
           const active = await db.query(
             `SELECT u.* FROM users u JOIN auth_sessions s ON s.user_id=u.id
               WHERE u.id=$1 AND u.organization_id=$2 AND u.status='ACTIVE' AND s.id=$3 AND s.expires_at>clock_timestamp() FOR SHARE OF s`,
@@ -218,6 +220,8 @@ export class GitHubInstallationFlow {
       const db = await pool.connect();
       try {
         await db.query("BEGIN");
+        await db.query("SELECT jev_lock_project_scope($1::uuid)", [pending.project_id]);
+          await lockActorAuthorization(db, pending.user_id, pending.project_id);
         // Revalidate the original human session and canonical tenant scope after network work.
         const active = await db.query(
           `SELECT r.id FROM repositories r JOIN projects p ON p.id=r.project_id
@@ -271,9 +275,11 @@ export class GitHubInstallationFlow {
       [pending.session_id, pending.user_id, pending.organization_id, pending.purpose, pending.expires_at]);
     const actor = current.rows[0];
     if (!actor) throw new GitHubError("GITHUB_FORBIDDEN");
-    await authorizeProject(db, { id: actor.id, organizationId: actor.organization_id,
-      role: actor.role, sessionId: pending.session_id, email: actor.email, displayName: actor.display_name },
-      pending.project_id, "project:write");
+    try {
+      await authorizeProject(db, { id: actor.id, organizationId: actor.organization_id,
+        role: actor.role, sessionId: pending.session_id, email: actor.email, displayName: actor.display_name },
+        pending.project_id, "project:write");
+    } catch { throw new GitHubError("GITHUB_FORBIDDEN"); }
   }
 
   private async bindIdentity(db: PoolClient, pending: Pending, identity: { id: number; login: string }): Promise<void> {

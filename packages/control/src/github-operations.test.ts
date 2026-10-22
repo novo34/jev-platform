@@ -16,9 +16,9 @@ const key = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.expor
 let actor: AuthenticatedUser, taskId: string;
 let calls: Array<{ url: string; method?: string; body?: any }>;
 let reviewerId = 900, reviewSha = headSha, checkConclusion = "success", checkApp = 15368, prSha = headSha;
+let serverPolicy = "valid", unrecordedCommit = false;
 let writeTimeout = false;
 let writeRateLimited = false;
-let onChecks: (() => Promise<void>) | undefined;
 let onWriteToken: (() => Promise<void>) | undefined;
 
 function service(database = pool, mergeEnabled = true): ControlService {
@@ -29,6 +29,25 @@ function service(database = pool, mergeEnabled = true): ControlService {
       if (body.permissions.contents === "write" && onWriteToken) { const hook = onWriteToken; onWriteToken = undefined; await hook(); }
       return Response.json({ token: "test-install-token", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ id: 42 }], permissions: body.permissions });
     }
+    if (path.endsWith("/protection")) { const response = serverPolicy === "missing" ? {} : {
+      enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false }, allow_deletions: { enabled: false },
+      required_status_checks: { strict: true, checks: [{ context: "validate", app_id: serverPolicy === "checks" ? 999 : 15368 }] },
+      required_pull_request_reviews: { required_approving_review_count: 1, dismiss_stale_reviews: true,
+        require_code_owner_reviews: true, require_last_push_approval: true,
+        bypass_pull_request_allowances: { users: [], teams: [], apps: serverPolicy === "bypass" ? [{ id: 123 }] : [] } }
+    };
+      if (serverPolicy.startsWith("graphql")) delete (response as any).required_pull_request_reviews.bypass_pull_request_allowances;
+      return Response.json(response);
+    }
+    if (path.endsWith("/graphql")) return Response.json(serverPolicy === "graphql-error" ? { errors: [{ message: "permission denied" }], data: null } : {
+      data: { repository: { ref: { branchProtectionRule: { bypassPullRequestAllowances: { totalCount: serverPolicy === "graphql-bypass" ? 1 : 0 } } } } }
+    });
+    if (path.includes("/codeowners/errors")) return Response.json({ errors: serverPolicy === "owner-errors" ? [{ message: "invalid owner" }] : [] });
+    if (path.includes("/collaborators/")) return Response.json({ permission: serverPolicy === "owner-access" ? "read" : "write", user: { id: 900 } });
+    if (path.includes("/contents/.github/CODEOWNERS")) { const text = serverPolicy === "owners" ? "* @implementer" : "* @independent-reviewer";
+      return Response.json({ type: "file", encoding: "base64", content: Buffer.from(text).toString("base64"), size: text.length }); }
+    if (path.includes("/users/")) return Response.json({ id: path.endsWith("/implementer") ? 800 : 900 });
+    if (path.includes("/pulls/9/commits?")) return Response.json(unrecordedCommit ? [{ sha: "d".repeat(40), author: { id: 900 } }, { sha: headSha }] : [{ sha: headSha }]);
     if (path.includes("/branches/")) return Response.json({ commit: { sha: baseSha } });
     if (path.endsWith("/git/refs")) return Response.json({ ref: body.ref, object: { sha: body.sha } });
     if (path.includes("/contents/")) {
@@ -38,7 +57,6 @@ function service(database = pool, mergeEnabled = true): ControlService {
     }
     if (path.endsWith("/pulls") && init?.method === "POST") return Response.json({ number: 9, html_url: "https://github.com/owner/op-repo/pull/9", head: { sha: headSha } });
     if (path.includes("/check-runs")) {
-      if (onChecks) { const hook = onChecks; onChecks = undefined; await hook(); }
       return Response.json({ total_count: 1, check_runs: [{ id: 1, name: "validate", app: { id: checkApp }, head_sha: headSha, status: "completed", conclusion: checkConclusion }] });
     }
     if (path.includes("/status?")) return Response.json({ state: "success", total_count: 0, statuses: [] });
@@ -62,6 +80,7 @@ async function transition(status: string) {
   await pool.query("SELECT jev_transition_task($1,$2,'USER',$3,'github test','{}'::jsonb)", [taskId, status, userId]);
 }
 async function approve() {
+  await execute("GITHUB_WRITE_FILE", { taskId, path: "acceptance.txt", content: "test", message: "feat: acceptance" });
   await execute("GITHUB_CREATE_PR", { taskId, title: "feat: controlled task", body: "test evidence" });
   for (const status of ["VERIFYING", "VERIFIED", "STAGING", "AWAITING_HUMAN"]) await transition(status);
   await createApproval(pool, { projectId, taskId, actorUserId: userId, decision: "APPROVED", revision: headSha,
@@ -81,13 +100,15 @@ beforeAll(async () => {
   await pool.query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'PROJECT_MANAGER')", [projectId, userId]);
 });
 beforeEach(async () => {
-  await pool.query("UPDATE users SET role='ADMIN' WHERE id=$1", [userId]);
+  await pool.query("UPDATE users SET role='ADMIN',status='ACTIVE' WHERE id=$1", [userId]);
+  await pool.query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'PROJECT_MANAGER') ON CONFLICT(project_id,user_id) DO UPDATE SET role=EXCLUDED.role", [projectId,userId]);
   actor = (await login(pool, { organizationId, email: "admin@operations.test", password: "operations-test-password" })).user;
   const order = (await pool.query("INSERT INTO orders(project_id,objective) VALUES($1,'controlled task') RETURNING id", [projectId])).rows[0].id;
   taskId = (await pool.query("SELECT jev_create_task($1,$2,$3,'GitHub Task','R1','[]'::jsonb) AS id", [projectId, order, repositoryId])).rows[0].id;
   await transition("READY"); await transition("RUNNING");
   calls = []; reviewerId = 900; reviewSha = headSha; checkConclusion = "success"; checkApp = 15368; prSha = headSha; writeTimeout = false;
-  onChecks = undefined; onWriteToken = undefined;
+  serverPolicy = "valid"; unrecordedCommit = false;
+  onWriteToken = undefined;
   writeRateLimited = false;
 });
 // Immutable task/approval/audit fixtures remain in the disposable test DB.
@@ -130,7 +151,7 @@ describe("GitHub operations (real PostgreSQL, simulated GitHub)", () => {
     expect(calls).toEqual([]);
   });
 
-  it.each(["logout", "expiry", "role"])("revalidates %s after waiting for the project lock", async (scenario) => {
+  it.each(["logout", "expiry"])("revalidates %s after waiting for the project lock", async (scenario) => {
     const blocker = await pool.connect();
     const commandId = randomUUID();
     try {
@@ -162,19 +183,54 @@ describe("GitHub operations (real PostgreSQL, simulated GitHub)", () => {
     await expect(execute("GITHUB_CREATE_BRANCH", { taskId })).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
   });
 
-  it("revalidates permission after installation-token issuance, immediately before the write", async () => {
-    onWriteToken = async () => { await pool.query("UPDATE users SET role='CLIENT' WHERE id=$1", [userId]); };
-    const commandId = randomUUID();
-    await expect(execute("GITHUB_WRITE_FILE", { taskId, path: "x", content: "x", message: "feat: x" }, commandId)).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
-    expect(calls.some((call) => call.url.includes("/contents/"))).toBe(false);
-    expect((await pool.query("SELECT status FROM github_operations WHERE organization_id=$1 AND command_id=$2", [organizationId, commandId])).rows[0].status).toBe("FAILED");
+  it.each(["role", "status", "membership"])("holds %s authority stable until an in-flight mutation commits", async (scenario) => {
+    if (scenario === "membership") {
+      await pool.query("UPDATE users SET role='PROJECT_MANAGER' WHERE id=$1", [userId]); actor.role = "PROJECT_MANAGER";
+    }
+    let revocation: Promise<unknown> | undefined;
+    onWriteToken = async () => {
+      const query = scenario === "role" ? "UPDATE users SET role='CLIENT' WHERE id=$1" :
+        scenario === "status" ? "UPDATE users SET status='DISABLED' WHERE id=$1" : "DELETE FROM project_memberships WHERE user_id=$1";
+      revocation = pool.query(query, [userId]);
+      let waiting = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const result = await pool.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query=$2", [applicationName, query]);
+        if (result.rowCount) { waiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+    };
+    try {
+      await expect(execute("GITHUB_WRITE_FILE", { taskId, path: "x", content: "x", message: "feat: x" })).resolves.toMatchObject({ ok: true });
+    } finally { await revocation; }
+    const count = calls.length;
+    await expect(execute("GITHUB_CREATE_BRANCH", { taskId })).rejects.toBeDefined();
+    expect(calls).toHaveLength(count);
   });
 
-  it("requires current ADMIN role at merge send time even if project:admin remains granted", async () => {
+  it("requires current ADMIN role at merge even if project:admin remains granted", async () => {
     await approve();
-    onChecks = async () => { await pool.query("UPDATE users SET role='PROJECT_MANAGER' WHERE id=$1", [userId]); };
+    await pool.query("UPDATE users SET role='PROJECT_MANAGER' WHERE id=$1", [userId]);
     await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha })).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
     expect(calls.some((call) => call.url.endsWith("/merge"))).toBe(false);
+  });
+
+  it("rejects a trusted reviewer who directly contributed an unrecorded PR commit", async () => {
+    await approve(); unrecordedCommit = true;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha })).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
+  });
+
+  it.each(["missing", "bypass", "checks", "owners", "owner-errors", "owner-access", "graphql-bypass", "graphql-error"])("denies merge without equivalent atomic server policy: %s", async (scenario) => {
+    await approve(); serverPolicy = scenario;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha })).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
+  });
+
+  it("requires an explicit GraphQL zero when REST omits bypass allowances", async () => {
+    await approve(); serverPolicy = "graphql-zero";
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha })).resolves.toMatchObject({ ok: true });
+    expect(calls.find(call => call.url.endsWith("/graphql"))?.body.query).toMatch(/^query JEVBranchBypass/);
   });
 
   it("rejects a different review account that reused the trusted reviewer's login", async () => {

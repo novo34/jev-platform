@@ -83,7 +83,7 @@ beforeEach(async () => {
   await pool.query("DELETE FROM github_repository_installations WHERE repository_id=$1", [repositoryId]);
   await pool.query("DELETE FROM github_installations WHERE installation_id=17");
   await pool.query("UPDATE repositories SET external_repository_id=NULL WHERE id=$1", [repositoryId]);
-  await pool.query("UPDATE users SET role='ADMIN' WHERE id=$1", [userId]);
+  await pool.query("UPDATE users SET role='ADMIN',status='ACTIVE' WHERE id=$1", [userId]);
   admin = (await login(pool, { organizationId, email: "admin@github.test", password: "github-installation-test-password" })).user;
   httpCalls = []; repoAdmin = true; accessible = true; revokeSession = false; oauthDelay = 0;
 });
@@ -161,7 +161,7 @@ describe("GitHub installation control boundary (real PostgreSQL, simulated GitHu
     } finally { await blocker.query("ROLLBACK"); blocker.release(); }
   });
 
-  it.each(["installation-role", "installation-expiry", "identity-expiry"])("revalidates %s after final transaction lock wait", async (scenario) => {
+  it.each(["installation-expiry", "identity-expiry"])("revalidates %s after final transaction lock wait", async (scenario) => {
     let control: ControlService, state: string;
     if (scenario === "identity-expiry") {
       control = service();
@@ -184,13 +184,76 @@ describe("GitHub installation control boundary (real PostgreSQL, simulated GitHu
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       expect(waiting).toBe(true);
-      if (scenario === "installation-role") await blocker.query("UPDATE users SET role='AUDITOR' WHERE id=$1", [userId]);
-      else await new Promise((resolve) => setTimeout(resolve, 2100));
+      await new Promise((resolve) => setTimeout(resolve, 2100));
       await blocker.query("COMMIT");
       expect(await result).toBe("GITHUB_FORBIDDEN");
       expect((await pool.query("SELECT 1 FROM github_user_identities WHERE organization_id=$1", [organizationId])).rowCount).toBe(0);
       expect((await pool.query("SELECT 1 FROM github_repository_installations WHERE repository_id=$1", [repositoryId])).rowCount).toBe(0);
     } finally { await blocker.query("ROLLBACK"); blocker.release(); }
+  });
+
+  it.each([["INSTALLATION", "role"], ["IDENTITY", "role"], ["INSTALLATION", "delete"], ["IDENTITY", "membership"]] as const)(
+    "holds %s authority through final bind against concurrent %s revocation", async (purpose, scenario) => {
+      if (scenario === "membership") {
+        await pool.query("UPDATE users SET role='DEVELOPER' WHERE id=$1", [userId]); admin.role = "DEVELOPER";
+        await pool.query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'DEVELOPER')", [projectId,userId]);
+      }
+      let revocation: Promise<string> | undefined;
+      let intercepted = false;
+      const query = scenario === "role" ? "UPDATE users SET role='AUDITOR' WHERE id=$1" :
+        scenario === "delete" ? "DELETE FROM users WHERE id=$1" : "DELETE FROM project_memberships WHERE user_id=$1";
+      const wrapped = { query: pool.query.bind(pool), connect: async () => {
+        const client = await pool.connect();
+        return { query: async (sql: string, values?: unknown[]) => {
+          if (!intercepted && sql.includes("INSERT INTO github_user_identities")) {
+            intercepted = true;
+            revocation = pool.query(query, [userId]).then(() => "committed", (error: any) => error.code);
+            let waiting = false;
+            for (let attempt = 0; attempt < 100; attempt++) {
+              const result = await pool.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query=$2", [applicationName,query]);
+              if (result.rowCount) { waiting = true; break; }
+              await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            expect(waiting).toBe(true);
+          }
+          return client.query(sql, values);
+        }, release: () => client.release() };
+      } } as unknown as Pool;
+      const control = service(wrapped);
+      let state: string;
+      if (purpose === "INSTALLATION") {
+        ({ state } = await start(control));
+        await control.completeGitHubInstallation({ state, cookieState: state, installationId: 17 }, "setup-lock");
+      } else {
+        const result = await control.execute<{ cookieState: string }>({ commandId: randomUUID(), action: "CONNECT_GITHUB_IDENTITY", projectId, payload: { repositoryId } }, { actor: admin, correlationId: "identity-lock" });
+        state = result.data.cookieState;
+      }
+      try {
+        await expect(control.completeGitHubInstallation({ state, cookieState: state, code: "test-code" }, "stable-bind")).resolves.toBeDefined();
+      } finally { expect(await revocation).toBe(scenario === "delete" ? "23503" : "committed"); }
+      expect(intercepted).toBe(true);
+      expect((await pool.query("SELECT 1 FROM github_user_identities WHERE organization_id=$1", [organizationId])).rowCount).toBe(1);
+    });
+
+  it("rejects membership revoked before final identity authorization lock", async () => {
+    let revoke = false;
+    const wrapped = { query: pool.query.bind(pool), connect: async () => {
+      const client = await pool.connect();
+      return { query: async (sql: string, values?: unknown[]) => {
+        if (revoke && sql.includes("SELECT jev_lock_project_scope")) {
+          revoke = false;
+          await pool.query("DELETE FROM project_memberships WHERE user_id=$1", [developerId]);
+        }
+        return client.query(sql, values);
+      }, release: () => client.release() };
+    } } as unknown as Pool;
+    const control = service(wrapped);
+    const result = await control.execute<{ cookieState: string }>({ commandId: randomUUID(), action: "CONNECT_GITHUB_IDENTITY", projectId, payload: { repositoryId } }, { actor: developer, correlationId: "revoke-before-lock" });
+    const state = result.data.cookieState; revoke = true;
+    try {
+      await expect(control.completeGitHubInstallation({ state, cookieState: state, code: "test-code" }, "revoked-membership")).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+      expect((await pool.query("SELECT 1 FROM github_user_identities WHERE organization_id=$1", [organizationId])).rowCount).toBe(0);
+    } finally { await pool.query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'DEVELOPER')", [projectId,developerId]); }
   });
 
   it("does not bind an installation if the authorization deadline expires during OAuth", async () => {

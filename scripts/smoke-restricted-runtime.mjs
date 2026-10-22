@@ -16,20 +16,30 @@ import { verifyDatabaseTopology } from "./verify-db-topology.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const running = [];
+const diagnostics = new WeakMap();
 
 function ensure(condition, message) {
   if (!condition) throw new Error(message);
 }
 function startProcess(relativePath, env) {
   const child = spawn(process.execPath, [path.join(root, relativePath)], {
-    cwd: root, env: { ...process.env, ...env }, stdio: "ignore"
+    cwd: root, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"]
   });
+  const diagnostic = { path: relativePath, codes: new Set() };
+  diagnostics.set(child, diagnostic);
+  const observe = chunk => {
+    // Persist static error codes only. Never print raw child logs, DB URLs or keys.
+    for (const code of chunk.toString().match(/\b(?:ERR_[A-Z_]+|EADDRINUSE|EACCES|ECONNREFUSED|ENOTFOUND|SyntaxError|TypeError|ReferenceError)\b/g) ?? []) diagnostic.codes.add(code);
+    for (const match of chunk.toString().matchAll(/"code"\s*:\s*"([0-9A-Z]{5})"/g)) diagnostic.codes.add(match[1]);
+  };
+  child.stdout.on("data", observe); child.stderr.on("data", observe);
   running.push(child);
   return child;
 }
 async function waitForHealth(child, port) {
   for (let attempt = 0; attempt < 80; attempt++) {
-    ensure(child.exitCode === null, "restricted runtime process exited before health check");
+    const diagnostic = diagnostics.get(child);
+    ensure(child.exitCode === null, `restricted runtime process exited before health check (${diagnostic.path}; exit=${child.exitCode}; codes=${[...diagnostic.codes].join(",") || "none"})`);
     try {
       const result = await fetch("http://127.0.0.1:" + port + "/health", {
         signal: AbortSignal.timeout(750)
@@ -220,8 +230,8 @@ try {
     runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
   });
 
-  // Codex P1: a legacy owner-privileged helper not in the seven audited
-  // writers must make the live gate fail, even if all seven remain valid.
+  // Codex P1: a legacy owner-privileged helper not in the eight audited
+  // writers must make the live gate fail, even if all eight remain valid.
   const rogueDefiner = "public.jev_unreviewed_owner_writer()";
   await admin.query(`
     CREATE FUNCTION ${rogueDefiner} RETURNS integer
@@ -244,7 +254,7 @@ try {
   } finally {
     await admin.query(`DROP FUNCTION ${rogueDefiner}`);
   }
-  ensure((await verify()).controlled_writers === 7,
+  ensure((await verify()).controlled_writers === 8,
     "unapproved definer cleanup did not restore the topology");
 
   // P1: SQL procedures are prokind='p', not prokind='f'. PostgreSQL makes
@@ -271,7 +281,7 @@ try {
   } finally {
     await admin.query("DROP PROCEDURE " + rogueProcedure);
   }
-  ensure((await verify()).controlled_writers === 7,
+  ensure((await verify()).controlled_writers === 8,
     "unapproved procedure cleanup did not restore the topology");
 
   // P1: RETURN trigger cannot be invoked with SELECT/CALL, but PUBLIC TEMP
@@ -304,7 +314,7 @@ try {
   } finally {
     await admin.query("DROP FUNCTION " + rogueTrigger);
   }
-  ensure((await verify()).controlled_writers === 7,
+  ensure((await verify()).controlled_writers === 8,
     "unapproved privileged trigger cleanup did not restore the topology");
 
 
@@ -338,7 +348,7 @@ try {
     await admin.query(`REVOKE USAGE ON SCHEMA "${foreignSchema}" FROM PUBLIC`);
     await admin.query(`DROP SCHEMA "${foreignSchema}" CASCADE`);
   }
-  ensure((await verify()).controlled_writers === 7,
+  ensure((await verify()).controlled_writers === 8,
     "foreign-schema definer cleanup did not restore the topology");
 
 
@@ -396,7 +406,7 @@ try {
     }
   }
 
-  // P1: the audited seven writers can drift in-place without a migration
+  // P1: the audited eight writers can drift in-place without a migration
   // ledger update. Compare the actual pg_proc.prosrc body to the immutable
   // final CREATE OR REPLACE definition; grants/owner/search_path are unchanged.
   const originalDefinition = (await admin.query(
@@ -417,7 +427,7 @@ try {
   } finally {
     await admin.query(originalDefinition);
   }
-  ensure((await verify()).controlled_writers === 7,
+  ensure((await verify()).controlled_writers === 8,
     "writer definition restoration failed");
 
   await admin.query(`ALTER FUNCTION ${writer} SECURITY INVOKER`);

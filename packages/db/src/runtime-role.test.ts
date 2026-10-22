@@ -40,7 +40,8 @@ describe("restricted deployment writer", () => {
         "0020_model_gateway.sql",
         "0021_github_app_installation.sql",
         "0022_github_operation_idempotency.sql",
-        "0023_github_verified_identities.sql"
+        "0023_github_verified_identities.sql",
+        "0024_github_authorization_serialization.sql"
       ];
       for (const file of files) {
         let sql = await readFile(path.join(DEFAULT_MIGRATIONS_DIR, file), "utf8");
@@ -573,6 +574,7 @@ describe("restricted deployment writer", () => {
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_environment(uuid,uuid,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_transition_task(uuid,text,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_lock_project_scope(uuid) FROM "${role}"`);
+        await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_lock_actor_authorization(uuid,uuid) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON FUNCTION "${schema}".jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb) FROM "${role}"`);
         await owner.query(`REVOKE ALL ON SCHEMA "${schema}" FROM "${role}"`);
