@@ -6,7 +6,8 @@ import { ModelGatewayError } from "./types.js";
 
 const validKey = Buffer.alloc(32, 42).toString("base64");
 const unreachablePool = {
-  connect: () => { throw new Error("unexpected database access"); }
+  connect: () => { throw new Error("unexpected database access"); },
+  query: () => { throw new Error("unexpected database read"); }
 } as unknown as Pool;
 
 describe("PLT-009 encryption key fail-closed validation", () => {
@@ -24,6 +25,9 @@ describe("PLT-009 encryption key fail-closed validation", () => {
     const store = new ProviderCredentialStore(unreachablePool, badKey);
     await expect(
       store.configure("org-id", "openai", "valid-secret-value", "actor-id")
+    ).rejects.toMatchObject({ code: "SECRET_STORE_UNAVAILABLE" } satisfies Partial<ModelGatewayError>);
+    await expect(
+      store.getSecret("org-id", "openai")
     ).rejects.toMatchObject({ code: "SECRET_STORE_UNAVAILABLE" } satisfies Partial<ModelGatewayError>);
   });
 
