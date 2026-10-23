@@ -11,6 +11,8 @@ services:
       JEV_GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/jev_github_app_key
       # Missing merge policy keeps merges disabled; never derive it from a request.
       JEV_GITHUB_MERGE_POLICY: ${JEV_STAGING_GITHUB_MERGE_POLICY:-}
+      # Public trust roots only. Missing keys deny merges; never mount verifier private keys here.
+      JEV_GITHUB_VERIFICATION_KEYS: ${JEV_STAGING_GITHUB_VERIFICATION_KEYS:-}
     secrets:
       - jev_github_app_key
 
