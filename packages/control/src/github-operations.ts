@@ -192,7 +192,7 @@ export class GitHubOperations {
     const pr = await this.app.pullRequest(scope, input.number);
     if (pr.state !== "open" || pr.draft !== false || pr.head?.sha !== input.approvedSha || pr.head.ref !== branch ||
         pr.head.repo?.id !== scope.repositoryId || pr.base?.repo?.id !== scope.repositoryId ||
-        pr.base.ref !== scope.defaultBranch || !number.safeParse(pr.user?.id).success) throw new GitHubError("GITHUB_FORBIDDEN");
+        pr.base.ref !== scope.defaultBranch || !pr.user || !number.safeParse(pr.user.id).success) throw new GitHubError("GITHUB_FORBIDDEN");
     const approval = await db.query(
       `SELECT a.id FROM approvals a JOIN tasks t ON t.id=a.task_id JOIN projects p ON p.id=t.project_id
         WHERE a.task_id=$1 AND t.project_id=$2 AND p.organization_id=$3 AND t.status='APPROVED'
@@ -235,7 +235,8 @@ export class GitHubOperations {
     const controlledCommits = new Set(recorded.rows.map(row => row.sha));
     if (commits.data.some(commit => !controlledCommits.has(commit.sha))) throw new GitHubError("GITHUB_FORBIDDEN");
     const writerIdentities = new Set(writers.rows.map((row) => Number(row.github_user_id)));
-    await this.assertServerMergePolicy(scope, writerIdentities, pr.user.id);
+    const prAuthorId = pr.user.id;
+    await this.assertServerMergePolicy(scope, writerIdentities, prAuthorId);
     const latest = new Map<number, typeof reviews.data[number]>();
     for (const review of reviews.data.sort((a, b) => a.id - b.id)) {
       if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)) latest.set(review.user.id, review);
@@ -244,7 +245,7 @@ export class GitHubOperations {
         !this.policy.trustedReviewerIds.some((id) => {
           const review = latest.get(id);
           return review?.state === "APPROVED" && review.commit_id === input.approvedSha &&
-            review.user.id !== pr.user.id && !writerIdentities.has(review.user.id);
+            review.user.id !== prAuthorId && !writerIdentities.has(review.user.id);
         })) throw new GitHubError("GITHUB_FORBIDDEN");
   }
 

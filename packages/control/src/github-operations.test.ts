@@ -64,7 +64,8 @@ function service(database = pool, mergeEnabled = true): ControlService {
     if (path.includes("/reviews?")) return Response.json([{ id: 1, commit_id: reviewSha, state: "APPROVED", user: { id: reviewerId, login: reviewerId === 800 ? "implementer" : "independent-reviewer" } }]);
     if (path.endsWith("/merge")) return Response.json({ merged: true, sha: mergeSha });
     if (path.endsWith("/pulls/9")) return Response.json({ number: 9, state: "open", draft: false, html_url: "https://github.com/owner/op-repo/pull/9",
-      user: { id: 500, login: "jev-app[bot]" }, head: { sha: prSha, ref: `feat/jev-${taskId}`, repo: { id: 42 } }, base: { ref: "main", repo: { id: 42 } } });
+      user: serverPolicy === "deleted-author" ? null : { id: 500, login: "jev-app[bot]" },
+      head: { sha: prSha, ref: `feat/jev-${taskId}`, repo: serverPolicy === "deleted-fork" ? null : { id: 42 } }, base: { ref: "main", repo: { id: 42 } } });
     return Response.json({ id: 42, full_name: "owner/op-repo", default_branch: "main" });
   } });
   const operations = new GitHubOperations(database, app, mergeEnabled ? {
@@ -221,7 +222,7 @@ describe("GitHub operations (real PostgreSQL, simulated GitHub)", () => {
     expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
   });
 
-  it.each(["missing", "bypass", "checks", "owners", "owner-errors", "owner-access", "graphql-bypass", "graphql-error"])("denies merge without equivalent atomic server policy: %s", async (scenario) => {
+  it.each(["missing", "bypass", "checks", "owners", "owner-errors", "owner-access", "graphql-bypass", "graphql-error", "deleted-fork", "deleted-author"])("denies merge without equivalent atomic server policy: %s", async (scenario) => {
     await approve(); serverPolicy = scenario;
     await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha })).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
     expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);

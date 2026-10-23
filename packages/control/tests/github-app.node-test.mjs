@@ -76,6 +76,50 @@ test("invalid configuration is rejected without exposing key material", () => {
   });
 });
 
+test("PR, reviews, checks and workflow observations use deep public allowlists", async () => {
+  const extra = { temp_clone_token: "test-only-clone-secret", future_credential: "test-only-unknown-secret" };
+  const repo = { id: 42, ...extra };
+  const user = { id: 7, login: "reviewer", ...extra };
+  const pr = { number: 9, state: "open", draft: false, html_url: "https://github.com/owner/repository/pull/9",
+    head: { sha, ref: "feat/task", repo, ...extra }, base: { ref: "main", repo, ...extra }, user, ...extra };
+  const review = { id: 1, commit_id: sha, state: "APPROVED", user, ...extra };
+  const check = { id: 1, name: "validate", head_sha: sha, status: "completed", conclusion: "success", app: { id: 8, ...extra }, ...extra };
+  const status = { id: 2, context: "validate", state: "success", ...extra };
+  const workflow = { id: 3, head_sha: sha, status: "completed", conclusion: "success",
+    repository: repo, head_repository: repo, pull_requests: [pr], ...extra };
+  const { client } = fixture((url) => url.includes("/reviews?") ? [review] :
+    url.includes("/check-runs") ? { total_count: 1, check_runs: [check], ...extra } :
+    url.includes("/actions/runs") ? { total_count: 1, workflow_runs: [workflow], ...extra } :
+    url.includes("/status?") ? { state: "success", statuses: [status], ...extra } : pr);
+  const actualPr = await client.pullRequest(scope, 9);
+  assert.deepEqual(actualPr.head.repo, { id: 42 });
+  assert.deepEqual(actualPr.base.repo, { id: 42 });
+  assert.deepEqual(actualPr.user, { id: 7, login: "reviewer" });
+  const reviews = await client.reviews(scope, 9);
+  const checks = await client.checks(scope, sha);
+  assert.deepEqual(checks.workflowRuns, { total_count: 1, workflow_runs: [{ id: 3, head_sha: sha, status: "completed", conclusion: "success" }] });
+  assert.deepEqual(checks.checkRuns.check_runs[0].app, { id: 8 });
+  assert.equal(reviews[0].commit_id, sha);
+  const serialized = JSON.stringify({ actualPr, reviews, checks });
+  assert.equal(serialized.includes("test-only-"), false);
+  assert.equal(serialized.includes("temp_clone_token"), false);
+  assert.equal(serialized.includes("future_credential"), false);
+});
+
+test("malformed public observations fail closed without upstream error details", async () => {
+  const { client } = fixture(() => ({ malformed: "test-only-upstream-secret" }));
+  await assert.rejects(client.pullRequest(scope, 9), { message: "GITHUB_UNAVAILABLE" });
+  await assert.rejects(client.reviews(scope, 9), { message: "GITHUB_UNAVAILABLE" });
+  await assert.rejects(client.checks(scope, sha), { message: "GITHUB_UNAVAILABLE" });
+});
+
+test("PR observations preserve deleted fork and deleted author nulls without upstream extras", async () => {
+  const expected = { number: 9, state: "closed", draft: false, html_url: "https://github.com/owner/repository/pull/9",
+    head: { sha, ref: "feat/deleted", repo: null }, base: { ref: "main", repo: { id: 42 } }, user: null };
+  const { client } = fixture(() => ({ ...expected, temp_clone_token: "test-only-deleted-fork-secret" }));
+  assert.deepEqual(await client.pullRequest(scope, 9), expected);
+});
+
 test("main/master, ref aliases and malformed task branches never reach GitHub", async () => {
   const { client, calls } = fixture();
   for (const branch of ["main", "master", "MAIN", "refs/heads/main", "heads/master", "feat/../main",
@@ -200,7 +244,8 @@ test("ambiguous network failure is sanitized and never retried", async () => {
 });
 
 test("checks read the exact SHA and label results as observations, not authorization", async () => {
-  const { client, calls } = fixture(() => ({ total_count: 0 }));
+  const { client, calls } = fixture((url) => url.includes("/check-runs") ? { total_count: 0, check_runs: [] } :
+    url.includes("/actions/runs") ? { total_count: 0, workflow_runs: [] } : { state: "success", statuses: [] });
   const result = await client.checks(scope, sha);
   assert.equal(result.observationsOnly, true);
   assert.equal("reviews" in result, false);
@@ -209,10 +254,11 @@ test("checks read the exact SHA and label results as observations, not authoriza
 });
 
 test("review history paginates and refuses to silently truncate", async () => {
-  const { client, calls } = fixture((url) => url.endsWith("page=1") ? Array.from({ length: 100 }, (_, id) => ({ id })) : [{ id: 101 }]);
+  const review = (id) => ({ id, commit_id: sha, state: "APPROVED", user: { id: 7, login: "reviewer" } });
+  const { client, calls } = fixture((url) => url.endsWith("page=1") ? Array.from({ length: 100 }, (_, id) => review(id + 1)) : [review(101)]);
   assert.equal((await client.reviews(scope, 1)).length, 101);
   assert.equal(calls.length, 3);
-  const bounded = fixture(() => Array(100).fill({ id: 1 }));
+  const bounded = fixture(() => Array(100).fill(review(1)));
   await assert.rejects(bounded.client.reviews(scope, 1), { code: "GITHUB_UNAVAILABLE" });
   assert.equal(bounded.calls.length, 11);
 });

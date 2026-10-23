@@ -1,4 +1,41 @@
 import { createPrivateKey, sign, type KeyObject } from "node:crypto";
+import { z } from "zod";
+
+// Deep allowlists: repository objects embedded in PRs and workflow runs can
+// contain temporary credentials too. TypeScript annotations do not strip JSON.
+const publicId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const publicUser = z.object({ id: publicId, login: z.string() });
+const publicPullRequest = z.object({
+  number: publicId, state: z.string(), draft: z.boolean(), html_url: z.string(),
+  head: z.object({ sha: z.string(), ref: z.string(), repo: z.object({ id: publicId }).nullable() }),
+  base: z.object({ ref: z.string(), repo: z.object({ id: publicId }).nullable() }),
+  user: publicUser.nullable()
+});
+const publicReview = z.object({
+  id: publicId, commit_id: z.string(), state: z.string(), user: publicUser.nullable()
+});
+const publicChecks = z.object({ total_count: z.number().int().nonnegative(), check_runs: z.array(z.object({
+  id: publicId, name: z.string(), head_sha: z.string(), status: z.string(),
+  conclusion: z.string().nullable(), app: z.object({ id: publicId }).nullable()
+})) });
+const publicStatuses = z.object({
+  state: z.string(), total_count: z.number().int().nonnegative().optional(),
+  statuses: z.array(z.object({
+    id: publicId.optional(), context: z.string().optional(), state: z.string(),
+    description: z.string().nullable().optional(), target_url: z.string().nullable().optional()
+  }))
+});
+const publicWorkflows = z.object({ total_count: z.number().int().nonnegative(), workflow_runs: z.array(z.object({
+  id: publicId.optional(), name: z.string().nullable().optional(), head_sha: z.string().optional(),
+  status: z.string(), conclusion: z.string().nullable(), path: z.string().optional(),
+  event: z.string().optional(), run_number: publicId.optional(), html_url: z.string().optional()
+})) });
+
+function publicResponse<T>(schema: z.ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new GitHubError("GITHUB_UNAVAILABLE");
+  return result.data;
+}
 
 export type GitHubFailureCode =
   | "GITHUB_INVALID_CONFIGURATION"
@@ -183,7 +220,7 @@ export class GitHubAppClient {
     const path = repositoryPath(scope);
     const result = await this.request<{ id: number; full_name: string; default_branch: string }>(path, await this.token(scope, { contents: "read" }));
     if (result.id !== scope.repositoryId || typeof result.full_name !== "string" ||
-        result.full_name.toLowerCase() !== scope.fullName.toLowerCase()) {
+        result.full_name.toLowerCase() !== scope.fullName.toLowerCase() || typeof result.default_branch !== "string") {
       throw new GitHubError("GITHUB_FORBIDDEN");
     }
     // GitHub can include temporary credentials (for example temp_clone_token).
@@ -198,7 +235,7 @@ export class GitHubAppClient {
       ref: `refs/heads/${branch}`, sha: baseSha
     }, beforeSend);
     if (result?.ref !== `refs/heads/${branch}` || result?.object?.sha !== baseSha) throw new GitHubError("GITHUB_UNAVAILABLE");
-    return result;
+    return { ref: result.ref, object: { sha: result.object.sha } };
   }
 
   async branch(scope: GitHubRepositoryScope, branch: string): Promise<{ commit: { sha: string } }> {
@@ -243,14 +280,9 @@ export class GitHubAppClient {
     }, beforeSend);
   }
 
-  async pullRequest(scope: GitHubRepositoryScope, number: number): Promise<{
-    number: number; state: string; draft: boolean; html_url: string;
-    head: { sha: string; ref: string; repo: { id: number } };
-    base: { ref: string; repo: { id: number } };
-    user: { id: number; login: string };
-  }> {
+  async pullRequest(scope: GitHubRepositoryScope, number: number): Promise<z.infer<typeof publicPullRequest>> {
     positiveId(number);
-    return this.request(`${repositoryPath(scope)}/pulls/${number}`, await this.token(scope, { pull_requests: "read" }));
+    return publicResponse(publicPullRequest, await this.request(`${repositoryPath(scope)}/pulls/${number}`, await this.token(scope, { pull_requests: "read" })));
   }
 
   async mergePullRequest(scope: GitHubRepositoryScope, number: number, approvedSha: string, beforeSend?: () => Promise<void>): Promise<{ merged: boolean; sha: string }> {
@@ -273,8 +305,10 @@ export class GitHubAppClient {
       this.request(`${path}/commits/${sha}/status?per_page=100`, token),
       this.request(`${path}/actions/runs?head_sha=${sha}&per_page=100`, token)
     ]);
-    // Raw observations are evidence, never an automatic merge authorization.
-    return { checkRuns, status, workflowRuns, observationsOnly: true };
+    // Filtered observations are evidence, never an automatic merge authorization.
+    return { checkRuns: publicResponse(publicChecks, checkRuns),
+      status: publicResponse(publicStatuses, status),
+      workflowRuns: publicResponse(publicWorkflows, workflowRuns), observationsOnly: true };
   }
 
   async pullRequestCommits(scope: GitHubRepositoryScope, number: number): Promise<unknown[]> {
@@ -333,7 +367,7 @@ export class GitHubAppClient {
     for (let page = 1; page <= 10; page++) {
       const result = await this.request<unknown[]>(`${path}/pulls/${number}/reviews?per_page=100&page=${page}`, token);
       if (!Array.isArray(result)) throw new GitHubError("GITHUB_UNAVAILABLE");
-      reviews.push(...result);
+      reviews.push(...publicResponse(z.array(publicReview), result));
       if (result.length < 100) return reviews;
     }
     // Bounded retrieval must not silently report a partial review history as complete.
