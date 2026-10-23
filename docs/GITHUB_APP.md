@@ -1,9 +1,10 @@
 # PLT-010 — GitHub App integration
 
-Status: implementation under technical validation on PR #23. **Not accepted / not DONE.**
-Automated tests use real PostgreSQL and a real browser, but simulate GitHub HTTP.
-Only real installation and guarded operations in an explicitly authorized test
-repository can satisfy functional acceptance.
+Status: real functional acceptance completed on 2026-10-23; evidence below.
+Platform PR #23 integration and canonical Foundation closure remain pending.
+**PLT-010 is not yet DONE.** Automated suites use real PostgreSQL and a real
+browser with simulated GitHub HTTP; the live evidence separately covers the
+actual App and explicitly authorized repository operations.
 
 ## Architecture and scope
 
@@ -269,7 +270,7 @@ Rotate keys by generating a replacement in GitHub, replacing protected configura
 then authorizing an API restart and verifying scoped access before revoking the old
 key. Keys are read on API startup; editing the file alone does not reload the key.
 
-## Real acceptance procedure — not yet executed
+## Real acceptance procedure and coverage
 
 1. Authorize the exact staging SHA, a controlled test repository, and App installation.
    Confirm TLS, private PostgreSQL 16, restricted jev_runtime and rollback prerequisites.
@@ -357,7 +358,112 @@ actor-lock helper with explicit ACL/source parity. Existing writer, trigger,
 column privilege and executable-code controls remain enforced. Process smoke
 failures expose only static error codes, never raw child logs or credential URLs.
 
-GitHub HTTP/API responses in automated suites are simulated. No real App
-installation, staged App deployment or authorized merge acceptance has run.
-Exact published commit, Actions results and final SHA-bound independent review
-are recorded in PR #23. These technical checks do not mark PLT-010 DONE.
+GitHub HTTP/API responses in automated suites are simulated. The separate real
+acceptance below was executed after these historical technical checks. Exact
+published commits, Actions results and independent technical review references
+are recorded in PR #23. Technical checks alone do not mark PLT-010 DONE.
+
+## Real functional acceptance evidence — 2026-10-23 UTC
+
+The operator authorized a separate staging App, the existing test repository,
+staging deployment, and each actual merge. The final application code deployed
+was `0882b4c661a2bd6a92bcf895cb1417981fcd565e`; its complete
+[Platform CI run 40007656907](https://github.com/novo34/jev-platform/actions/runs/40007656907)
+passed all four jobs, including PostgreSQL-backed authorization/protection
+regressions, Compose, production image builds and staging runtime smoke.
+Workspace type checks and all 25 native transport cases passed. A separate
+read-only technical reviewer verified the five published changed-file hashes
+and found no P0/P1/P2 findings for the single-operator increment.
+
+### Canonical functional criteria
+
+| Criterion | Observed real evidence |
+| --- | --- |
+| App installation flow works | `JEV-novo34-staging`, App ID `5440682`, installation `174485693`, registered repository `novo34/SaSS_Workee` (GitHub ID `1095303181`); Setup/OAuth completed in the browser. Canonical repository installation and immutable user identity `novo34` / `17856013` were persisted and queried. |
+| Temporary installation tokens are used | Actual token-issuance responses were HTTP 201 and subsequent repository-scoped reads/writes succeeded. The client requests fresh single-repository, operation-specific tokens; exact permission/expiry/scope behavior is additionally covered by native tests. No token values are recorded here. |
+| Branch, commit, PR, checks and merge obey guards | Real authenticated JEV control commands created task branches, wrote the three-line acceptance artifact, opened PRs, read real checks/reviews, replayed identical command IDs, and merged only after canonical human approval. Final accepted task/PR/SHAs and audit results are below. |
+| Direct main/master writes are prevented | Real caller-supplied `branch: main` was rejected with HTTP 400. Protected `main` requires PRs and strict App-bound checks, includes administrators and disallows bypass, force pushes and deletion. The App's runtime diagnostic verified all seven protection/policy conditions. Native/PostgreSQL tests additionally exercise main/master and protected-task-branch denials. Main changed only through the explicitly authorized setup and guarded acceptance merges. |
+
+### Setup and observed corrections
+
+- Real acceptance found GitHub's `temp_clone_token` in a raw repository response.
+  Fixes `ed69efaf1feefd5f98d3b2c06d230e0ab4e9012f` and
+  `49e37734cfa275502f885dae30a2c3774ceca5fb` added deep public response
+  allowlists. Post-deploy JEV repository reads returned only `id`, `full_name`
+  and `default_branch`. PR/check/workflow/review regressions cover nested fields.
+- The real combined-status endpoint returned HTTP 403 with the requirement
+  `statuses=read`. Fix `1a81ddc019e537a63a79063385790630c3523a4e` requests
+  that distinct read-only permission. After the operator accepted the existing
+  installation's permission update, token issuance and all three observation
+  endpoints returned success, including through the authenticated JEV API.
+- The operator explicitly changed the second-human-review requirement to
+  `single_operator`. Independent technical verification and canonical human
+  authorization remain mandatory; no alternate account was presented as an
+  independent person. Legacy independent-review mode retains its old guards.
+- The operator made the acceptance repository public and configured classic
+  protection for `main`: PR required, review count zero, CODEOWNER/last-push
+  approval off, strict `jev-acceptance` from GitHub Actions App `15368`, enforce
+  administrators, no bypass/force/deletion. The actual App read confirmed all
+  conditions, including explicit zero bypass allowances.
+- Separately authorized [setup PR #2](https://github.com/novo34/SaSS_Workee/pull/2)
+  added only the read-only CI workflow and merged as
+  `67338a6b031473929492eb676ba3bcf11b8e6a38`. Setup CI
+  [40010118063](https://github.com/novo34/SaSS_Workee/actions/runs/40010118063)
+  checked syntax of 122 tracked PHP files. This setup merge is not itself
+  evidence of the JEV guarded merge.
+
+### Final guarded acceptance
+
+- Canonical task: `2575365c-4b8c-4e4f-b427-812c21d18b39`.
+- Task branch: `feat/jev-2575365c-4b8c-4e4f-b427-812c21d18b39`, created from
+  the configured base `67338a6b031473929492eb676ba3bcf11b8e6a38`.
+- [PR #3](https://github.com/novo34/SaSS_Workee/pull/3), exact approved head:
+  `b84a87da13f4a1e10b6e9e5702645443b2416d5b`. It adds only
+  `.jev/acceptance/plt010-973c0e56.md`, a three-line Markdown test artifact.
+- [Required CI run 40021804043](https://github.com/novo34/SaSS_Workee/actions/runs/40021804043)
+  passed on that exact head, from App `15368`. Logs confirm all 122 PHP syntax
+  checks and byte-exact acceptance artifact validation passed.
+- [Independent technical verification](https://github.com/novo34/SaSS_Workee/pull/3#issuecomment-6374438909)
+  found no P0/P1/P2 findings in the exact diff. GitHub review count was zero,
+  as intended for the explicitly configured single-operator mode.
+- The task advanced through the existing WorkOrderService lifecycle to
+  `AWAITING_HUMAN`, recording the actual CI/review references. No staging
+  environment was registered for this artifact-only acceptance repository;
+  no staging deployment was invented or required evidence bypassed.
+- After explicit operator authorization, canonical approval
+  `4340fc33-e1c0-4b03-a353-d55799592472` was recorded using `createApproval`:
+  `APPROVED`, non-stale, matching the task, exact head and PR URL.
+- Before that approval, JEV merge returned HTTP 403 and persisted a
+  `FAILED` / `GITHUB_FORBIDDEN` audit event. After approval, a different SHA
+  was also rejected and its operation ledger remained `FAILED`.
+- Authorized command `plt010-2575365c-merge-approved-01` returned
+  `merged: true`, SHA `c46e305c98dd5502ccaeb88a1bcf4b6e01dee862`.
+  The canonical operation ledger and merge audit both persisted `SUCCESS`.
+- Independent GitHub inspection confirms PR #3 was merged by
+  `jev-novo34-staging[bot]` at `2026-10-23T20:57:07Z`; protected `main`
+  points to that SHA. [Post-merge CI run 40023142644](https://github.com/novo34/SaSS_Workee/actions/runs/40023142644)
+  also passed. The canonical task remains `APPROVED`: merge did not mark it
+  DONE or deploy production.
+
+### Additional real denials, idempotency and limits
+
+The earlier [PR #1](https://github.com/novo34/SaSS_Workee/pull/1) remains open
+as pre-CI acceptance evidence. Identical command ID/payload replays returned the
+same original branch result, commit and PR without duplicate writes. Real calls
+also confirmed unauthenticated HTTP 401, unlinked repository HTTP 403, extra
+branch payload HTTP 400, same write ID with changed content HTTP 409, and
+revoked-session HTTP 401. These do not substitute for a separate live
+cross-tenant-user test.
+
+OAuth missing-cookie/state/expiry/replay cases, cross-tenant isolation,
+concurrent revocation, stale canonical approvals and failing/misattributed
+checks have automated real-PostgreSQL/simulated-GitHub regression coverage;
+not every adversarial case was repeated against live GitHub. The acceptance
+repository CI is syntax/artifact smoke, not full PHP application functional
+testing. This work does not implement PLT-011/012/013, claim a database restore
+test, deploy production or authorize other merges.
+
+The real functional evidence is complete for PLT-010's four canonical criteria.
+Platform PR #23 must still be integrated with specific authorization, followed
+by canonical Foundation reconciliation before marking PLT-010 DONE. No next
+backlog task is started by this document.
