@@ -1,9 +1,10 @@
-import { generateKeyPairSync, randomUUID } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApproval, createDatabasePool, migrate } from "@jev/db";
 import { hashPassword, login, type AuthenticatedUser } from "@jev/auth";
 import type { Pool } from "pg";
 import { ControlService, GitHubAppClient, GitHubOperations, type ControlAction } from "./index.js";
+import { GITHUB_VERIFICATION_DOMAIN } from "./github-verification.js";
 
 const applicationName = "jev-gh-ops-" + randomUUID();
 const pool = createDatabasePool({ application_name: applicationName });
@@ -13,6 +14,10 @@ const repositoryId = randomUUID(), foreignRepositoryId = randomUUID(), userId = 
 const installationId = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 12), 16) + 1;
 const baseSha = "a".repeat(40), headSha = "b".repeat(40), mergeSha = "c".repeat(40);
 const key = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+// Test-only key simulates a separate verifier. Runtime receives public material only.
+const verifier = generateKeyPairSync("ed25519"), implementer = generateKeyPairSync("ed25519");
+const verificationKeys = [{ keyId: "qa-v1", issuer: "independent-qa-process", purpose: "independent_verifier",
+  publicKey: verifier.publicKey.export({ type: "spki", format: "pem" }).toString() }];
 let actor: AuthenticatedUser, taskId: string;
 let calls: Array<{ url: string; method?: string; body?: any }>;
 let reviewerId = 900, reviewSha = headSha, checkConclusion = "success", checkApp = 15368, prSha = headSha;
@@ -20,9 +25,10 @@ let serverPolicy = "valid", unrecordedCommit = false;
 let writeTimeout = false;
 let writeRateLimited = false;
 let reviewsEmpty = false, reviewState = "APPROVED";
+let checkStatus = "completed";
 let onWriteToken: (() => Promise<void>) | undefined;
 
-function service(database = pool, mergeEnabled = true, singleOperator = false): ControlService {
+function service(database = pool, mergeEnabled = true, singleOperator = false, trustedKeys: unknown = verificationKeys): ControlService {
   const app = new GitHubAppClient({ appId: "123", privateKey: key }, { fetch: async (url, init) => {
     const path = String(url); const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url: path, method: init?.method, body });
@@ -61,7 +67,7 @@ function service(database = pool, mergeEnabled = true, singleOperator = false): 
     }
     if (path.endsWith("/pulls") && init?.method === "POST") return Response.json({ number: 9, html_url: "https://github.com/owner/op-repo/pull/9", head: { sha: headSha } });
     if (path.includes("/check-runs")) {
-      return Response.json({ total_count: 1, check_runs: [{ id: 1, name: "validate", app: { id: checkApp }, head_sha: headSha, status: "completed", conclusion: checkConclusion }] });
+      return Response.json({ total_count: 1, check_runs: [{ id: 1, name: "validate", app: { id: checkApp }, head_sha: headSha, status: checkStatus, conclusion: checkConclusion }] });
     }
     if (path.includes("/status?")) return Response.json({ state: "success", total_count: 0, statuses: [] });
     if (path.includes("/actions/runs")) return Response.json({ total_count: 1, workflow_runs: [{ status: "completed", conclusion: "success" }] });
@@ -76,7 +82,7 @@ function service(database = pool, mergeEnabled = true, singleOperator = false): 
     approvalMode: "single_operator", requiredChecks: [{ name: "validate", appId: 15368 }]
   } : {
     trustedReviewerIds: [900, 800, 500], requiredChecks: [{ name: "validate", appId: 15368 }]
-  } : undefined);
+  } : undefined, trustedKeys);
   return new ControlService(database, undefined, operations);
 }
 
@@ -86,10 +92,31 @@ function execute(action: ControlAction, payload: Record<string, unknown> = {}, c
 async function transition(status: string) {
   await pool.query("SELECT jev_transition_task($1,$2,'USER',$3,'github test','{}'::jsonb)", [taskId, status, userId]);
 }
-async function approve() {
+async function approve(verificationCase = "valid") {
   await execute("GITHUB_WRITE_FILE", { taskId, path: "acceptance.txt", content: "test", message: "feat: acceptance" });
   await execute("GITHUB_CREATE_PR", { taskId, title: "feat: controlled task", body: "test evidence" });
-  for (const status of ["VERIFYING", "VERIFIED", "STAGING", "AWAITING_HUMAN"]) await transition(status);
+  await transition("VERIFYING");
+  const cycleId = (await pool.query("SELECT id FROM task_state_history WHERE task_id=$1 AND to_status='VERIFYING' ORDER BY created_at DESC LIMIT 1", [taskId])).rows[0].id;
+  const report: Record<string, unknown> = { version: 1, keyId: "qa-v1", issuer: "independent-qa-process",
+    organizationId, projectId, repositoryId, taskId, verificationCycleId: cycleId, repositoryFullName: "owner/op-repo", pullRequestNumber: 9,
+    commitSha: headSha, result: "PASS", reportSha256: "e".repeat(64),
+    issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  if (["organizationId", "projectId", "repositoryId", "taskId"].includes(verificationCase)) report[verificationCase] = randomUUID();
+  if (verificationCase === "pullRequestNumber") report.pullRequestNumber = 8;
+  if (verificationCase === "commitSha") report.commitSha = baseSha;
+  if (verificationCase === "issuer") report.issuer = "implementer";
+  if (verificationCase === "result") report.result = "FAIL";
+  if (verificationCase === "wrong-cycle") report.verificationCycleId = randomUUID();
+  if (verificationCase === "expired") report.expiresAt = new Date(Date.now() - 1000).toISOString();
+  if (verificationCase === "previous-cycle") report.issuedAt = new Date(Date.now() - 60_000).toISOString();
+  const bytes = Buffer.from(JSON.stringify(report));
+  const envelope = { payload: bytes.toString("base64url"), signature: sign(null,
+    Buffer.concat([Buffer.from(GITHUB_VERIFICATION_DOMAIN), bytes]),
+    verificationCase === "implementer-key" ? implementer.privateKey : verifier.privateKey).toString("base64url") };
+  if (verificationCase === "tampered") envelope.payload = Buffer.from(JSON.stringify({ ...report, reportSha256: "f".repeat(64) })).toString("base64url");
+  const evidence = verificationCase === "missing" ? {} : { technicalVerification: verificationCase === "forged" ? { passed: true, issuer: "independent-qa-process" } : envelope };
+  await pool.query("SELECT jev_transition_task($1,'VERIFIED','AGENT','independent-qa-process','technical verification',$2::jsonb)", [taskId, JSON.stringify(evidence)]);
+  for (const status of ["STAGING", "AWAITING_HUMAN"]) await transition(status);
   await createApproval(pool, { projectId, taskId, actorUserId: userId, decision: "APPROVED", revision: headSha,
     commitSha: headSha, pullRequestUrl: "https://github.com/owner/op-repo/pull/9", evidence: { verificationSource: "test-fixture" } });
   await transition("APPROVED");
@@ -118,11 +145,49 @@ beforeEach(async () => {
   onWriteToken = undefined;
   writeRateLimited = false;
   reviewsEmpty = false; reviewState = "APPROVED";
+  checkStatus = "completed";
 });
 // Immutable task/approval/audit fixtures remain in the disposable test DB.
 afterAll(async () => { await pool.end(); });
 
 describe("GitHub operations (real PostgreSQL, simulated GitHub)", () => {
+  it("rejects merge without persisted independent technical verification", async () => {
+    await approve("missing"); serverPolicy = "single"; reviewsEmpty = true;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+      .rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
+  });
+  it.each(["forged", "implementer-key", "tampered", "issuer", "organizationId", "projectId", "repositoryId", "taskId",
+    "pullRequestNumber", "commitSha", "expired", "previous-cycle", "wrong-cycle", "result"])("rejects invalid persisted technical verification: %s", async scenario => {
+    await approve(scenario); serverPolicy = "single"; reviewsEmpty = true;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+      .rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
+  });
+  it("fails closed when the independent verifier key is absent or revoked", async () => {
+    await approve(); serverPolicy = "single"; reviewsEmpty = true;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true, [])))
+      .rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
+  });
+  it("revalidates verification expiry immediately before sending a merge", async () => {
+    await approve(); serverPolicy = "single"; reviewsEmpty = true;
+    const now = Date.now();
+    onWriteToken = async () => { vi.spyOn(Date, "now").mockReturnValue(now + 120_000); };
+    try {
+      await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+        .rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+      expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it("does not duplicate an in-flight PENDING mutation", async () => {
+    const commandId = randomUUID(), payload = { taskId, path: "x", content: "x", message: "feat: x" };
+    onWriteToken = async () => {
+      await expect(execute("GITHUB_WRITE_FILE", payload, commandId)).rejects.toMatchObject({ code: "GITHUB_CONFLICT" });
+    };
+    await expect(execute("GITHUB_WRITE_FILE", payload, commandId)).resolves.toMatchObject({ ok: true });
+    expect(calls.filter(call => call.method === "PUT" && call.url.includes("/contents/"))).toHaveLength(1);
+  });
   it("reads only a linked repository in the authorized tenant/project", async () => {
     await expect(execute("GITHUB_READ_REPOSITORY")).resolves.toMatchObject({ ok: true, data: { id: 42 } });
     const count = calls.length;
@@ -364,11 +429,12 @@ describe("GitHub operations (real PostgreSQL, simulated GitHub)", () => {
     expect(calls.some(call => call.url.endsWith("/graphql"))).toBe(true);
   });
 
-  it.each(["head", "checks", "app", "stale", "unrecorded", "changes-requested", "not-admin"])(
+  it.each(["head", "checks", "pending-check", "app", "stale", "unrecorded", "changes-requested", "not-admin"])(
     "single operator preserves approval, CI, provenance and authority guards: %s", async scenario => {
       await approve(); serverPolicy = "single"; reviewsEmpty = true;
       if (scenario === "head") prSha = baseSha;
       if (scenario === "checks") checkConclusion = "failure";
+      if (scenario === "pending-check") checkStatus = "in_progress";
       if (scenario === "app") checkApp = 999;
       if (scenario === "stale") await pool.query("UPDATE approvals SET stale=TRUE WHERE task_id=$1", [taskId]);
       if (scenario === "unrecorded") unrecordedCommit = true;

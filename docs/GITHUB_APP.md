@@ -1,8 +1,12 @@
 # PLT-010 — GitHub App integration
 
-Status: real functional acceptance completed on 2026-10-23; evidence below.
-Platform PR #23 integration and canonical Foundation closure remain pending.
-**PLT-010 is not yet DONE.** Automated suites use real PostgreSQL and a real
+Status: functional acceptance and canonical closure completed on 2026-10-23.
+[Platform PR #23](https://github.com/novo34/jev-platform/pull/23) merged as
+`f86aa98107527edb27dc837882f0a9fed82ed654`; Foundation closure merged as
+`209cf728d4aea9a71af52d948a33a4db309112ac`. The canonical backlog records
+**PLT-010 DONE**; **PLT-011 remains TODO** and requires separate authorization.
+Post-closure security remediation is described below and was not present in
+the original acceptance. Automated suites use real PostgreSQL and a real
 browser with simulated GitHub HTTP; the live evidence separately covers the
 actual App and explicitly authorized repository operations.
 
@@ -463,7 +467,109 @@ repository CI is syntax/artifact smoke, not full PHP application functional
 testing. This work does not implement PLT-011/012/013, claim a database restore
 test, deploy production or authorize other merges.
 
-The real functional evidence is complete for PLT-010's four canonical criteria.
-Platform PR #23 must still be integrated with specific authorization, followed
-by canonical Foundation reconciliation before marking PLT-010 DONE. No next
-backlog task is started by this document.
+The original functional acceptance and subsequent canonical closure are complete.
+The acceptance fixture Task remains APPROVED, separately from backlog PLT-010 DONE.
+The deployment evidence above concerns staging; it does not establish production
+deployment or authorize another merge. No next backlog task is started here.
+
+## Post-closure audit remediation (not part of historical acceptance)
+
+The audit confirmed that the original merge guard did not authenticate persisted
+technical verification. The linked technical review comment and arbitrary
+`verificationSource` JSON were historical review evidence, not a machine-enforced
+independent verification credential. Migration 0025 and the signature guard below
+are new controls; no old approval/report is grandfathered into merge authorization.
+
+### Independent verifier trust and canonical evidence
+
+No Verification Engine or verification table is introduced. The existing
+WorkOrderService `transitionTask` flow records `evidence.technicalVerification`
+on the **VERIFYING → VERIFIED** transition in `task_state_history`. That history
+is append-only (0025); runtime has SELECT only. The later canonical human approval
+remains independently mandatory. Both merge modes require the technical report;
+`single_operator` still requires no second human/account/GitHub approval review.
+Legacy `independent` keeps its additional eligible GitHub reviewer requirements.
+
+The operator provisions `JEV_GITHUB_VERIFICATION_KEYS` as a JSON array of public
+trust roots, e.g. `[{"keyId":"qa-v1","issuer":"independent-qa-process",
+"purpose":"independent_verifier","publicKey":"<Ed25519 SPKI public PEM>"}]`.
+The staging overlay passes `JEV_STAGING_GITHUB_VERIFICATION_KEYS` to the API.
+This is trusted server configuration, never a command argument. Invalid keys
+reject startup; absent/unrecognized/revoked keys deny merge. Key changes require
+API restart. **Neither API/worker nor the implementing process may hold the
+verifier private key or permission to change this configuration.** Trust-root
+provisioning and genuine independent review remain operator responsibilities.
+An issuer name or `purpose` string supplied by a client alone confers no trust.
+
+The independent verifier reads the canonical task's latest VERIFYING history row
+and reviews the exact PR revision. After completing its review it builds a JSON
+report with these exact fields:
+
+```json
+{
+  "version": 1,
+  "keyId": "qa-v1",
+  "issuer": "independent-qa-process",
+  "organizationId": "<canonical UUID>",
+  "projectId": "<canonical UUID>",
+  "repositoryId": "<canonical repository UUID>",
+  "taskId": "<canonical UUID>",
+  "verificationCycleId": "<latest VERIFYING history UUID>",
+  "repositoryFullName": "owner/repository",
+  "pullRequestNumber": 3,
+  "commitSha": "<40 lowercase hex characters>",
+  "result": "PASS",
+  "reportSha256": "<64 lowercase hex digest of the independent review artifact>",
+  "issuedAt": "2026-10-23T22:00:00.000Z",
+  "expiresAt": "2026-10-23T23:00:00.000Z"
+}
+```
+
+Retain the review artifact in the verifier's audit store. The signature binds its
+digest; JEV does not retrieve that external artifact or judge the review's quality.
+On the verifier process only, serialize the report once as UTF-8 `payloadBytes`
+and sign `Buffer.concat([Buffer.from("JEV/PLT-010/technical-verification/v1\n"),
+payloadBytes])` using Node `crypto.sign(null, bytes, verifierPrivateKey)` (Ed25519).
+Pass `{payload: payloadBytes.toString("base64url"), signature:
+signatureBytes.toString("base64url")}` as `evidence.technicalVerification` through
+the existing VERIFIED transition. Anyone may relay the signed envelope; they
+cannot alter it or authorize another scope/revision/cycle. No private key is
+sent to JEV, placed in an environment variable, committed, or mounted in the API.
+
+The guard loads the latest VERIFIED evidence and VERIFYING cycle while holding
+the existing project lock. It validates signature, trusted issuer/key, PASS,
+tenant/project/repository identity/name/task/PR/SHA/cycle, issuance after that
+cycle, nonfuture issuance and expiry (maximum lifetime 24h). Ambiguous same-time
+cycles/reports fail closed. It repeats validation immediately before the GitHub
+mutation, including expiry. Missing/forged/expired evidence denies merge even
+when the human approval, GitHub reviews and checks pass. A new SHA or new cycle
+requires a new signed verification and the existing current human approval.
+The pre-existing project → actor/membership → session lock order is unchanged.
+
+### SQL integrity and deployment boundary
+
+Migration 0026 makes verified numeric GitHub IDs immutable (including tenant/user
+binding), validates initial tenant scope and ledger scope, and freezes operation
+scope/hash/actor/action/timestamp. New reservations start PENDING with no result.
+Only PENDING → SUCCESS/FAILED/UNKNOWN and FAILED → PENDING are allowed; SUCCESS
+results are immutable, UNKNOWN cannot be replayed automatically. Results exist
+only on SUCCESS. Existing rows are preserved, without inventing reconciliation.
+Unknown outcomes require investigation and an explicitly reviewed owner migration
+to reconcile; runtime has no reconciliation bypass. API/worker retain no owner,
+migrator, role membership or new SECURITY DEFINER writer privileges.
+
+Provisioning revokes historical table and column grants before restoring INSERT
+on identities/ledger, UPDATE(login,verified_at) on identities and UPDATE(status,
+result) on ledger. Task history has SELECT only. Startup and the topology gate
+reject broader effective ACLs; the gate verifies all 18 trigger bindings/bodies,
+26 migration checksums, and the existing eight pinned definer writers.
+The runtime remains trusted to report an actual HTTP response when finalizing a
+PENDING operation; these SQL controls do not make a fully compromised API process
+an authentic GitHub response signer. The signed independent verification is a
+separate trust boundary and cannot be manufactured by runtime SQL writes.
+
+These source changes do not apply migrations, grants, trust roots or configuration
+to existing staging/production. Rollout requires separate authorization and an
+independent verifier process/key under the isolation described above. Until then,
+this code deliberately denies merges lacking authentic evidence; it does not claim
+that a future verification module or live verifier deployment already exists.

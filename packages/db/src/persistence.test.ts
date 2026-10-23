@@ -255,7 +255,9 @@ describe("canonical PostgreSQL persistence", () => {
       "0021_github_app_installation.sql",
       "0022_github_operation_idempotency.sql",
         "0023_github_verified_identities.sql",
-        "0024_github_authorization_serialization.sql"
+      "0024_github_authorization_serialization.sql",
+      "0025_immutable_task_verification_history.sql",
+      "0026_github_immutable_identity_and_ledger.sql"
     ]);
   });
 });

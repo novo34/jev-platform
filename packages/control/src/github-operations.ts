@@ -5,6 +5,7 @@ import { z } from "zod";
 import { GitHubAppClient, GitHubError, assertTaskBranch, type GitHubRepositoryScope } from "./github-app.js";
 import type { ControlCommand, ControlContext } from "./types.js";
 import { recordAudit } from "./audit.js";
+import { GitHubTechnicalVerification } from "./github-verification.js";
 
 const number = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
@@ -34,7 +35,10 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 /** Subordinate to ControlService authorization; no independently exposed API. */
 export class GitHubOperations {
   private readonly policy?: GitHubMergePolicy;
-  constructor(private readonly pool: Pool, private readonly app: GitHubAppClient, policy?: GitHubMergePolicy) {
+  private readonly verification: GitHubTechnicalVerification;
+  constructor(private readonly pool: Pool, private readonly app: GitHubAppClient, policy?: GitHubMergePolicy,
+    verificationKeys: unknown = []) {
+    this.verification = new GitHubTechnicalVerification(verificationKeys);
     if (policy !== undefined) {
       const result = mergePolicySchema.safeParse(policy);
       if (!result.success) throw new GitHubError("GITHUB_INVALID_CONFIGURATION");
@@ -129,9 +133,11 @@ export class GitHubOperations {
       const lockedScope = await this.scope(db, command, context);
       if (JSON.stringify(lockedScope) !== JSON.stringify(scope)) throw new GitHubError("GITHUB_CONFLICT");
       const branch = await this.task(db, command, scope, payload.taskId, command.action === "GITHUB_MERGE_PR");
+      let verifyBeforeMerge: (() => void) | undefined;
       const beforeSend = async () => {
         const current = await this.activeActor(db, context, command.projectId, permission);
         if (command.action === "GITHUB_MERGE_PR" && current.role !== "ADMIN") throw new GitHubError("GITHUB_FORBIDDEN");
+        verifyBeforeMerge?.();
         sent = true;
       };
       let result: unknown;
@@ -153,7 +159,7 @@ export class GitHubOperations {
         }
         case "GITHUB_MERGE_PR": {
           const input = parse(mergePayload, payload);
-          await this.authorizeMerge(db, command, { ...context, actor: activeActor }, scope, branch, input);
+          verifyBeforeMerge = await this.authorizeMerge(db, command, { ...context, actor: activeActor }, scope, branch, input);
           result = await this.app.mergePullRequest(scope, input.number, input.approvedSha, beforeSend); break;
         }
         default: throw new GitHubError("GITHUB_INVALID_REQUEST");
@@ -189,7 +195,7 @@ export class GitHubOperations {
   }
 
   private async authorizeMerge(db: PoolClient, command: ControlCommand, context: ControlContext, scope: Scope, branch: string,
-    input: z.infer<typeof mergePayload>): Promise<void> {
+    input: z.infer<typeof mergePayload>): Promise<() => void> {
     if (!this.policy || context.actor.role !== "ADMIN") throw new GitHubError("GITHUB_FORBIDDEN");
     const pr = await this.app.pullRequest(scope, input.number);
     if (pr.state !== "open" || pr.draft !== false || pr.head?.sha !== input.approvedSha || pr.head.ref !== branch ||
@@ -203,6 +209,30 @@ export class GitHubOperations {
         `https://github.com/${scope.fullName}/pull/${input.number}`]
     );
     if (approval.rowCount !== 1) throw new GitHubError("GITHUB_FORBIDDEN");
+    // Read under the existing project lock: Task transitions cannot substitute
+    // evidence or start a new verification cycle while a merge is authorized.
+    const verification = (await db.query(
+      `SELECT h.evidence->'technicalVerification' AS evidence,h.created_at,
+        v.id AS cycle_id,v.created_at AS cycle_started_at,
+        (SELECT count(*) FROM task_state_history x WHERE x.task_id=h.task_id
+          AND x.to_status='VERIFYING' AND x.created_at=v.created_at) AS cycle_count,
+        (SELECT count(*) FROM task_state_history x WHERE x.task_id=h.task_id
+          AND x.to_status='VERIFIED' AND x.created_at=h.created_at) AS report_count
+        FROM task_state_history h
+        CROSS JOIN LATERAL (SELECT id,created_at FROM task_state_history
+          WHERE task_id=$1 AND to_status='VERIFYING' ORDER BY created_at DESC,id DESC LIMIT 1) v
+        WHERE h.task_id=$1 AND h.to_status='VERIFIED'
+        ORDER BY h.created_at DESC,h.id DESC LIMIT 1`, [input.taskId])).rows[0];
+    if (!verification?.cycle_started_at || Number(verification.cycle_count) !== 1 || Number(verification.report_count) !== 1 ||
+        verification.created_at < verification.cycle_started_at) {
+      throw new GitHubError("GITHUB_FORBIDDEN");
+    }
+    const assertVerification = () => this.verification.assert(verification.evidence, { organizationId: scope.organizationId,
+      projectId: command.projectId, repositoryId: scope.repositoryKey, taskId: input.taskId,
+      verificationCycleId: verification.cycle_id,
+      repositoryFullName: scope.fullName, pullRequestNumber: input.number, commitSha: input.approvedSha },
+      verification.cycle_started_at, verification.created_at);
+    assertVerification();
     const observations = await this.app.checks(scope, input.approvedSha);
     const checks = z.object({ total_count: z.number().int().nonnegative(), check_runs: z.array(z.object({
       id: number, name: z.string(), head_sha: sha, status: z.string(), conclusion: z.string().nullable(), app: z.object({ id: number })
@@ -246,12 +276,13 @@ export class GitHubOperations {
     if ([...latest.values()].some((item) => item.state === "CHANGES_REQUESTED")) throw new GitHubError("GITHUB_FORBIDDEN");
     // Explicit owner-approved mode: the canonical SHA-bound human approval above
     // remains mandatory, but no second GitHub account is required.
-    if (this.policy.approvalMode === "single_operator") return;
+    if (this.policy.approvalMode === "single_operator") return assertVerification;
     if (!this.policy.trustedReviewerIds.some((id) => {
           const review = latest.get(id);
           return review?.state === "APPROVED" && review.commit_id === input.approvedSha &&
             review.user.id !== prAuthorId && !writerIdentities.has(review.user.id);
         })) throw new GitHubError("GITHUB_FORBIDDEN");
+    return assertVerification;
   }
 
   /** Read-only Administration permission inspects complete classic protection;

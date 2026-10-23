@@ -30,7 +30,12 @@ if (githubVariables.some((name) => process.env[name] !== undefined)) {
     try { mergePolicy = JSON.parse(process.env.JEV_GITHUB_MERGE_POLICY); }
     catch { throw new Error("GITHUB_MERGE_CONFIGURATION_INVALID"); }
   }
-  githubOperations = new GitHubOperations(pool, github, mergePolicy);
+  let verificationKeys: unknown = [];
+  if (process.env.JEV_GITHUB_VERIFICATION_KEYS) {
+    try { verificationKeys = JSON.parse(process.env.JEV_GITHUB_VERIFICATION_KEYS); }
+    catch { throw new Error("GITHUB_VERIFICATION_CONFIGURATION_INVALID"); }
+  }
+  githubOperations = new GitHubOperations(pool, github, mergePolicy, verificationKeys);
 }
 const app = buildApi({ pool, githubInstallation, githubOperations });
 

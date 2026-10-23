@@ -99,6 +99,8 @@ afterAll(async () => {
   // Test-only teardown: approved Tasks intentionally forbid deployment
   // mutation. TRUNCATE avoids exercising business DML during cleanup.
   await pool.query("TRUNCATE TABLE deployments");
+  // Owner-only disposable teardown; runtime cannot truncate immutable history.
+  await pool.query("TRUNCATE TABLE task_state_history");
   await pool.query(
     "DELETE FROM tasks WHERE project_id IN (SELECT id FROM projects WHERE organization_id = $1)",
     [organizationId]
