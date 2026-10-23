@@ -424,6 +424,13 @@ La integración de código deberá usar PR.
 ### REQ-GIT-009
 El agente implementador no deberá verificar/aprobar su propio trabajo cuando se exige independencia.
 
+En instalaciones con un único operador humano se admite el modo explícito
+`single_operator`: no exige una segunda cuenta humana ni una aprobación de
+GitHub por otra persona. Conserva la verificación técnica independiente,
+los checks obligatorios y la aprobación humana vigente en JEV vinculada al
+commit y PR exactos. El modo se configura en el servidor, nunca en el comando
+del cliente; no concede bypasses ni fusiona o despliega automáticamente.
+
 ### REQ-GIT-010
 La Platform deberá bloquear promoción si faltan verification/human gates requeridos.
 

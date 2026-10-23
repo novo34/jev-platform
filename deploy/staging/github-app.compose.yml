@@ -1,0 +1,19 @@
+# Explicit opt-in overlay for the existing staging stack. Never use for production.
+# Relative paths are resolved against the first Compose file (repository root).
+services:
+  api:
+    environment:
+      JEV_GITHUB_APP_ID: ${JEV_STAGING_GITHUB_APP_ID:?GitHub App ID required}
+      JEV_GITHUB_APP_SLUG: ${JEV_STAGING_GITHUB_APP_SLUG:?GitHub App slug required}
+      JEV_GITHUB_CLIENT_ID: ${JEV_STAGING_GITHUB_CLIENT_ID:?GitHub App client ID required}
+      JEV_GITHUB_CLIENT_SECRET: ${JEV_STAGING_GITHUB_CLIENT_SECRET:?GitHub App client secret required}
+      JEV_GITHUB_CALLBACK_URL: ${JEV_STAGING_GITHUB_CALLBACK_URL:?GitHub callback URL required}
+      JEV_GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/jev_github_app_key
+      # Missing merge policy keeps merges disabled; never derive it from a request.
+      JEV_GITHUB_MERGE_POLICY: ${JEV_STAGING_GITHUB_MERGE_POLICY:-}
+    secrets:
+      - jev_github_app_key
+
+secrets:
+  jev_github_app_key:
+    file: ${JEV_STAGING_GITHUB_PRIVATE_KEY_FILE:?Secure host PEM path required}

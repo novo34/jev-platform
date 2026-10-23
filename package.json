@@ -15,12 +15,15 @@
     "typecheck": "npm run build -w @jev/shared && npm run build -w @jev/db && npm run build -w @jev/auth && npm run typecheck -w @jev/projects && npm run build -w @jev/projects && npm run typecheck -w @jev/model-gateway && npm run build -w @jev/model-gateway && npm run typecheck -w @jev/work-orders && npm run build -w @jev/work-orders && npm run build -w @jev/control && npm run build -w @jev/queue && npm run typecheck -w @jev/api && npm run typecheck -w @jev/worker && npm run typecheck -w @jev/web",
     "test": "npm run test -w @jev/db && npm run test -w @jev/auth && npm run test -w @jev/projects && npm run test -w @jev/model-gateway && npm run test -w @jev/work-orders && npm run test -w @jev/control && npm run test -w @jev/queue && npm run test -w @jev/api && npm run test -w @jev/worker",
     "db:migrate": "npm run migrate -w @jev/db",
-    "check": "npm run typecheck && npm run test && npm run build",
+    "check": "npm run typecheck && npm run test && npm run build && npm run test:github-browser",
     "smoke:restricted-runtime": "node scripts/smoke-restricted-runtime.mjs",
-    "seed:dev": "npm run seed:dev -w @jev/api"
+    "seed:dev": "npm run seed:dev -w @jev/api",
+    "accept:github-readonly": "node scripts/accept-github-app-readonly.mjs",
+    "test:github-browser": "node --test scripts/github-installation.browser-test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
+    "playwright-core": "1.62.1",
     "typescript": "^5.9.3"
   }
 }

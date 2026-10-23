@@ -18,7 +18,8 @@ const controlled = [
   "jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)",
   "jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)",
   "jev_set_deployment_status(uuid,uuid[],text)",
-  "jev_lock_project_scope(uuid)"
+  "jev_lock_project_scope(uuid)",
+  "jev_lock_actor_authorization(uuid,uuid)"
 ];
 
 /**
@@ -33,7 +34,8 @@ const auditedWriterFiles = new Map([
   ["jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)", "0015_controlled_approval_deployment_creation.sql"],
   ["jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)", "0017_atomic_approved_task_rework.sql"],
   ["jev_set_deployment_status(uuid,uuid[],text)", "0011_scope_controlled_writer_to_schema.sql"],
-  ["jev_lock_project_scope(uuid)", "0014_controlled_project_scope_lock.sql"]
+  ["jev_lock_project_scope(uuid)", "0014_controlled_project_scope_lock.sql"],
+  ["jev_lock_actor_authorization(uuid,uuid)", "0024_github_authorization_serialization.sql"]
 ]);
 
 function extractAuditedWriterBody(sql, signature) {
@@ -437,7 +439,20 @@ async function validateApprovalReferenceConstraint(pool) {
  * migrations, not just the two approval/deployment constraints.
  */
 async function validateCheckConstraintSurface(pool) {
+  // Exact PostgreSQL 16 expressions from immutable PLT-010 migrations 0021–0023.
+  // Adding their names alone would admit weakened predicates under those names.
+  const githubChecks = new Map([
+    ["github_installation_requests:github_installation_requests_state_hash_check", "CHECK ((state_hash ~ '^[a-f0-9]{64}$'::text))"],
+    ["github_installation_requests:github_installation_requests_installation_id_check", "CHECK ((installation_id > 0))"],
+    ["github_installation_requests:github_installation_requests_purpose_check", "CHECK ((purpose = ANY (ARRAY['INSTALLATION'::text, 'IDENTITY'::text])))"],
+    ["github_installations:github_installations_installation_id_check", "CHECK ((installation_id > 0))"],
+    ["github_installations:github_installations_account_id_check", "CHECK ((account_id > 0))"],
+    ["github_operations:github_operations_request_hash_check", "CHECK ((request_hash ~ '^[a-f0-9]{64}$'::text))"],
+    ["github_operations:github_operations_status_check", "CHECK ((status = ANY (ARRAY['PENDING'::text, 'SUCCESS'::text, 'FAILED'::text, 'UNKNOWN'::text])))"],
+    ["github_user_identities:github_user_identities_github_user_id_check", "CHECK ((github_user_id > 0))"]
+  ]);
   const expected = new Set([
+    ...githubChecks.keys(),
     "repositories:repositories_role_check",
     "environments:environments_kind_check",
     "tasks:tasks_risk_check",
@@ -460,7 +475,8 @@ async function validateCheckConstraintSurface(pool) {
   ]);
   const checks = await pool.query(`
     SELECT c.oid, table_object.relname AS table_name,
-           c.conname AS constraint_name, c.convalidated AS validated
+           c.conname AS constraint_name, c.convalidated AS validated,
+           pg_catalog.pg_get_constraintdef(c.oid) AS definition
       FROM pg_catalog.pg_constraint c
       JOIN pg_catalog.pg_class table_object
         ON table_object.oid = c.conrelid
@@ -474,6 +490,10 @@ async function validateCheckConstraintSurface(pool) {
       row.validated === true &&
       expected.has(row.table_name + ":" + row.constraint_name)
     ), "unapproved CHECK constraint inventory drifted");
+  assert(checks.rows.every(row => {
+    const definition = githubChecks.get(row.table_name + ":" + row.constraint_name);
+    return definition === undefined || definition === row.definition;
+  }), "GitHub CHECK constraint predicate drifted from audited migration");
 
   // An altered constraint retaining a known name must not be allowed to
   // smuggle invoker functions or custom operators into privileged writers.
@@ -603,4 +623,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exitCode = 1;
   }
 }
+
 

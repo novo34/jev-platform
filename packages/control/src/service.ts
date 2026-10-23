@@ -1,7 +1,12 @@
 import type { Pool, PoolClient } from "pg";
 import { AuthError, authorizeProject } from "@jev/auth";
+import { recordAudit } from "./audit.js";
+import { GitHubError } from "./github-app.js";
+import type { GitHubInstallationFlow } from "./github-installation.js";
+import type { GitHubOperations } from "./github-operations.js";
 import {
   CONTROL_ACTIONS,
+  GITHUB_ACTIONS,
   ControlError,
   type ActionPolicy,
   type ControlAction,
@@ -14,7 +19,17 @@ const ACTION_POLICY: Record<ControlAction, ActionPolicy> = {
   GET_PROJECT_STATUS: { permission: "project:read", mutating: false },
   CREATE_ORDER: { permission: "project:write", mutating: true },
   PAUSE_PROJECT: { permission: "project:admin", mutating: true },
-  RESUME_PROJECT: { permission: "project:admin", mutating: true }
+  RESUME_PROJECT: { permission: "project:admin", mutating: true },
+  START_GITHUB_INSTALLATION: { permission: "project:admin", mutating: true },
+  CONNECT_GITHUB_IDENTITY: { permission: "project:write", mutating: true },
+  GITHUB_READ_REPOSITORY: { permission: "project:read", mutating: false },
+  GITHUB_READ_PR: { permission: "project:read", mutating: false },
+  GITHUB_READ_CHECKS: { permission: "project:read", mutating: false },
+  GITHUB_READ_REVIEWS: { permission: "project:read", mutating: false },
+  GITHUB_CREATE_BRANCH: { permission: "project:write", mutating: true },
+  GITHUB_WRITE_FILE: { permission: "project:write", mutating: true },
+  GITHUB_CREATE_PR: { permission: "project:write", mutating: true },
+  GITHUB_MERGE_PR: { permission: "project:admin", mutating: true }
 };
 
 function validateCommand(command: ControlCommand): void {
@@ -29,43 +44,6 @@ function validateCommand(command: ControlCommand): void {
   }
 }
 
-async function recordAudit(
-  client: Pool | PoolClient,
-  context: ControlContext,
-  command: ControlCommand,
-  result: "SUCCESS" | "BLOCKED" | "FAILED",
-  details?: Record<string, unknown>,
-  projectId: string | null = command.projectId
-): Promise<void> {
-  await client.query(
-    `INSERT INTO audit_events (
-       organization_id,
-       project_id,
-       actor_type,
-       actor_id,
-       action,
-       target_type,
-       target_id,
-       result,
-       evidence
-     ) VALUES ($1, $2, 'USER', $3, $4, $5, $6, $7, $8::jsonb)`,
-    [
-      context.actor.organizationId,
-      projectId,
-      context.actor.id,
-      command.action,
-      command.targetId ? "TARGET" : "PROJECT",
-      command.targetId ?? command.projectId,
-      result,
-      JSON.stringify({
-        commandId: command.commandId,
-        correlationId: context.correlationId,
-        ...details
-      })
-    ]
-  );
-}
-
 function mapAuthorizationError(error: unknown): never {
   if (error instanceof AuthError) {
     if (error.code === "FORBIDDEN") {
@@ -77,7 +55,13 @@ function mapAuthorizationError(error: unknown): never {
 }
 
 export class ControlService {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pool, private readonly githubInstallation?: GitHubInstallationFlow,
+    private readonly githubOperations?: GitHubOperations) {}
+
+  async completeGitHubInstallation(input: Parameters<GitHubInstallationFlow["callback"]>[1], correlationId: string) {
+    if (!this.githubInstallation) throw new GitHubError("GITHUB_INVALID_CONFIGURATION");
+    return this.githubInstallation.callback(this.pool, input, correlationId);
+  }
 
   async execute<T = unknown>(
     command: ControlCommand,
@@ -108,6 +92,20 @@ export class ControlService {
         );
       } finally {
         mapAuthorizationError(error);
+      }
+    }
+
+    if ((GITHUB_ACTIONS as readonly string[]).includes(command.action)) {
+      try {
+        if (!this.githubOperations) throw new GitHubError("GITHUB_INVALID_CONFIGURATION");
+        const data = await this.githubOperations.execute(command, context, policy.permission);
+        if (!policy.mutating) await recordAudit(this.pool, context, command, "SUCCESS");
+        return { ok: true, commandId: command.commandId, action: command.action, data: data as T };
+      } catch (error) {
+        await recordAudit(this.pool, context, command, "FAILED", {
+          code: error instanceof GitHubError ? error.code : "GITHUB_UNAVAILABLE"
+        });
+        throw error instanceof GitHubError ? error : new GitHubError("GITHUB_UNAVAILABLE");
       }
     }
 
@@ -184,6 +182,12 @@ export class ControlService {
     context: ControlContext
   ): Promise<unknown> {
     switch (command.action) {
+      case "START_GITHUB_INSTALLATION":
+      case "CONNECT_GITHUB_IDENTITY": {
+        if (!this.githubInstallation) throw new GitHubError("GITHUB_INVALID_CONFIGURATION");
+        return this.githubInstallation.start(client, context.actor, command.projectId, command.payload?.repositoryId,
+          command.action === "CONNECT_GITHUB_IDENTITY" ? "IDENTITY" : "INSTALLATION");
+      }
       case "CREATE_ORDER": {
         const payload = command.payload ?? {};
         const objective =
@@ -244,3 +248,4 @@ export class ControlService {
     }
   }
 }
+
