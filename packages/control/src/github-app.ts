@@ -186,7 +186,9 @@ export class GitHubAppClient {
         result.full_name.toLowerCase() !== scope.fullName.toLowerCase()) {
       throw new GitHubError("GITHUB_FORBIDDEN");
     }
-    return result;
+    // GitHub can include temporary credentials (for example temp_clone_token).
+    // Return only the public contract, never the upstream response object.
+    return { id: result.id, full_name: result.full_name, default_branch: result.default_branch };
   }
 
   async createBranch(scope: GitHubRepositoryScope, branch: string, baseSha: string, beforeSend?: () => Promise<void>): Promise<{ ref: string; object: { sha: string } }> {

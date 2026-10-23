@@ -54,6 +54,17 @@ test("tokens are limited to one repository and refreshed per operation", async (
   });
 });
 
+test("repository results exclude temporary credentials and unknown upstream fields", async () => {
+  const expected = { id: 42, full_name: scope.fullName, default_branch: "main" };
+  const { client } = fixture(() => ({
+    ...expected,
+    temp_clone_token: "test-only-temporary-credential",
+    future_credential: "test-only-future-credential",
+    owner: { unexpected_secret: "test-only-nested-credential" }
+  }));
+  assert.deepEqual(await client.repository(scope), expected);
+});
+
 test("invalid configuration is rejected without exposing key material", () => {
   for (const configuration of [
     { appId: "0", privateKey: "private-test-marker" },
