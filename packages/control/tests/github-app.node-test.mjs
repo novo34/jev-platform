@@ -250,6 +250,10 @@ test("checks read the exact SHA and label results as observations, not authoriza
   assert.equal(result.observationsOnly, true);
   assert.equal("reviews" in result, false);
   assert.equal(calls.length, 4);
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    repository_ids: [scope.repositoryId],
+    permissions: { contents: "read", checks: "read", actions: "read", statuses: "read" }
+  });
   assert.ok(calls.slice(1).every((call) => call.init.method === "GET" && call.url.includes(sha)));
 });
 

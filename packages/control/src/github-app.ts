@@ -70,7 +70,7 @@ export interface GitHubRepositoryScope {
 }
 
 type Fetch = typeof globalThis.fetch;
-type GitHubPermissions = Partial<Record<"contents" | "pull_requests" | "checks" | "actions", "read" | "write">> & { administration?: "read" };
+type GitHubPermissions = Partial<Record<"contents" | "pull_requests" | "checks" | "actions", "read" | "write">> & { administration?: "read"; statuses?: "read" };
 
 function positiveId(id: number): void {
   if (!Number.isSafeInteger(id) || id <= 0) {
@@ -299,7 +299,7 @@ export class GitHubAppClient {
   }> {
     assertSha(sha);
     const path = repositoryPath(scope);
-    const token = await this.token(scope, { contents: "read", checks: "read", actions: "read" });
+    const token = await this.token(scope, { contents: "read", checks: "read", actions: "read", statuses: "read" });
     const [checkRuns, status, workflowRuns] = await Promise.all([
       this.request(`${path}/commits/${sha}/check-runs?per_page=100`, token),
       this.request(`${path}/commits/${sha}/status?per_page=100`, token),

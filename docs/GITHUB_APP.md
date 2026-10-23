@@ -175,11 +175,17 @@ https://github.com/settings/apps/new under the authorized owning account.
 | Repository Contents | Read and write |
 | Repository Pull requests | Read and write |
 | Repository Actions | Read-only |
+| Repository Commit statuses | Read-only |
 | Repository Checks | Read-only |
 | Repository Metadata | Read-only, automatically required |
 | Organization/account permissions | None |
 | Repository Administration | Read-only, solely to inspect complete classic branch protection |
 | Workflows and other repository permissions | None |
+
+Commit statuses is a separate permission from Checks. Reading the combined
+`/commits/{sha}/status` endpoint requires `statuses: read`; Contents read does not
+grant it. Existing installations must accept this additional read-only permission
+before the checks operation can issue a token with the complete required scope.
 
 For the current novo34 staging scope, restrict installation to the owning account
 and **Only select repositories**. Install only on the explicitly authorized
