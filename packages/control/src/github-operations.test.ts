@@ -19,9 +19,10 @@ let reviewerId = 900, reviewSha = headSha, checkConclusion = "success", checkApp
 let serverPolicy = "valid", unrecordedCommit = false;
 let writeTimeout = false;
 let writeRateLimited = false;
+let reviewsEmpty = false, reviewState = "APPROVED";
 let onWriteToken: (() => Promise<void>) | undefined;
 
-function service(database = pool, mergeEnabled = true): ControlService {
+function service(database = pool, mergeEnabled = true, singleOperator = false): ControlService {
   const app = new GitHubAppClient({ appId: "123", privateKey: key }, { fetch: async (url, init) => {
     const path = String(url); const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url: path, method: init?.method, body });
@@ -29,18 +30,21 @@ function service(database = pool, mergeEnabled = true): ControlService {
       if (body.permissions.contents === "write" && onWriteToken) { const hook = onWriteToken; onWriteToken = undefined; await hook(); }
       return Response.json({ token: "test-install-token", expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ id: 42 }], permissions: body.permissions });
     }
-    if (path.endsWith("/protection")) { const response = serverPolicy === "missing" ? {} : {
-      enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false }, allow_deletions: { enabled: false },
-      required_status_checks: { strict: true, checks: [{ context: "validate", app_id: serverPolicy === "checks" ? 999 : 15368 }] },
-      required_pull_request_reviews: { required_approving_review_count: 1, dismiss_stale_reviews: true,
-        require_code_owner_reviews: true, require_last_push_approval: true,
-        bypass_pull_request_allowances: { users: [], teams: [], apps: serverPolicy === "bypass" ? [{ id: 123 }] : [] } }
+    if (path.endsWith("/protection")) { const single = serverPolicy.startsWith("single");
+      const scenario = serverPolicy.replace(/^single-?/, "");
+      const response = scenario === "missing" ? {} : {
+      enforce_admins: { enabled: scenario !== "admins" }, allow_force_pushes: { enabled: scenario === "force" }, allow_deletions: { enabled: scenario === "delete" },
+      required_status_checks: { strict: scenario !== "loose", checks: [{ context: "validate", app_id: scenario === "checks" ? 999 : 15368 }] },
+      required_pull_request_reviews: { required_approving_review_count: !single || scenario === "review-required" ? 1 : 0, dismiss_stale_reviews: true,
+        require_code_owner_reviews: !single || scenario === "codeowners", require_last_push_approval: !single || scenario === "last-push",
+        bypass_pull_request_allowances: { users: [], teams: [], apps: scenario === "bypass" ? [{ id: 123 }] : [] } }
     };
-      if (serverPolicy.startsWith("graphql")) delete (response as any).required_pull_request_reviews.bypass_pull_request_allowances;
+      if (serverPolicy.includes("graphql")) delete (response as any).required_pull_request_reviews.bypass_pull_request_allowances;
+      if (scenario === "no-pr") delete (response as any).required_pull_request_reviews;
       return Response.json(response);
     }
-    if (path.endsWith("/graphql")) return Response.json(serverPolicy === "graphql-error" ? { errors: [{ message: "permission denied" }], data: null } : {
-      data: { repository: { ref: { branchProtectionRule: { bypassPullRequestAllowances: { totalCount: serverPolicy === "graphql-bypass" ? 1 : 0 } } } } }
+    if (path.endsWith("/graphql")) return Response.json(serverPolicy.endsWith("graphql-error") ? { errors: [{ message: "permission denied" }], data: null } : {
+      data: { repository: { ref: { branchProtectionRule: { bypassPullRequestAllowances: { totalCount: serverPolicy.endsWith("graphql-bypass") ? 1 : 0 } } } } }
     });
     if (path.includes("/codeowners/errors")) return Response.json({ errors: serverPolicy === "owner-errors" ? [{ message: "invalid owner" }] : [] });
     if (path.includes("/collaborators/")) return Response.json({ permission: serverPolicy === "owner-access" ? "read" : "write", user: { id: 900 } });
@@ -61,14 +65,16 @@ function service(database = pool, mergeEnabled = true): ControlService {
     }
     if (path.includes("/status?")) return Response.json({ state: "success", total_count: 0, statuses: [] });
     if (path.includes("/actions/runs")) return Response.json({ total_count: 1, workflow_runs: [{ status: "completed", conclusion: "success" }] });
-    if (path.includes("/reviews?")) return Response.json([{ id: 1, commit_id: reviewSha, state: "APPROVED", user: { id: reviewerId, login: reviewerId === 800 ? "implementer" : "independent-reviewer" } }]);
+    if (path.includes("/reviews?")) return Response.json(reviewsEmpty ? [] : [{ id: 1, commit_id: reviewSha, state: reviewState, user: { id: reviewerId, login: reviewerId === 800 ? "implementer" : "independent-reviewer" } }]);
     if (path.endsWith("/merge")) return Response.json({ merged: true, sha: mergeSha });
     if (path.endsWith("/pulls/9")) return Response.json({ number: 9, state: "open", draft: false, html_url: "https://github.com/owner/op-repo/pull/9",
       user: serverPolicy === "deleted-author" ? null : { id: 500, login: "jev-app[bot]" },
       head: { sha: prSha, ref: `feat/jev-${taskId}`, repo: serverPolicy === "deleted-fork" ? null : { id: 42 } }, base: { ref: "main", repo: { id: 42 } } });
     return Response.json({ id: 42, full_name: "owner/op-repo", default_branch: "main" });
   } });
-  const operations = new GitHubOperations(database, app, mergeEnabled ? {
+  const operations = new GitHubOperations(database, app, mergeEnabled ? singleOperator ? {
+    approvalMode: "single_operator", requiredChecks: [{ name: "validate", appId: 15368 }]
+  } : {
     trustedReviewerIds: [900, 800, 500], requiredChecks: [{ name: "validate", appId: 15368 }]
   } : undefined);
   return new ControlService(database, undefined, operations);
@@ -111,6 +117,7 @@ beforeEach(async () => {
   serverPolicy = "valid"; unrecordedCommit = false;
   onWriteToken = undefined;
   writeRateLimited = false;
+  reviewsEmpty = false; reviewState = "APPROVED";
 });
 // Immutable task/approval/audit fixtures remain in the disposable test DB.
 afterAll(async () => { await pool.end(); });
@@ -309,4 +316,70 @@ describe("GitHub operations (real PostgreSQL, simulated GitHub)", () => {
     expect(calls.find((call) => call.url.endsWith("/merge"))?.body).toEqual({ sha: headSha, merge_method: "squash" });
     expect((await pool.query("SELECT status FROM tasks WHERE id=$1", [taskId])).rows[0].status).toBe("APPROVED");
   });
+
+  it("single operator merges without a second account only after canonical approval and trusted checks", async () => {
+    await approve(); serverPolicy = "single"; reviewsEmpty = true;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+      .resolves.toMatchObject({ ok: true, data: { merged: true, sha: mergeSha } });
+    expect(calls.find(call => call.url.endsWith("/merge"))?.body).toEqual({ sha: headSha, merge_method: "squash" });
+    expect(calls.some(call => call.url.includes("CODEOWNERS") || call.url.includes("/collaborators/") || call.url.includes("/users/"))).toBe(false);
+    expect((await pool.query("SELECT status FROM tasks WHERE id=$1", [taskId])).rows[0].status).toBe("APPROVED");
+  });
+
+  it("single operator cannot merge a running task without canonical human approval", async () => {
+    serverPolicy = "single"; reviewsEmpty = true;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+      .rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
+    { approvalMode: "single_operator", requiredChecks: [] },
+    { approvalMode: "single_operator", requiredChecks: [{ name: "validate", appId: 15368 }], trustedReviewerIds: [900] },
+    { approvalMode: "single_operatr", requiredChecks: [{ name: "validate", appId: 15368 }] },
+    { requiredChecks: [{ name: "validate", appId: 15368 }] }
+  ])("merge policy requires an explicit valid mode or legacy independent reviewers", policy => {
+    expect(() => new GitHubOperations(pool, {} as GitHubAppClient, policy as any))
+      .toThrowError("GITHUB_INVALID_CONFIGURATION");
+  });
+
+  it("single operator does not need an approval review by the implementer", async () => {
+    await approve(); serverPolicy = "single"; reviewerId = 800;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+      .resolves.toMatchObject({ ok: true });
+  });
+
+  it.each(["no-pr", "missing", "bypass", "admins", "force", "delete", "loose", "checks", "review-required", "codeowners", "last-push", "graphql-bypass", "graphql-error"])(
+    "single operator rejects incompatible or bypassable server protection: %s", async scenario => {
+      await approve(); serverPolicy = "single-" + scenario; reviewsEmpty = true;
+      await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+        .rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+      expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
+    });
+
+  it("single operator accepts only explicit zero bypass allowances when REST omits them", async () => {
+    await approve(); serverPolicy = "single-graphql-zero"; reviewsEmpty = true;
+    await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+      .resolves.toMatchObject({ ok: true });
+    expect(calls.some(call => call.url.endsWith("/graphql"))).toBe(true);
+  });
+
+  it.each(["head", "checks", "app", "stale", "unrecorded", "changes-requested", "not-admin"])(
+    "single operator preserves approval, CI, provenance and authority guards: %s", async scenario => {
+      await approve(); serverPolicy = "single"; reviewsEmpty = true;
+      if (scenario === "head") prSha = baseSha;
+      if (scenario === "checks") checkConclusion = "failure";
+      if (scenario === "app") checkApp = 999;
+      if (scenario === "stale") await pool.query("UPDATE approvals SET stale=TRUE WHERE task_id=$1", [taskId]);
+      if (scenario === "unrecorded") unrecordedCommit = true;
+      if (scenario === "changes-requested") { reviewsEmpty = false; reviewState = "CHANGES_REQUESTED"; }
+      if (scenario === "not-admin") await pool.query("UPDATE users SET role='DEVELOPER' WHERE id=$1", [userId]);
+      try {
+        await expect(execute("GITHUB_MERGE_PR", { taskId, number: 9, approvedSha: headSha }, randomUUID(), service(pool, true, true)))
+          .rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+        expect(calls.some(call => call.url.endsWith("/merge"))).toBe(false);
+      } finally {
+        if (scenario === "not-admin") await pool.query("UPDATE users SET role='ADMIN' WHERE id=$1", [userId]);
+      }
+    });
 });

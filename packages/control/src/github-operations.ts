@@ -16,10 +16,12 @@ const prPayload = taskPayload.extend({ title: z.string().min(1).max(256), body: 
 const mergePayload = taskPayload.extend({ number, approvedSha: sha }).strict();
 
 const writes = new Set<string>(["GITHUB_CREATE_BRANCH", "GITHUB_WRITE_FILE", "GITHUB_CREATE_PR", "GITHUB_MERGE_PR"]);
-const mergePolicySchema = z.object({
-  trustedReviewerIds: z.array(number).min(1),
-  requiredChecks: z.array(z.object({ name: z.string().min(1), appId: number }).strict()).min(1)
-}).strict();
+const requiredChecks = z.array(z.object({ name: z.string().min(1), appId: number }).strict()).min(1);
+const mergePolicySchema = z.union([
+  z.object({ approvalMode: z.literal("independent").optional(),
+    trustedReviewerIds: z.array(number).min(1), requiredChecks }).strict(),
+  z.object({ approvalMode: z.literal("single_operator"), requiredChecks }).strict()
+]);
 export type GitHubMergePolicy = z.infer<typeof mergePolicySchema>;
 type Scope = GitHubRepositoryScope & { organizationId: string; repositoryKey: string; defaultBranch: string; stagingBranch: string | null };
 
@@ -224,7 +226,7 @@ export class GitHubOperations {
       [context.actor.organizationId, command.projectId, scope.repositoryKey, input.taskId]);
     if (!writers.rowCount || writers.rows.some((row) => !row.github_user_id)) throw new GitHubError("GITHUB_FORBIDDEN");
     // Every PR commit must have been produced by the controlled App path.
-    // This rejects an unrecorded direct GitHub writer, including a trusted reviewer.
+    // This rejects any unrecorded direct GitHub writer.
     const commits = z.array(z.object({ sha })).min(1).max(249).safeParse(await this.app.pullRequestCommits(scope, input.number));
     if (!commits.success || commits.data.at(-1)?.sha !== input.approvedSha) throw new GitHubError("GITHUB_FORBIDDEN");
     const recorded = await db.query(
@@ -241,8 +243,11 @@ export class GitHubOperations {
     for (const review of reviews.data.sort((a, b) => a.id - b.id)) {
       if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)) latest.set(review.user.id, review);
     }
-    if ([...latest.values()].some((item) => item.state === "CHANGES_REQUESTED") ||
-        !this.policy.trustedReviewerIds.some((id) => {
+    if ([...latest.values()].some((item) => item.state === "CHANGES_REQUESTED")) throw new GitHubError("GITHUB_FORBIDDEN");
+    // Explicit owner-approved mode: the canonical SHA-bound human approval above
+    // remains mandatory, but no second GitHub account is required.
+    if (this.policy.approvalMode === "single_operator") return;
+    if (!this.policy.trustedReviewerIds.some((id) => {
           const review = latest.get(id);
           return review?.state === "APPROVED" && review.commit_id === input.approvedSha &&
             review.user.id !== prAuthorId && !writerIdentities.has(review.user.id);
@@ -255,14 +260,20 @@ export class GitHubOperations {
   private async assertServerMergePolicy(scope: Scope, writers: Set<number>, prAuthorId: number): Promise<void> {
     if (!this.policy) throw new GitHubError("GITHUB_FORBIDDEN");
     const empty = z.array(z.unknown()).max(0);
+    const bypassAllowances = z.object({ users: empty, teams: empty, apps: empty }).optional();
+    const reviewProtection = this.policy.approvalMode === "single_operator"
+      ? z.object({ required_approving_review_count: z.literal(0),
+          require_code_owner_reviews: z.literal(false), require_last_push_approval: z.literal(false),
+          bypass_pull_request_allowances: bypassAllowances })
+      : z.object({ required_approving_review_count: z.number().int().min(1),
+          dismiss_stale_reviews: z.literal(true), require_code_owner_reviews: z.literal(true), require_last_push_approval: z.literal(true),
+          bypass_pull_request_allowances: bypassAllowances });
     const protection = z.object({
       enforce_admins: z.object({ enabled: z.literal(true) }),
       allow_force_pushes: z.object({ enabled: z.literal(false) }),
       allow_deletions: z.object({ enabled: z.literal(false) }),
       required_status_checks: z.object({ strict: z.literal(true), checks: z.array(z.object({ context: z.string(), app_id: number })) }),
-      required_pull_request_reviews: z.object({ required_approving_review_count: z.number().int().min(1),
-        dismiss_stale_reviews: z.literal(true), require_code_owner_reviews: z.literal(true), require_last_push_approval: z.literal(true),
-        bypass_pull_request_allowances: z.object({ users: empty, teams: empty, apps: empty }).optional() })
+      required_pull_request_reviews: reviewProtection
     }).safeParse(await this.app.branchProtection(scope, scope.defaultBranch));
     if (!protection.success || !this.policy.requiredChecks.every(required => protection.data.required_status_checks.checks.some(check => check.context === required.name && check.app_id === required.appId))) throw new GitHubError("GITHUB_FORBIDDEN");
     if (protection.data.required_pull_request_reviews.bypass_pull_request_allowances === undefined) {
@@ -273,6 +284,7 @@ export class GitHubOperations {
       }) }) }) }).safeParse(await this.app.branchBypassAllowances(scope, scope.defaultBranch));
       if (!bypass.success) throw new GitHubError("GITHUB_FORBIDDEN");
     }
+    if (this.policy.approvalMode === "single_operator") return;
     const errors = z.object({ errors: empty }).safeParse(await this.app.codeOwnerErrors(scope, scope.defaultBranch));
     if (!errors.success) throw new GitHubError("GITHUB_FORBIDDEN");
     const file = z.object({ type: z.literal("file"), encoding: z.literal("base64"), content: z.string(), size: z.number().int().min(1).max(8192) })

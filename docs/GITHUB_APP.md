@@ -110,16 +110,20 @@ endpoint that guesses the outcome.
 
 Merge stays disabled unless JEV_GITHUB_MERGE_POLICY is explicitly configured:
 
-    {"trustedReviewerIds":[<verified GitHub numeric reviewer ID>],"requiredChecks":[{"name":"<required check name>","appId":<verified check App ID>}]}
+    {"approvalMode":"single_operator","requiredChecks":[{"name":"<required check name>","appId":<verified check App ID>}]}
 
-Values must come from the actual repository's reviewers/check runs; example IDs
-in .env.example are placeholders. Login names are labels, never authorization IDs.
+Check names and App IDs must come from the actual repository's check runs;
+example IDs in .env.example are placeholders.
 Checks must cover the exact head SHA, be complete, and succeed for their configured
 App IDs. Review history is paginated with a bounded fail-closed limit.
 
-The latest effective approval must be from a configured independent GitHub user,
-on the exact head, and not from any real writer recorded for the task. App-authored
-PRs do not hide the underlying human implementer. Changes requested block merge.
+The operator explicitly chose single-operator operation on 2026-10-23: there is
+no second human reviewer and no second GitHub account is required. This mode is
+selected only in server configuration, never by command payload. It does not
+require a GitHub APPROVED review or CODEOWNERS approval. Technical verification
+remains independent of implementation through the existing verification lifecycle;
+Codex review is technical evidence, not a fabricated second human approval.
+Effective CHANGES_REQUESTED reviews still block merge.
 A persisted non-stale human JEV approval must match the same task, commit and PR URL.
 The final current role must still be ADMIN. GitHub receives the approved SHA and
 squash method without any bypass flags; external branch protections still apply.
@@ -131,15 +135,20 @@ ledger, not inferred from the App bot's PR authorship.
 
 GitHub must also enforce the policy atomically at merge. The App reads classic
 branch protection with Administration **read-only**; it never changes settings.
-Require strict checks with the configured check App IDs; PR approval count >=1;
-dismiss stale approvals; CODEOWNER approval; approval of the most recent push;
-enforce administrators; disallow force pushes/deletions; and no PR bypass actors.
+Require a PR with approval count zero, CODEOWNER review disabled and last-push
+approval disabled for single-operator operation. Require strict checks with the
+configured check App IDs; enforce administrators; disallow force pushes/deletions;
+and permit no PR bypass actors. A missing PR requirement blocks merge.
 REST bypass allowances may be omitted; in that case a read-only GraphQL query
 must return an explicit zero bypass allowances on the matching branch protection
 rule, with no errors. Null, hidden or unknown protection state denies merge. Ruleset-only repositories
 are not accepted by this deliberately narrow protection profile.
 
-The base branch's .github/CODEOWNERS must contain one global rule, for example
+The existing independent-review mode remains supported for other installations:
+configure `trustedReviewerIds` instead of `approvalMode: "single_operator"`.
+It still requires an independent GitHub approval on the exact head, excluding all
+recorded writers and the PR author, approval count >=1, stale-review dismissal,
+CODEOWNER review and last-push approval. Its base .github/CODEOWNERS must contain one global rule, for example
 `* @actual-independent-reviewer` (actual account chosen by the operator), plus
 optional blank/comment lines. Each owner must resolve to a configured trusted
 numeric GitHub ID, have repository write access, and be neither a task writer nor
@@ -147,9 +156,9 @@ the PR author. GitHub's CODEOWNERS errors endpoint must return no errors. This
 makes GitHub enforce independent approval even if a previously observed approval
 is dismissed before the merge call. Teams and overriding path rules are denied.
 
-A COMMENTED Codex review or an arbitrary caller boolean is **not** an APPROVED
-review. Configure a genuine independent approving reviewer for the live merge
-test; never whitelist the implementer or fabricate approval evidence.
+A COMMENTED Codex review is not a GitHub APPROVED review. Single-operator mode
+does not need such a review; independent-review mode still does. Neither mode
+accepts caller booleans as approval, fabricated evidence or protection bypasses.
 A successful GitHub merge does not mark a task DONE or deploy production.
 Promotion remains PLT-013; no PLT-011 work is included.
 
@@ -200,13 +209,14 @@ Before authorizing the real test merge, inspect the acceptance repository's
 Settings → Branches → classic branch protection for its canonical default branch.
 Preserve all stronger existing protections. The profile must enforce:
 
-- Require a pull request, at least one approval, dismiss stale approvals, require
-  CODEOWNER review, and require approval of the most recent reviewable push.
+- For the explicitly selected single-operator mode, require a pull request but
+  disable required approving reviews, CODEOWNER review and last-push approval.
+  Existing independent-review installations retain their stricter review profile.
 - Require the configured checks from their actual GitHub App sources, and require
   branches to be up to date. Record check names and numeric App IDs in merge policy.
 - Do not allow bypassing protections (including administrators); no PR bypass
   users, teams or Apps; no force pushes or branch deletion.
-- A valid base .github/CODEOWNERS global rule naming only trusted independent
+- Only for independent-review mode: a valid base .github/CODEOWNERS global rule naming only trusted independent
   reviewer accounts with repository write permission. Use actual verified numeric
   IDs in JEV_GITHUB_MERGE_POLICY. GitHub must report no CODEOWNERS errors.
 
@@ -280,12 +290,15 @@ key. Keys are read on API startup; editing the file alone does not reload the ke
 7. Record main/master SHA before and after denied direct-branch/extra-payload attempts.
    Confirm no primary-branch change and real denied audit. Repeat a successful commandId
    and prove the same result with no duplicate write; verify scope/permission denials.
-8. Obtain successful actual configured CI checks and an independent APPROVED review
-   on the final head. Advance the task through the existing verified/review lifecycle
+8. Obtain successful actual configured CI checks and independent technical verification
+   on the final head. Single-operator mode does not require a second human GitHub review.
+   Advance the task through the existing verified/review lifecycle
    and persist the exact human approval via createApproval. Do not forge verified=true
-   as a substitute for the independent review or required staging evidence.
+   as a substitute for independent technical verification or required staging evidence.
 9. Only with specific authorization for that test merge, invoke GITHUB_MERGE_PR.
-   First prove stale head/approval, missing checks and self-review are denied.
+   First prove stale head/approval and missing checks are denied. Single-operator
+   acceptance must also prove that absent GitHub reviews are allowed only after
+   valid canonical approval; default independent-review mode still rejects self-review.
    Then verify the approved SHA merged through GitHub and the canonical audit.
    Do not mark the task DONE or deploy by setting a boolean.
 10. Persist sanitized evidence for all four canonical acceptance criteria, final
