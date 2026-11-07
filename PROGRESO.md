@@ -27,7 +27,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
   },
   "next_task": {"task": "PLT-011", "status": "TODO"},
   "requires_operator_authorization": true,
-  "next_action": "Integrar la continuidad tras validar el head de PR #25. La aceptación de la remediación en staging y el inicio de PLT-011 requieren autorizaciones separadas."
+  "next_action": "Confirmar la integración de PR #25 en GitHub. La aceptación de la remediación en staging y el inicio de PLT-011 requieren autorizaciones separadas."
 }
 ```
 
@@ -74,7 +74,11 @@ Los cambios principales de PLT-010 están en
 
 - La revisión de CodeRabbit de PR #25 motivó regresiones automatizadas de
   estructura, credenciales, rutas Unicode y ascendencia de la base de la PR.
-  El resultado de CI y las revisiones se consultan en el SHA vigente de la PR.
+  [CodeRabbit revisó][continuity-rabbit] el SHA
+  `59e07be15842b134ea748c816c22b202127a39a0` y señaló dos observaciones
+  documentales, sobre el registro de evidencia y el alcance de CI. Ambas se
+  atienden en esta actualización. La nueva revisión está pendiente al publicar
+  el cambio. Consultar la PR para verificar el resultado del head vigente.
 
 - Auditoría continua de Platform: [.coderabbit.yaml](.coderabbit.yaml) configura
   revisiones automáticas e incrementales en PR hacia `main`, incluidos borradores.
@@ -217,8 +221,10 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
    con pruebas ejecutadas, alcance de higiene, problemas, autorizaciones y
    siguiente acción. Conservar decisiones históricas en su fuente y enlazar la
    evidencia. Para CI o revisión aún en curso, registrar el estado pendiente y
-   usar la PR para consultar el resultado del head. CI exige la actualización
-   en la misma PR para cambios materiales y valida el archivo sin escribirlo.
+   usar la PR para consultar el resultado del head. CI exige actualizar el
+   checkpoint en la misma PR cuando cambian las rutas de `MILESTONE_PATHS` en
+   `scripts/check-progress.py`. Una edición aislada de `docs/GITHUB_APP.md`
+   queda fuera de ese control automático. CI valida el archivo sin escribirlo.
 
 [gate]: https://github.com/novo34/base-skills_klever/blob/main/docs/JEV_MASTER_BACKLOG.md
 [backlog]: https://github.com/novo34/base-skills_klever/blob/209cf728d4aea9a71af52d948a33a4db309112ac/backlog/jev-master-tasks.yaml
@@ -235,3 +241,4 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 [audit-rabbit]: https://github.com/novo34/jev-platform/pull/24#issuecomment-6706558516
 [audit-report]: https://github.com/novo34/jev-platform/blob/a3449c46f23444c85a96e6e03bab2e5effc16a30/docs/PLT010_AUDIT_REMEDIATION.md
 [continuity-pr]: https://github.com/novo34/jev-platform/pull/25
+[continuity-rabbit]: https://github.com/novo34/jev-platform/pull/25#pullrequestreview-5814774408
