@@ -12,8 +12,12 @@ import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { migrate, assertRestrictedRuntimeRole, createDatabasePool } from "../packages/db/dist/index.js";
 import { verifyDatabaseTopology } from "./verify-db-topology.mjs";
+import { verifyGitHubLedgerSecurity } from "./github-ledger.security-smoke.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Test-only override permits isolated runs on shared development hosts.
+const portBase = Number(process.env.JEV_SMOKE_PORT_BASE ?? 34341);
+assert(Number.isInteger(portBase) && portBase >= 1024 && portBase <= 65530, "invalid smoke port base");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const running = [];
 const diagnostics = new WeakMap();
@@ -95,6 +99,8 @@ try {
     runtimeUrl: runtimeURL.toString(), migrationUrl: adminURL.toString()
   });
   ensure(topology.privilege_checks === "4/4 PASS", "privilege diagnostic failed");
+  const githubSecurityChecks = await verifyGitHubLedgerSecurity(admin, runtimeURL.toString());
+  console.log(`GitHub SQL security: ${githubSecurityChecks} denials and ACL checks passed`);
   // PLT-010: the release gate accepts only the eight canonical GitHub CHECKs.
   // Test missing, weakened and NOT VALID constraints independently of the ledger.
   const githubChecks = (await admin.query(`
@@ -838,7 +844,7 @@ try {
     NODE_ENV: "production", DATABASE_URL: runtimeURL.toString(),
     MIGRATION_DATABASE_URL: "", JEV_ENFORCE_RUNTIME_ROLE: "1",
     API_HOST: "127.0.0.1", WORKER_HOST: "127.0.0.1",
-    API_PORT: "34341", WORKER_HEALTH_PORT: "34342",
+    API_PORT: String(portBase), WORKER_HEALTH_PORT: String(portBase + 1),
     WORKER_ID: "ci-restricted-worker"
   };
   // Real process regression: PostgreSQL options can set the session
@@ -856,24 +862,24 @@ try {
     /PostgreSQL startup options are not permitted/
   );
   const maliciousAPI = startProcess("apps/api/dist/server.js", {
-    ...restrictedEnv, API_PORT: "34344", DATABASE_URL: spoofedAdminURL.toString()
+    ...restrictedEnv, API_PORT: String(portBase + 3), DATABASE_URL: spoofedAdminURL.toString()
   });
   const maliciousWorker = startProcess("apps/worker/dist/server.js", {
-    ...restrictedEnv, WORKER_HEALTH_PORT: "34345", DATABASE_URL: spoofedAdminURL.toString()
+    ...restrictedEnv, WORKER_HEALTH_PORT: String(portBase + 4), DATABASE_URL: spoofedAdminURL.toString()
   });
   await Promise.all([
-    expectStartRejected(maliciousAPI, 34344),
-    expectStartRejected(maliciousWorker, 34345)
+    expectStartRejected(maliciousAPI, portBase + 3),
+    expectStartRejected(maliciousWorker, portBase + 4)
   ]);
 
   const api = startProcess("apps/api/dist/server.js", restrictedEnv);
   const worker = startProcess("apps/worker/dist/server.js", restrictedEnv);
-  await Promise.all([waitForHealth(api, 34341), waitForHealth(worker, 34342)]);
+  await Promise.all([waitForHealth(api, portBase), waitForHealth(worker, portBase + 1)]);
   // Fail-closed gate: a production API with migrator credentials must exit.
   const unsafe = startProcess("apps/api/dist/server.js", {
-    ...restrictedEnv, API_PORT: "34343", DATABASE_URL: adminURL.toString()
+    ...restrictedEnv, API_PORT: String(portBase + 2), DATABASE_URL: adminURL.toString()
   });
-  await expectStartRejected(unsafe, 34343);
+  await expectStartRejected(unsafe, portBase + 2);
   console.log("JEV restricted production-profile API/Worker smoke PASS:", JSON.stringify(topology));
 } finally {
   for (const child of running) {

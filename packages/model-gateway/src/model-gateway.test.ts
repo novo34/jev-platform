@@ -50,6 +50,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Owner-only disposable teardown: canonical Task history rejects row deletion.
+  await pool.query("TRUNCATE task_state_history");
   await pool.query("DELETE FROM model_provider_calls WHERE organization_id = $1", [organizationId]);
   await pool.query("DELETE FROM cost_events WHERE organization_id = $1", [organizationId]);
   await pool.query("DELETE FROM audit_events WHERE organization_id = $1", [organizationId]);
@@ -532,6 +534,8 @@ describe("ModelGateway", () => {
 
     expect(calls).toBe(0);
 
+    // Owner-only disposable teardown; never grant runtime TRUNCATE.
+    await pool.query("TRUNCATE task_state_history");
     await pool.query("DELETE FROM tasks WHERE id = $1", [otherTaskId]);
     await pool.query("DELETE FROM repositories WHERE id = $1", [otherRepositoryId]);
     await pool.query("DELETE FROM projects WHERE id = $1", [otherProjectId]);
