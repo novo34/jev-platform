@@ -11,3 +11,8 @@ Actualiza PROGRESO.md en cada hito material y al terminar la sesión. Registra
 evidencia comprobada, limitaciones, higiene y la acción exacta de reanudación.
 Sigue el [procedimiento de validación](PROGRESO.md#instrucciones-para-continuar-en-otra-sesión)
 y conserva las decisiones en sus fuentes canónicas.
+
+En las PR de Platform, contrasta los hallazgos de CodeRabbit con el código y
+las pruebas. Registra en PROGRESO.md el enlace al resultado, el SHA revisado y
+los hallazgos pendientes. CodeRabbit complementa el CI, las revisiones
+independientes exigidas y la autorización del operador.

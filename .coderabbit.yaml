@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: es-ES
+reviews:
+  profile: assertive
+  high_level_summary_in_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+  auto_approvals:
+    enabled: false
+  path_instructions:
+    - path: "**/*"
+      instructions: >
+        Prioriza fallos reproducibles de seguridad, corrección y regresión.
+        Comprueba que las pruebas cubren el comportamiento cambiado.
+        Señala duplicación y código muerto cuando puedas identificar sus consumidores.
+    - path: "{apps/api,packages/auth,packages/control,packages/db,deploy,.github/workflows}/**"
+      instructions: >
+        Revisa aislamiento entre organizaciones, permisos mínimos, secretos,
+        idempotencia, concurrencia, migraciones y confianza en las evidencias
+        de CI y revisión. Explica el impacto y cómo reproducir cada hallazgo.

@@ -4,7 +4,7 @@
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
 - Rama de trabajo: `docs/progreso-continuidad`. Base integrada: `main`.
-- Última actualización: 2026-11-07 12:25 CET. Entorno: Codex Work, Linux, clones limpios de GitHub.
+- Última actualización: 2026-11-07 12:49 CET. Entorno: Codex Work, Linux, clones limpios de GitHub.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
 
@@ -70,6 +70,12 @@ Los cambios principales de PLT-010 están en
 [pruebas de navegador](scripts/github-installation.browser-test.mjs).
 
 ## Pruebas y evidencias
+
+- Auditoría continua de Platform: [.coderabbit.yaml](.coderabbit.yaml) configura
+  revisiones automáticas e incrementales en PR hacia `main`, incluidos borradores.
+  La configuración se propone en [PR #25][continuity-pr]. [PR #24][audit-pr]
+  tiene una solicitud manual de auditoría completa mientras se integra la
+  configuración. Comprobar el resultado de cada revisión en su PR y SHA.
 
 - El [CI del head de PR #23][ci] y el [CI posterior a la integración][main-ci]
   terminaron con los cuatro jobs aprobados. Incluyen typecheck, build, regresión,
