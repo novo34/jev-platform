@@ -260,6 +260,7 @@ async function validateDefinerSurface(pool) {
  * disabled, replaced, detached or rebound. Only schema-migration definitions
  * are trusted; an unchanged schema_migrations ledger is not sufficient.
  */
+/** Verify protected trigger bindings, execution mode, and function search paths against the catalog. */
 async function validateTriggerInvariants(pool) {
   const directory = path.join(root, "packages", "db", "migrations");
   const files = (await readdir(directory)).filter(x => /^\d+_.+\.sql$/.test(x)).sort();

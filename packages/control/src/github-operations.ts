@@ -194,6 +194,7 @@ export class GitHubOperations {
     return actor;
   }
 
+  /** Check merge policy, signed cycle evidence, and GitHub state while the project row is locked. */
   private async authorizeMerge(db: PoolClient, command: ControlCommand, context: ControlContext, scope: Scope, branch: string,
     input: z.infer<typeof mergePayload>): Promise<() => void> {
     if (!this.policy || context.actor.role !== "ADMIN") throw new GitHubError("GITHUB_FORBIDDEN");

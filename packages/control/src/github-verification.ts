@@ -22,6 +22,7 @@ export type GitHubVerificationScope = Pick<z.infer<typeof reportSchema>,
 /** Signature verification only; Task lifecycle/history remains the canonical writer. */
 export class GitHubTechnicalVerification {
   private readonly keys = new Map<string, { issuer: string; key: KeyObject }>();
+  /** Load only operator-configured Ed25519 trust roots, rejecting duplicate key IDs. */
   constructor(configuration: unknown = []) {
     try {
       for (const item of trustSchema.parse(configuration)) {
@@ -32,6 +33,7 @@ export class GitHubTechnicalVerification {
     } catch { throw new GitHubError("GITHUB_INVALID_CONFIGURATION"); }
   }
 
+  /** Require a trusted signature scoped to the exact work item, revision, and current verification cycle. */
   assert(evidence: unknown, scope: GitHubVerificationScope, cycleStartedAt: Date, recordedAt: Date, now = Date.now()): void {
     try {
       const envelope = envelopeSchema.parse(evidence);

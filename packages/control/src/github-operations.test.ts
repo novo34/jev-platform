@@ -92,6 +92,7 @@ function execute(action: ControlAction, payload: Record<string, unknown> = {}, c
 async function transition(status: string) {
   await pool.query("SELECT jev_transition_task($1,$2,'USER',$3,'github test','{}'::jsonb)", [taskId, status, userId]);
 }
+/** Create approval history with signed verification evidence or a targeted invalid fixture. */
 async function approve(verificationCase = "valid") {
   await execute("GITHUB_WRITE_FILE", { taskId, path: "acceptance.txt", content: "test", message: "feat: acceptance" });
   await execute("GITHUB_CREATE_PR", { taskId, title: "feat: controlled task", body: "test evidence" });
