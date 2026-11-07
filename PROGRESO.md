@@ -71,6 +71,10 @@ Los cambios principales de PLT-010 están en
 
 ## Pruebas y evidencias
 
+- La revisión de CodeRabbit de PR #25 motivó regresiones automatizadas de
+  estructura, credenciales, rutas Unicode y ascendencia de la base de la PR.
+  El resultado de CI y las revisiones se consultan en el SHA vigente de la PR.
+
 - Auditoría continua de Platform: [.coderabbit.yaml](.coderabbit.yaml) configura
   revisiones automáticas e incrementales en PR hacia `main`, incluidos borradores.
   La configuración se propone en [PR #25][continuity-pr]. [PR #24][audit-pr]
@@ -140,8 +144,9 @@ La preparación de PLT-011 queda a la espera de autorización explícita.
 El Development Control Gate identifica PLT-011 como siguiente elegible. Su
 inicio depende de la autorización del operador. Para PR #24, la implementación
 y el CI están disponibles. Su integración y aceptación operativa siguen pendientes. El CI de Platform comprueba
-el formato y las referencias declaradas de este documento con el checkout
-local. La reconciliación con Foundation y la vigencia de la evidencia de
+el formato de los enlaces declarados de evidencia en GitHub y la ascendencia
+del SHA integrado. Los destinos de los enlaces Markdown locales requieren
+comprobación aparte. La reconciliación con Foundation y la vigencia de la evidencia de
 GitHub se comprueban al preparar el handoff y al reanudarlo.
 
 ## Decisiones y autorizaciones
@@ -202,8 +207,8 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 3. En Platform, ejecutar
    `python3 scripts/check-progress.py --foundation ../foundation`, ajustando la
    ruta. El modo con Foundation requiere PyYAML, igual que el resolver canónico.
-   El modo sin Foundation valida estructura, SHA integrado, referencias y
-   patrones comunes de credenciales. Los resultados de GitHub requieren lectura
+   El modo sin Foundation valida estructura, ascendencia del SHA integrado, formato de referencias
+   de evidencia y patrones comunes de credenciales. Los resultados de GitHub requieren lectura
    aparte. Comparar la evidencia publicada con el SHA real de la PR.
 4. En cada hito material y al finalizar la sesión, actualizar el checkpoint
    con pruebas ejecutadas, alcance de higiene, problemas, autorizaciones y

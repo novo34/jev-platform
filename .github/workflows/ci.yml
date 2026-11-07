@@ -41,6 +41,7 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          python3 -B scripts/test-check-progress.py
           if [ -n "$PR_BASE_SHA" ]; then
             python3 scripts/check-progress.py --base "$PR_BASE_SHA"
           else

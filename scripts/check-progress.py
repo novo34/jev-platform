@@ -1,6 +1,7 @@
 """Validate the handoff offline and optionally reconcile it with Foundation."""
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -99,8 +100,19 @@ def reconcile(data, foundation):
             "el siguiente paso contradice el Development Control Gate")
 
 
+def require_ancestor(commit, ref, message):
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, ref], cwd=ROOT,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    require(result.returncode == 0, message)
+
+
 def require_update(base):
-    changed = run("git", "diff", "--no-renames", "--name-only", base, "HEAD").splitlines()
+    changed = subprocess.check_output(
+        ["git", "diff", "--no-renames", "--name-only", "-z", base, "HEAD"], cwd=ROOT,
+    )
+    changed = os.fsdecode(changed).split("\0")
     material = any(path.startswith(MILESTONE_PATHS) for path in changed)
     require(not material or PROGRESS in changed, "actualiza PROGRESO.md en la misma PR del hito")
 
@@ -112,9 +124,10 @@ def main():
     args = parser.parse_args()
     try:
         data = validate_checkpoint((ROOT / PROGRESS).read_text(encoding="utf-8"))
-        run("git", "merge-base", "--is-ancestor", data["platform_sha"], "HEAD")
+        require_ancestor(data["platform_sha"], "HEAD", "platform_sha no pertenece al historial del checkout")
         if args.base:
             require(re.fullmatch(SHA, args.base), "la base de la PR debe ser un SHA completo")
+            require_ancestor(data["platform_sha"], args.base, "platform_sha aún no está integrado en la base de la PR")
             require_update(args.base)
         if args.foundation:
             reconcile(data, args.foundation.resolve())
