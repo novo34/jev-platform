@@ -4,7 +4,7 @@
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
 - Rama de trabajo: `docs/progreso-continuidad`. Base integrada: `main`.
-- Última actualización: 2026-11-07 12:49 CET. Entorno: Codex Work, Linux, clones limpios de GitHub.
+- Última actualización: 2026-11-07 21:21 CET. Entorno: Codex Work, Linux, clones limpios de GitHub.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
 
@@ -17,7 +17,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 ```json
 {
   "foundation_sha": "209cf728d4aea9a71af52d948a33a4db309112ac",
-  "platform_sha": "f86aa98107527edb27dc837882f0a9fed82ed654",
+  "platform_sha": "a3449c46f23444c85a96e6e03bab2e5effc16a30",
   "last_completed": {
     "task": "PLT-010",
     "status": "DONE",
@@ -27,7 +27,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
   },
   "next_task": {"task": "PLT-011", "status": "TODO"},
   "requires_operator_authorization": true,
-  "next_action": "Completar revisión y CI de continuidad. Verificar la remediación PLT-010 en PR #24 y esperar autorización específica para integrarla."
+  "next_action": "Integrar la continuidad tras validar el head de PR #25. La aceptación de la remediación en staging y el inicio de PLT-011 requieren autorizaciones separadas."
 }
 ```
 
@@ -36,13 +36,13 @@ La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran com
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 El estado actual del despliegue queda pendiente de lectura. La evidencia de
 cierre corresponde a staging. El estado operativo de producción queda por verificar
-si un encargo futuro lo requiere. La remediación de auditoría en [PR #24][audit-pr]
-sigue en borrador y fuera de la base integrada.
+si un encargo futuro lo requiere. La remediación de auditoría de [PR #24][audit-pr]
+se integró en `main`. Su validación en staging sigue pendiente.
 
 ## Objetivo actual
 
 Conservar un punto de reanudación verificable en Platform y distinguir el cierre histórico
-de PLT-010 de su remediación de seguridad pendiente de integración.
+de PLT-010 de la aceptación operativa de su remediación de seguridad.
 
 ## Última sesión de desarrollo
 
@@ -51,7 +51,8 @@ confirmó la integración y reconciliación posteriores. El checkout de la sesi�
 anterior no estaba disponible en este entorno. Se comparó el árbol integrado
 con el último head publicado y no hubo diferencias. Esta sesión añade documentación,
 instrucciones y un control al CI existente. Se verificó además la rama publicada
-de la remediación posterior al cierre. El resultado de la PR de continuidad se consulta
+de la remediación posterior al cierre. Tras integrar la #24, se actualizó
+la base de #25. El resultado de la PR de continuidad se consulta
 en sus propios checks y en la revisión anclada al SHA.
 
 ## Funcionalidades completadas
@@ -77,9 +78,8 @@ Los cambios principales de PLT-010 están en
 
 - Auditoría continua de Platform: [.coderabbit.yaml](.coderabbit.yaml) configura
   revisiones automáticas e incrementales en PR hacia `main`, incluidos borradores.
-  La configuración se propone en [PR #25][continuity-pr]. [PR #24][audit-pr]
-  tiene una solicitud manual de auditoría completa mientras se integra la
-  configuración. Comprobar el resultado de cada revisión en su PR y SHA.
+  La configuración se incorpora con [PR #25][continuity-pr]. Comprobar
+  el resultado de cada revisión en su PR y SHA.
 
 - El [CI del head de PR #23][ci] y el [CI posterior a la integración][main-ci]
   terminaron con los cuatro jobs aprobados. Incluyen typecheck, build, regresión,
@@ -104,11 +104,12 @@ Los cambios principales de PLT-010 están en
   `f86aa98107527edb27dc837882f0a9fed82ed654`.
 - [Foundation PR #23][foundation-pr] reconcilió el cierre en
   `209cf728d4aea9a71af52d948a33a4db309112ac`.
-- [Platform PR #24][audit-pr], borrador de remediación, head
-  `60c0c0fd7f6dfee0711bf2e19a38e46a31e8a4a1`. Su [CI exacto][audit-ci]
-  pasó los cuatro jobs. La descripción registra revisión técnica independiente
-  sin P0/P1/P2 y sus límites. La remediación no forma parte de la aceptación
-  real de octubre.
+- [Platform PR #24][audit-pr], remediación fusionada con head
+  `bf2cbad16c204856f1b1afe2cb3c1b1308994c58` y squash
+  `a3449c46f23444c85a96e6e03bab2e5effc16a30`. Pasaron los cuatro jobs
+  de [CI][audit-ci] y las revisiones de [Codex][audit-codex] y
+  [CodeRabbit][audit-rabbit] finalizaron sin hallazgos pendientes.
+  La validación de staging de octubre corresponde al alcance anterior.
 - [Platform PR #25][continuity-pr], continuidad. Sus checks y revisión son la evidencia
   del SHA publicado para este cambio de mantenimiento.
 
@@ -126,7 +127,7 @@ registro separado.
 PLT-010 filtró campos sensibles de las respuestas de GitHub, solicitó
 `statuses: read` para observar estados y serializó la autorización para
 proteger las mutaciones concurrentes. El README remite a este checkpoint.
-La rama de [PR #24][audit-pr] añade una atestación Ed25519 ligada al ciclo de
+[PR #24][audit-pr] añadió una atestación Ed25519 ligada al ciclo de
 verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 0025/0026 y corrige el runbook.
 
@@ -134,16 +135,15 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 Completar CI y revisión independiente de la PR de continuidad. Si esa revisión
 detecta hallazgos, corregirlos en la misma rama y verificar de nuevo el SHA.
-Integrar la remediación solo tras autorización específica del operador y nueva
-verificación del head y su base. El despliegue de esa remediación requiere
-autorización separada, verificador independiente y migraciones/grants probados.
+Validar en staging la remediación integrada en #24 tras autorización separada,
+con verificador independiente y migraciones y permisos probados.
 La preparación de PLT-011 queda a la espera de autorización explícita.
 
 ## Bloqueos y dependencias
 
 El Development Control Gate identifica PLT-011 como siguiente elegible. Su
-inicio depende de la autorización del operador. Para PR #24, la implementación
-y el CI están disponibles. Su integración y aceptación operativa siguen pendientes.
+inicio depende de la autorización del operador. Para PR #24 sigue pendiente
+la aceptación operativa en staging.
 El validador comprueba el formato de `last_completed.pr`, `last_completed.ci` y
 `last_completed.review`. Los demás enlaces, incluidos los destinos Markdown
 locales, se comprueban por separado. La reconciliación con Foundation y la vigencia
@@ -158,8 +158,8 @@ El backlog sigue siendo la autoridad. El cambio de continuidad reutiliza
 NEXT_TASK, CI y los registros de decisiones y evidencias existentes. Se tramita
 como mantenimiento de repositorio porque PR #23 ya se fusionó y su integración
 quedó cerrada en Foundation. PR #24 conserva el cambio del runbook
-junto con las correcciones que documenta. Si la continuidad se integra primero,
-actualizar el checkpoint en PR #24 y volver a verificar su nuevo SHA.
+junto con las correcciones que documenta. La base de #25 incluye la integración
+autorizada de #24.
 
 ## Higiene del repositorio
 
@@ -180,10 +180,10 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 2. Para la remediación de PLT-010, inspeccionar
    [PR #24 y su informe][audit-report], `github-operations.ts`,
    `github-verification.ts` y las migraciones 0025/0026 en su rama.
-   Confirmar CI, revisión independiente y alcance operativo del SHA, y esperar
-   autorización específica antes de cualquier merge o despliegue. Si cambia
-   el SHA, ejecutar `npm run check` y `npm run smoke:restricted-runtime`
-   con PostgreSQL 16 desechable y repetir revisión independiente.
+   Para la aceptación en staging, esperar autorización de despliegue y
+   preparar las migraciones, permisos y atestación independiente. Verificar
+   un merge autorizado sobre el SHA exacto y los rechazos de atestaciones
+   inválidas o caducadas.
 3. PLT-011 es el siguiente candidato y requiere autorización. Una vez autorizada,
    inspeccionar su entrada canónica, la [cola y el worker](docs/QUEUE_WORKER.md),
    `apps/worker` y el contrato de workspaces en Foundation. El alcance de prueba
@@ -230,6 +230,8 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 [foundation-pr]: https://github.com/novo34/base-skills_klever/pull/23
 [fixture]: https://github.com/novo34/SaSS_Workee/pull/3
 [audit-pr]: https://github.com/novo34/jev-platform/pull/24
-[audit-ci]: https://github.com/novo34/jev-platform/actions/runs/40030341814
-[audit-report]: https://github.com/novo34/jev-platform/blob/60c0c0fd7f6dfee0711bf2e19a38e46a31e8a4a1/docs/PLT010_AUDIT_REMEDIATION.md
+[audit-ci]: https://github.com/novo34/jev-platform/actions/runs/42373205872
+[audit-codex]: https://github.com/novo34/jev-platform/pull/24#issuecomment-6706268377
+[audit-rabbit]: https://github.com/novo34/jev-platform/pull/24#issuecomment-6706558516
+[audit-report]: https://github.com/novo34/jev-platform/blob/a3449c46f23444c85a96e6e03bab2e5effc16a30/docs/PLT010_AUDIT_REMEDIATION.md
 [continuity-pr]: https://github.com/novo34/jev-platform/pull/25

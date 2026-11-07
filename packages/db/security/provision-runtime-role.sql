@@ -55,7 +55,7 @@ BEGIN
     JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
     JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid
     WHERE n.nspname = 'public' AND t.relkind IN ('r','p')
-      AND t.relname IN ('tasks','approvals','deployments','environments')
+      AND t.relname IN ('tasks','approvals','deployments','environments','task_state_history','github_operations','github_user_identities')
       AND a.attnum > 0 AND NOT a.attisdropped
   LOOP
     EXECUTE format(
@@ -64,14 +64,16 @@ BEGIN
     );
 
     EXECUTE format(
-      'REVOKE REFERENCES (%I) ON TABLE public.%I FROM PUBLIC',
-      c.column_name, c.table_name
+      'REVOKE INSERT (%I), UPDATE (%I), REFERENCES (%I) ON TABLE public.%I FROM PUBLIC',
+      c.column_name, c.column_name, c.column_name, c.table_name
     );
   END LOOP;
 END;
 $jev_revoke_cols$;
 -- A schema-CREATE grant allows shadowing catalog relations if search_path
 -- is manipulated; deny it both through PUBLIC and directly to the runtime.
+-- Remove stale table and column grants before restoring exact GitHub rights.
+REVOKE ALL ON TABLE task_state_history, github_operations, github_user_identities FROM PUBLIC, jev_runtime;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE CREATE ON SCHEMA public FROM jev_runtime;
 GRANT USAGE ON SCHEMA public TO jev_runtime;
@@ -139,7 +141,9 @@ GRANT INSERT ON TABLE model_provider_calls, cost_events TO jev_runtime;
 GRANT INSERT, UPDATE, DELETE ON TABLE github_installation_requests TO jev_runtime;
 GRANT INSERT, UPDATE ON TABLE github_installations, github_repository_installations TO jev_runtime;
 GRANT UPDATE (external_repository_id) ON TABLE repositories TO jev_runtime;
-GRANT INSERT, UPDATE ON TABLE github_operations, github_user_identities TO jev_runtime;
+GRANT INSERT ON TABLE github_operations, github_user_identities TO jev_runtime;
+GRANT UPDATE (status, result) ON TABLE github_operations TO jev_runtime;
+GRANT UPDATE (github_login, verified_at) ON TABLE github_user_identities TO jev_runtime;
 -- Controlled Approval and Deployment creation is available only via the
 -- named definer writers above; direct guarded INSERT remains forbidden.
 -- Never use GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public.

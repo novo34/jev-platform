@@ -30,8 +30,12 @@ jobs:
       # hashes from scripts/package-lock.json, with no install-time scripts.
       - name: Install pinned standalone verifier dependencies
         run: npm ci --ignore-scripts --prefix scripts
-      # No production credentials enter checkout, setup, install, or build.
-      # In particular, package lifecycle scripts run without DB secrets.
+      # The verifier reuses the runtime role checks exported by @jev/db.
+      # Production credentials are scoped to the final verification step.
+      - name: Build the database verifier dependency
+        run: |
+          npm ci --ignore-scripts --workspace @jev/db --include-workspace-root
+          npm --ignore-scripts run build --workspace @jev/db
       - name: Validate real production PostgreSQL identity and guarded ACLs
         env:
           NODE_ENV: production

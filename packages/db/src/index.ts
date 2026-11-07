@@ -120,6 +120,31 @@ export async function assertRestrictedRuntimeRole(
       "use a restricted application credential, not the migration owner"
     );
   }
+  if (applicationSchema === "public") {
+    const github = await pool.query<{ safe: boolean }>(`
+      SELECT count(*)=3 AND bool_and(
+        NOT pg_catalog.pg_has_role(current_user,c.relowner,'MEMBER')
+        AND NOT pg_catalog.has_table_privilege(c.oid,'UPDATE')
+        AND NOT pg_catalog.has_table_privilege(c.oid,'DELETE')
+        AND NOT pg_catalog.has_table_privilege(c.oid,'TRUNCATE')
+        AND NOT pg_catalog.has_table_privilege(c.oid,'TRIGGER')
+        AND NOT pg_catalog.has_table_privilege(c.oid,'REFERENCES')
+        AND (c.relname<>'task_state_history' OR NOT pg_catalog.has_table_privilege(c.oid,'INSERT'))
+        AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=c.oid
+          AND a.attnum>0 AND NOT a.attisdropped AND (
+            pg_catalog.has_column_privilege(c.oid,a.attnum,'REFERENCES')
+            OR (c.relname='task_state_history' AND pg_catalog.has_column_privilege(c.oid,a.attnum,'INSERT'))
+            OR (pg_catalog.has_column_privilege(c.oid,a.attnum,'UPDATE') AND NOT (
+              (c.relname='github_operations' AND a.attname IN ('status','result'))
+              OR (c.relname='github_user_identities' AND a.attname IN ('github_login','verified_at'))
+            ))
+          ))
+      ) AS safe FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relkind='r'
+        AND c.relname IN ('task_state_history','github_operations','github_user_identities')
+    `);
+    if (!github.rows[0]?.safe) throw new Error("Unsafe JEV runtime database role: GitHub evidence or ledger privileges");
+  }
 }
 
 export async function checkDatabase(pool: Pool): Promise<void> {

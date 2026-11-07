@@ -8,6 +8,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
+import { assertRestrictedRuntimeRole } from "../packages/db/dist/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const guarded = ["approvals", "deployments", "environments", "tasks"];
@@ -259,6 +260,7 @@ async function validateDefinerSurface(pool) {
  * disabled, replaced, detached or rebound. Only schema-migration definitions
  * are trusted; an unchanged schema_migrations ledger is not sufficient.
  */
+/** Verify protected trigger bindings, execution mode, and function search paths against the catalog. */
 async function validateTriggerInvariants(pool) {
   const directory = path.join(root, "packages", "db", "migrations");
   const files = (await readdir(directory)).filter(x => /^\d+_.+\.sql$/.test(x)).sort();
@@ -282,7 +284,7 @@ async function validateTriggerInvariants(pool) {
       expected.set(name, { table, functionName, type, updateColumns });
     }
   }
-  assert(expected.size === 15,
+  assert(expected.size === 18,
     "expected trigger inventory changed; review every migration binding");
 
   const query = [
@@ -316,8 +318,11 @@ async function validateTriggerInvariants(pool) {
   for (const trigger of result.rows) {
     const audited = expected.get(trigger.trigger_name);
     const functionConfig = trigger.function_config;
+    const catalogOnly = new Set(["jev_immutable_task_history", "jev_guard_github_identity", "jev_guard_github_operation"]);
+    const expectedPath = catalogOnly.has(trigger.function_name)
+      ? "search_path=pg_catalog,pg_temp" : "search_path=pg_catalog,public,pg_temp";
     const pinnedPath = Array.isArray(functionConfig) && functionConfig.length === 1 &&
-      functionConfig[0].replace(/\s+/g, "") === "search_path=pg_catalog,public,pg_temp";
+      functionConfig[0].replace(/\s+/g, "") === expectedPath;
     assert(audited && pinnedPath && trigger.table_name === audited.table &&
       trigger.function_name === audited.functionName &&
       trigger.nargs === 0 && trigger.type === audited.type &&
@@ -585,6 +590,7 @@ export async function verifyDatabaseTopology({ runtimeUrl, migrationUrl }) {
       "guarded-table privilege diagnostic did not return four PASS results");
 
     const writers = await validateControlledWriters(runtimePool);
+    await assertRestrictedRuntimeRole(runtimePool);
     await validateDefinerSurface(runtimePool);
     await validateTriggerInvariants(runtimePool);
     await validateEventTriggers(runtimePool);
