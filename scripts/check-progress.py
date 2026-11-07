@@ -49,6 +49,7 @@ def run(*args, cwd=ROOT):
 
 
 def validate_checkpoint(markdown):
+    """Validate checkpoint structure and declared evidence without opening links."""
     require(not CREDENTIAL.search(markdown), "posible credencial en PROGRESO.md")
     parts = re.split(r"^## (.+)$", markdown, flags=re.MULTILINE)
     sections = dict(zip(parts[1::2], parts[2::2]))
@@ -77,6 +78,7 @@ def validate_checkpoint(markdown):
 
 
 def reconcile(data, foundation):
+    """Verify task status and the next authorized action against a clean Foundation revision."""
     # Import PyYAML only in explicit reconciliation mode, as Foundation already requires it.
     import yaml
 
@@ -101,6 +103,7 @@ def reconcile(data, foundation):
 
 
 def require_ancestor(commit, ref, message):
+    """Require a recorded revision to be reachable from the specified Git ref."""
     result = subprocess.run(
         ["git", "merge-base", "--is-ancestor", commit, ref], cwd=ROOT,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -109,6 +112,7 @@ def require_ancestor(commit, ref, message):
 
 
 def require_update(base):
+    """Require a checkpoint change when the PR touches a material path."""
     changed = subprocess.check_output(
         ["git", "diff", "--no-renames", "--name-only", "-z", base, "HEAD"], cwd=ROOT,
     )
@@ -118,6 +122,7 @@ def require_update(base):
 
 
 def main():
+    """Validate the checkpoint and apply the extra PR and Foundation checks when requested."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", help="base de la PR para exigir la actualización del hito")
     parser.add_argument("--foundation", type=Path, help="checkout limpio del SHA de Foundation")

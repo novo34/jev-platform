@@ -19,6 +19,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertIn("platform_sha", VALIDATE(CHECKPOINT))
 
     def test_rejects_invalid_checkpoint(self):
+        """Reject malformed evidence, incomplete structure, and credential-like text."""
         data = VALIDATE(CHECKPOINT)
         cases = {
             "duplicate section": (CHECKPOINT + "\n## Identificación\n", "secciones obligatorias"),
@@ -36,6 +37,7 @@ class CheckpointTests(unittest.TestCase):
 
 class GitBoundaryTests(unittest.TestCase):
     def setUp(self):
+        """Create an isolated Git checkout with a valid checkpoint on its base."""
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.repo = Path(directory.name)
@@ -69,6 +71,7 @@ class GitBoundaryTests(unittest.TestCase):
         )
 
     def test_unicode_path_requires_checkpoint_change(self):
+        """Require a checkpoint update even when Git normally quotes the changed path."""
         (self.repo / "apps").mkdir()
         (self.repo / "apps/niñez.ts").touch()
         self.commit()
@@ -81,6 +84,7 @@ class GitBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_rejects_sha_exclusive_to_pr(self):
+        """Reject a revision present in the PR checkout but absent from the integrated base."""
         (self.repo / "README.md").touch()
         unmerged = self.commit()
         self.checkpoint.write_text(self.with_sha(unmerged), encoding="utf-8")
