@@ -33,6 +33,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate development handoff
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$PR_BASE_SHA" ]; then
+            python3 scripts/check-progress.py --base "$PR_BASE_SHA"
+          else
+            python3 scripts/check-progress.py
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
