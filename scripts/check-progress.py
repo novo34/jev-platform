@@ -116,9 +116,9 @@ def require_update(base):
     changed = subprocess.check_output(
         ["git", "diff", "--no-renames", "--name-only", "-z", base, "HEAD"], cwd=ROOT,
     )
-    changed = os.fsdecode(changed).split("\0")
-    material = any(path.startswith(MILESTONE_PATHS) for path in changed)
-    require(not material or PROGRESS in changed, "actualiza PROGRESO.md en la misma PR del hito")
+    paths = {path for path in os.fsdecode(changed).split("\0") if path}
+    material = any(path.startswith(MILESTONE_PATHS) for path in paths)
+    require(not material or PROGRESS in paths, "actualiza PROGRESO.md en la misma PR del hito")
 
 
 def main():

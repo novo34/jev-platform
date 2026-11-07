@@ -143,11 +143,11 @@ La preparación de PLT-011 queda a la espera de autorización explícita.
 
 El Development Control Gate identifica PLT-011 como siguiente elegible. Su
 inicio depende de la autorización del operador. Para PR #24, la implementación
-y el CI están disponibles. Su integración y aceptación operativa siguen pendientes. El CI de Platform comprueba
-el formato de los enlaces declarados de evidencia en GitHub y la ascendencia
-del SHA integrado. Los destinos de los enlaces Markdown locales requieren
-comprobación aparte. La reconciliación con Foundation y la vigencia de la evidencia de
-GitHub se comprueban al preparar el handoff y al reanudarlo.
+y el CI están disponibles. Su integración y aceptación operativa siguen pendientes.
+El validador comprueba el formato de `last_completed.pr`, `last_completed.ci` y
+`last_completed.review`. Los demás enlaces, incluidos los destinos Markdown
+locales, se comprueban por separado. La reconciliación con Foundation y la vigencia
+de la evidencia de GitHub se comprueban al preparar el handoff y al reanudarlo.
 
 ## Decisiones y autorizaciones
 
@@ -207,9 +207,12 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 3. En Platform, ejecutar
    `python3 scripts/check-progress.py --foundation ../foundation`, ajustando la
    ruta. El modo con Foundation requiere PyYAML, igual que el resolver canónico.
-   El modo sin Foundation valida estructura, ascendencia del SHA integrado, formato de referencias
-   de evidencia y patrones comunes de credenciales. Los resultados de GitHub requieren lectura
-   aparte. Comparar la evidencia publicada con el SHA real de la PR.
+   El validador siempre comprueba que `platform_sha` sea antecesor de `HEAD`.
+   En CI de PR, `--base` también exige que el SHA esté en el historial de la
+   rama base. Al reanudar desde una rama de trabajo, verificar la integración
+   con `git merge-base --is-ancestor <platform_sha> origin/main` tras
+   actualizar los refs. Consultar GitHub para contrastar la evidencia con el
+   SHA real de la PR.
 4. En cada hito material y al finalizar la sesión, actualizar el checkpoint
    con pruebas ejecutadas, alcance de higiene, problemas, autorizaciones y
    siguiente acción. Conservar decisiones históricas en su fuente y enlazar la
