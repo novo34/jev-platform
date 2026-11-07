@@ -1,9 +1,9 @@
 # PLT-010 — GitHub App integration
 
-Real functional acceptance was completed on 2026-10-23. Platform PR #23
-was merged and Foundation recorded PLT-010 as DONE. See [PROGRESO.md](../PROGRESO.md)
-for the integrated SHA and closure evidence. Automated suites use real PostgreSQL
-and a real browser with simulated GitHub HTTP. The live evidence covers the
+Status: real functional acceptance completed on 2026-10-23; evidence below.
+Platform PR #23 integration and canonical Foundation closure remain pending.
+**PLT-010 is not yet DONE.** Automated suites use real PostgreSQL and a real
+browser with simulated GitHub HTTP; the live evidence separately covers the
 actual App and explicitly authorized repository operations.
 
 ## Architecture and scope
@@ -464,6 +464,6 @@ testing. This work does not implement PLT-011/012/013, claim a database restore
 test, deploy production or authorize other merges.
 
 The real functional evidence is complete for PLT-010's four canonical criteria.
-The subsequent integration and reconciliation were recorded in
-[Platform PR #23](https://github.com/novo34/jev-platform/pull/23) and
-[Foundation PR #23](https://github.com/novo34/base-skills_klever/pull/23).
+Platform PR #23 must still be integrated with specific authorization, followed
+by canonical Foundation reconciliation before marking PLT-010 DONE. No next
+backlog task is started by this document.
