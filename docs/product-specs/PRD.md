@@ -119,7 +119,7 @@ Las autorizaciones deberán comprobarse server-side.
 
 Los agentes nunca heredarán automáticamente todos los permisos del humano que emitió una orden.
 
-Toda promoción a producción requerirá aprobación humana vigente y ligada a la evidencia exacta que fue revisada.
+La política inicial exige aprobación humana vigente ligada a la evidencia exacta revisada. La reparación de incidentes deberá poder aplicar posteriormente una política de aprobación por riesgo, activada expresamente por proyecto y entorno según la [sección 37](#37-reparación-de-incidentes-y-aprobación-por-riesgo).
 
 ---
 
@@ -789,3 +789,18 @@ Además, deberá demostrar que:
 - los cambios quedan trazados hasta requisito/evidencia;
 - una propuesta de auto-mejora no puede auto-promocionarse;
 - repository hygiene bloquea duplicación/basura no justificada.
+
+
+## 37. Reparación de incidentes y aprobación por riesgo
+
+JEV deberá poder convertir una alerta de un proyecto registrado en una orden de reparación trazable. Identificará el servicio, el repositorio y la versión donde se observó el fallo. Las repeticiones del mismo incidente activo se vincularán a la misma orden. Al crear una aplicación que vaya a gestionar, JEV registrará sus servicios y repositorios. Cada despliegue conservará el commit desplegado.
+
+Antes de planificar o editar, JEV reunirá el requisito vigente, decisiones aprobadas, alcance, código y evidencia del fallo en un ContextPack. Podrá consultar RSC Brain como memoria por proyecto para recuperar incidentes anteriores y lecciones con sus fuentes. JEV conserva la autoridad sobre los requisitos, las decisiones y los permisos. Si falta contexto obligatorio o hay un conflicto que impide determinar el comportamiento esperado, la tarea se bloquea antes de escribir.
+
+Dentro del alcance autorizado, JEV implementará el parche en un workspace aislado, verificará la reparación y preparará una PR con evidencia. Para una aprobación humana, ofrecerá la corrección ya probada y un enlace a staging cuando aplique. Consultará antes de escribir si hace falta ampliar el alcance o tomar una decisión de producto. La revisión permitirá aprobar, pedir ajustes o rechazar la revisión exacta.
+
+- **Bajo riesgo elegible.** Una política habilitada expresamente por proyecto y entorno podrá autorizar merge y despliegue automáticos tras las comprobaciones obligatorias, la evidencia vigente y la verificación independiente.
+- **Riesgo alto, incierto o fuera de la política automática.** JEV solicitará aprobación humana a través del Centro de Atención. Si el operador tiene Telegram conectado y habilitado, JEV enviará un aviso con enlace a la revisión autenticada. La decisión se registra en JEV.
+- **Caída de JEV.** Un monitor externo podrá activar una recuperación operativa preautorizada, incluso si la API o el worker están caídos. La modificación de su propio código se rige por la política de autodesarrollo de la sección 26.
+
+La ruta automática requiere su implementación y aceptación antes de activarse. El piloto inicial conserva el gate humano del alcance vigente.

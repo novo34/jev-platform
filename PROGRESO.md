@@ -17,7 +17,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 ```json
 {
   "foundation_sha": "209cf728d4aea9a71af52d948a33a4db309112ac",
-  "platform_sha": "a3449c46f23444c85a96e6e03bab2e5effc16a30",
+  "platform_sha": "ba18d4f8e54375eaea9533a8ea385d74c2ef0649",
   "last_completed": {
     "task": "PLT-010",
     "status": "DONE",
@@ -27,7 +27,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
   },
   "next_task": {"task": "PLT-011", "status": "TODO"},
   "requires_operator_authorization": true,
-  "next_action": "Confirmar la integración de PR #25 en GitHub. La aceptación de la remediación en staging y el inicio de PLT-011 requieren autorizaciones separadas."
+  "next_action": "Revisar la PR documental de reparación por riesgo y su CI. La aceptación de la remediación en staging y el inicio de PLT-011 requieren autorizaciones separadas."
 }
 ```
 
@@ -43,6 +43,12 @@ se integró en `main`. Su validación en staging sigue pendiente.
 
 Conservar un punto de reanudación verificable en Platform y distinguir el cierre histórico
 de PLT-010 de la aceptación operativa de su remediación de seguridad.
+
+### Actualización documental del 15 de noviembre de 2026
+
+El operador autorizó documentar la reparación por incidentes, la memoria RSC Brain como fuente de contexto, la aprobación según riesgo, los avisos por Telegram y la recuperación externa de JEV. La propuesta está en PRD §37, SPEC §47 y ROADMAP. El merge automático de reparaciones se documenta como extensión futura sujeta a alinear la política de Foundation. Los flujos operativos y las políticas del runtime siguen en su etapa actual.
+
+Se confirmó la integración de [PR #25][continuity-pr] y se ejecutaron el validador de Foundation y NEXT_TASK en checkouts limpios. PLT-011 sigue como siguiente tarea. La continuación de esta actualización es revisar la PR documental y su CI en el SHA publicado, antes de registrar la extensión de reparación en Foundation para implementación.
 
 ## Última sesión de desarrollo
 
@@ -137,8 +143,7 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-Completar CI y revisión independiente de la PR de continuidad. Si esa revisión
-detecta hallazgos, corregirlos en la misma rama y verificar de nuevo el SHA.
+Revisar CI y revisión independiente de la PR documental de reparación por riesgo en su SHA publicado.
 Validar en staging la remediación integrada en #24 tras autorización separada,
 con verificador independiente y migraciones y permisos probados.
 La preparación de PLT-011 queda a la espera de autorización explícita.
@@ -177,10 +182,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Acción autorizada: revisar el SHA publicado de `docs/progreso-continuidad`.
-   Inspeccionar `PROGRESO.md`, `AGENTS.md`, `scripts/check-progress.py` y
-   `.github/workflows/ci.yml`. Ejecutar el validador con Foundation, revisar el
-   diff y comprobar el CI y la revisión independiente de ese SHA.
+1. Revisar la PR documental de reparación por riesgo. Inspeccionar el diff de PRD, SPEC, ROADMAP y PROGRESO, ejecutar el validador con Foundation y comprobar CI y revisión independiente para el SHA publicado.
 2. Para la remediación de PLT-010, inspeccionar
    [PR #24 y su informe][audit-report], `github-operations.ts`,
    `github-verification.ts` y las migraciones 0025/0026 en su rama.

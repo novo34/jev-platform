@@ -713,6 +713,20 @@ Una capability Platform solo se considerará terminada cuando:
 
 ---
 
+## Reparación de incidentes y aprobación por riesgo
+
+Trazabilidad: [PRD §37](PRD.md#37-reparación-de-incidentes-y-aprobación-por-riesgo) → [SPEC §47](SPEC.md#47-reparación-de-incidentes-supervisada-por-riesgo). El trabajo nuevo se registra en el backlog de Foundation mediante el Development Control Gate antes de su implementación.
+
+| Entrega | Dependencias | Prueba de aceptación |
+|---|---|---|
+| Contexto y memoria de reparación | PLT-041, PLT-044 | Un hallazgo se recupera únicamente del proyecto correcto y conserva su fuente. Sin el requisito obligatorio, el worker no puede escribir. |
+| Reparación con revisión web | PLT-010, PLT-011, PLT-012, PLT-017, PLT-018, PLT-021 | Dos alertas del mismo fallo producen una orden y una PR. La misma prueba falla en la base y pasa con el parche. El operador puede revisar el SHA y el staging aplicable. |
+| Aviso por Telegram | PLT-018, PLT-021, PLT-026 | El operador vinculado recibe un único aviso con enlace a la revisión de JEV. Si Telegram falla, la tarea sigue visible en el Centro de Atención. |
+| Ruta automática para reparaciones elegibles | PLT-013, piloto de reparación y alineación de políticas en Foundation | Un cambio permitido y verificado puede integrarse y desplegarse sin aprobación individual. Un cambio de SHA, fallo de verificación, riesgo incierto o superficie excluida bloquea esa ruta. La observación postdespliegue confirma el cierre o reabre el incidente. |
+| Recuperación externa y reparación de JEV | PLT-034 para recuperación, PLT-038 para editar el propio repositorio | Con API y worker detenidos, el monitor externo ejecuta y registra una recuperación autorizada. Una reparación sobre el código de JEV usa la política de autodesarrollo. |
+
+---
+
 ## Estado después de PLT-001
 
 Después de aceptar manualmente esta actualización documental:

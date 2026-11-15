@@ -435,7 +435,7 @@ del cliente; no concede bypasses ni fusiona o despliega automáticamente.
 La Platform deberá bloquear promoción si faltan verification/human gates requeridos.
 
 ### REQ-GIT-011
-Todo merge/promoción a producción deberá requerir aprobación humana vigente.
+El merge/promoción a producción requiere aprobación humana vigente en la política inicial. Una futura ruta automática solo podrá operar bajo las condiciones de REQ-REP-006 a REQ-REP-008.
 
 ### REQ-GIT-012
 JEV deberá trabajar sobre repositorios existentes autorizados.
@@ -571,7 +571,7 @@ Approval deberá estar ligada a Task, staging evidence, staging URL, revision/co
 Las decisiones deberán ser APPROVED, CHANGES_REQUESTED o REJECTED.
 
 ### REQ-APR-004
-Todo merge/promoción a production deberá requerir approval humana.
+El merge/promoción exige approval humana salvo una ruta de reparación automática habilitada y elegible conforme a REQ-REP-006 a REQ-REP-008. APPROVED conserva su significado de decisión humana.
 
 ### REQ-APR-005
 Approval deberá persistirse y auditarse.
@@ -602,7 +602,7 @@ Cada Promotion deberá registrar source PR y approved commit.
 Cada Promotion deberá registrar migration IDs aplicables.
 
 ### REQ-PRM-005
-Cada Promotion deberá referenciar la approval vigente.
+Cada Promotion deberá referenciar la approval humana vigente o, exclusivamente en la ruta de la sección 47, una decisión automática auditable vinculada a la revisión y a la evidencia exactas.
 
 ### REQ-PRM-006
 Cada Promotion deberá generar/usar production PR específico.
@@ -1466,3 +1466,46 @@ DONE deberá ocurrir solo después de PROMOTED_TO_MAIN.
 
 ### REQ-MVP-008
 Cost y audit deberán ser visibles y persistentes.
+
+
+## 47. Reparación de incidentes supervisada por riesgo
+
+### REQ-REP-001 · Entrada y trazabilidad
+
+La reparación reutilizará Project Registry, Work Orders, Queue y Control Layer. El ingreso autenticado de alertas de CI o monitorización deberá resolver el proyecto, entorno, servicio, repositorio y commit observado. Se agruparán las repeticiones del mismo incidente activo por ámbito y huella estable. Si no puede determinarse el repositorio o la revisión, JEV registrará el aviso y bloqueará la escritura hasta resolverlos. El diagnóstico parte del commit del fallo y la PR deberá comprobarse contra la rama de destino vigente antes de integrarse.
+
+### REQ-REP-002 · Contexto obligatorio
+
+Antes de planificar o habilitar escritura, JEV deberá reunir las fuentes canónicas aplicables, sus revisiones, el commit observado, el objetivo, las restricciones, la evidencia de fallo y los criterios de aceptación. El Control Layer deberá bloquear la escritura si falta un elemento obligatorio, las fuentes vigentes se contradicen o el plan excede la autorización. Una ampliación de alcance o decisión de producto deberá seguir el flujo de replanning y autorización antes de editar.
+
+### REQ-REP-003 · Memoria de proyecto
+
+El Context Compiler podrá consultar RSC Brain por API como fuente complementaria, aislada por proyecto. Cada hallazgo recuperado conservará su referencia, procedencia y vigencia cuando se conozcan. Las decisiones vigentes se obtendrán de las fuentes canónicas de JEV. Los agentes podrán registrar hallazgos o proponer lecciones, con revisión humana para su incorporación a la wiki aprobada. Sus credenciales carecerán de permisos de escritura directa sobre esa wiki. Se filtrarán datos sensibles antes de enviar evidencia al proveedor de memoria. Una caída de RSC Brain bloqueará la tarea únicamente si queda contexto obligatorio sin otra fuente válida.
+
+### REQ-REP-004 · Implementación y prueba
+
+La reparación se ejecutará en el workspace aislado asociado a la Task, con límites de intentos, tiempo y coste. Antes de presentar la PR como lista, el Verifier independiente deberá constatar que la misma prueba de regresión falla en la base sin el parche y pasa con la corrección, y que las comprobaciones obligatorias pasan para el SHA propuesto. Si el fallo no puede reproducirse o se agotan los intentos, la tarea se eleva con diagnóstico y evidencia.
+
+### REQ-REP-005 · Revisión humana y Telegram
+
+Cuando corresponda revisión humana y la implementación esté autorizada, JEV preparará primero el parche, verificación y staging aplicable. La solicitud incluirá incidente, causa o hipótesis comprobada, resumen del diff, motivo de escalación, SHA, PR, pruebas y enlace a staging cuando aplique. El Centro de Atención mostrará la revisión. Una vez habilitado PLT-026, el aviso se podrá enviar al Telegram vinculado del operador autorizado con un enlace a JEV, sin logs sensibles ni credenciales. En JEV se podrá aprobar, pedir cambios o rechazar. La entrega fallida por Telegram se registrará y la solicitud seguirá visible en el Centro de Atención.
+
+### REQ-REP-006 · Política de riesgo
+
+JEV aplicará una política versionada y activada por un operador autorizado para un proyecto, repositorio y entorno concretos. El agente podrá sugerir riesgo. El Control Layer resolverá la elegibilidad con reglas comprobables sobre el diff real, la evidencia y las superficies permitidas, incluidas las dependencias afectadas. Los cambios que toquen datos, migraciones, permisos, secretos, reglas de negocio sensibles o controles de seguridad, riesgo, aprobación y promoción quedan fuera de la ruta automática. La incertidumbre, la ausencia de política o el desacuerdo con los checks exigidos impiden la promoción automática. Las restricciones específicas del proyecto y de autodesarrollo prevalecen.
+
+### REQ-REP-007 · Merge y despliegue automáticos controlados
+
+Una reparación de bajo riesgo elegible podrá integrarse y desplegarse mediante una PR específica, con verificación independiente, checks obligatorios y readiness de staging cuando aplique. El ejecutor usará una identidad de servicio de alcance mínimo y la rama permanecerá protegida. La decisión automática deberá registrar Task, PR, SHA, versión de política, entorno, checks y evidencia. Si cambian el SHA, la evidencia o la política aplicable, se deberá reevaluar antes de integrar o desplegar. La identidad que construye el parche no puede otorgar permisos, ampliar la política ni modificar los controles que la aplican.
+
+### REQ-REP-008 · Activación y compatibilidad
+
+La política actual de aprobación humana se aplica hasta que la ruta automática esté implementada y aceptada mediante un piloto específico. Antes de activarla deberán alinearse los contratos canónicos de Foundation, el estado de promoción, el Control Layer y la protección de GitHub. Una decisión automática no se registrará como aprobación humana. Los gates de autodesarrollo y auto-mejora de las secciones 30 y 41 se conservan.
+
+### REQ-REP-009 · Confirmación tras despliegue
+
+JEV correlacionará el despliegue con el incidente y comprobará el servicio durante una ventana configurada por proyecto utilizando la señal del fallo y un health check pertinente. Cerrará el incidente después de confirmar recuperación. Si el fallo reaparece, reabrirá o escalará el incidente y aplicará el rollback cuando la política del proyecto lo permita.
+
+### REQ-REP-010 · Recuperación externa de JEV
+
+La supervisión de disponibilidad y la ejecución de acciones preautorizadas, como reiniciar o revertir a una versión compatible, deberán poder operar fuera de la API, el worker y la cola de JEV. El monitor tendrá permisos acotados al procedimiento aprobado, registrará resultado y verificará la recuperación. Una acción fallida o fuera de política escalará al operador. La corrección posterior del código de JEV se rige por PLT-038.
