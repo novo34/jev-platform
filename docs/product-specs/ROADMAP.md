@@ -390,7 +390,7 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM. PLT-009 establece además la
 **Depende de:** staging + approval + FND-028
 
 ## Exit criteria
-- Promotion ligada a Task/source PR/approved commit/migrations/approval;
+- Promotion ligada a Task, source PR, commit revisado, migraciones y aprobación de acuerdo con REQ-PRM-005 y REQ-APR-004. Una decisión automática solo aplica a reparaciones elegibles tras el piloto y la alineación de políticas que exige REQ-REP-008;
 - production PR task-specific;
 - no whole-staging promotion;
 - PROMOTED_TO_MAIN requerido para DONE;
@@ -710,6 +710,34 @@ Una capability Platform solo se considerará terminada cuando:
 - requirement trace actualizado;
 - exact blueprint revision usada;
 - staging/human review/promotion cuando el cambio afecte producción.
+
+---
+
+## Reparación de incidentes y aprobación por riesgo
+
+Trazabilidad: [PRD §37](PRD.md#37-reparación-de-incidentes-y-aprobación-por-riesgo) → [SPEC §47](SPEC.md#47-reparación-de-incidentes-supervisada-por-riesgo). El trabajo nuevo se registra en el backlog de Foundation mediante el Development Control Gate antes de su implementación.
+
+| Entrega | Dependencias | Prueba de aceptación |
+|---|---|---|
+| Contexto y memoria de reparación | PLT-041, PLT-044 | Un hallazgo se recupera únicamente del proyecto correcto y conserva su fuente. Sin el requisito obligatorio, el worker no puede escribir. |
+| Reparación con revisión web | PLT-010, PLT-011, PLT-012, PLT-017, PLT-018, PLT-021 | Dos alertas del mismo fallo producen una orden y una PR. La misma prueba falla en la base y pasa con el parche. El operador puede revisar el SHA y el staging aplicable. |
+| Aviso por Telegram | PLT-018, PLT-021, PLT-026 | El operador vinculado recibe un único aviso con enlace a la revisión de JEV. Si Telegram falla, la tarea sigue visible en el Centro de Atención. |
+| Ruta automática para reparaciones elegibles | PLT-013, piloto de reparación y alineación de políticas en Foundation | Un cambio permitido y verificado puede integrarse y desplegarse sin aprobación individual. Un cambio de SHA, fallo de verificación, riesgo incierto o superficie excluida bloquea esa ruta. La observación postdespliegue confirma el cierre o reabre el incidente. |
+| Recuperación externa y reparación de JEV | PLT-034 para recuperación, PLT-038 para editar el propio repositorio | Con API y worker detenidos, el monitor externo ejecuta y registra una recuperación autorizada. Una reparación sobre el código de JEV usa la política de autodesarrollo. |
+
+---
+
+## Experiencia del agente y conocimiento verificable
+
+Trazabilidad: [PRD §38](PRD.md#38-experiencia-del-agente-y-conocimiento-del-proyecto) → [SPEC §48](SPEC.md#48-experiencia-del-agente-y-conocimiento-verificable) → [piloto y matriz de las 39 mejoras](AGENT_EXPERIENCE.md). Las referencias PLT indican puntos de integración o dependencias. Los criterios nuevos se incorporarán al backlog canónico de Foundation mediante su control de cambios antes de ejecutar la implementación.
+
+| Entrega | Integración o dependencia | Evidencia de salida |
+|---|---|---|
+| Consulta e inventario verificable | PLT-007, PLT-010, PLT-024, PLT-041, PLT-044 | Consultas sobre distintas superficies con ruta o artefacto y commit, estados por entorno, evidencia obsoleta identificada y latencia medida. |
+| Preparación, conectores y arnés reproducible | PLT-007, PLT-011, PLT-042, PLT-048 | Plan revisable, invalidación por cambio de evidencia, perfil que se puede reconstruir y diagnóstico de una instalación incompleta. |
+| Handoff, reanudación y pausa selectiva | PLT-006, PLT-011, PLT-014, PLT-016, PLT-018, PLT-026, PLT-040, PLT-041 | Segundo agente reanuda sin repetir una mutación confirmada. Una decisión pendiente solo detiene la tarea afectada y sus dependientes. |
+| Revisión, aprendizaje y mantenimiento | PLT-015, PLT-023, PLT-045, PLT-046, PLT-047, PLT-048, PLT-049 | Verificación por SHA, hallazgos consolidados, regresión trazada, costes medidos y evaluación reproducible de una mejora. |
+| Piloto de experiencia del agente | PLT-035 y capacidades aplicables de las filas anteriores | Un agente nuevo localiza, reutiliza y verifica capacidades de distintas superficies. El piloto cubre consulta, alta, mejora y reparación, con éxitos, bloqueos y tiempos de intervención documentados. |
 
 ---
 

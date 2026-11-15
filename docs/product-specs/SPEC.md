@@ -435,7 +435,7 @@ del cliente; no concede bypasses ni fusiona o despliega automáticamente.
 La Platform deberá bloquear promoción si faltan verification/human gates requeridos.
 
 ### REQ-GIT-011
-Todo merge/promoción a producción deberá requerir aprobación humana vigente.
+El merge/promoción a producción requiere aprobación humana vigente en la política inicial. Una futura ruta automática solo podrá operar bajo las condiciones de REQ-REP-006 a REQ-REP-008.
 
 ### REQ-GIT-012
 JEV deberá trabajar sobre repositorios existentes autorizados.
@@ -571,7 +571,7 @@ Approval deberá estar ligada a Task, staging evidence, staging URL, revision/co
 Las decisiones deberán ser APPROVED, CHANGES_REQUESTED o REJECTED.
 
 ### REQ-APR-004
-Todo merge/promoción a production deberá requerir approval humana.
+El merge/promoción exige approval humana salvo una ruta de reparación automática habilitada y elegible conforme a REQ-REP-006 a REQ-REP-008. APPROVED conserva su significado de decisión humana.
 
 ### REQ-APR-005
 Approval deberá persistirse y auditarse.
@@ -602,7 +602,7 @@ Cada Promotion deberá registrar source PR y approved commit.
 Cada Promotion deberá registrar migration IDs aplicables.
 
 ### REQ-PRM-005
-Cada Promotion deberá referenciar la approval vigente.
+Cada Promotion deberá referenciar la approval humana vigente o, exclusivamente en la ruta de la sección 47, una decisión automática auditable vinculada a la revisión y a la evidencia exactas.
 
 ### REQ-PRM-006
 Cada Promotion deberá generar/usar production PR específico.
@@ -1466,3 +1466,100 @@ DONE deberá ocurrir solo después de PROMOTED_TO_MAIN.
 
 ### REQ-MVP-008
 Cost y audit deberán ser visibles y persistentes.
+
+
+## 47. Reparación de incidentes supervisada por riesgo
+
+### REQ-REP-001 · Entrada y trazabilidad
+
+La reparación reutilizará Project Registry, Work Orders, Queue y Control Layer. El ingreso autenticado de alertas de CI o monitorización deberá resolver el proyecto, entorno, servicio, repositorio y commit observado. Antes de crear o ejecutar una orden, JEV deberá comprobar que la credencial emisora está autorizada para el proyecto resuelto. Se agruparán las repeticiones del mismo incidente activo por ámbito y huella estable. Si no puede determinarse el repositorio o la revisión, JEV registrará el aviso y bloqueará la escritura hasta resolverlos. El diagnóstico parte del commit del fallo y la PR deberá comprobarse contra la rama de destino vigente antes de integrarse.
+
+### REQ-REP-002 · Contexto obligatorio
+
+Antes de planificar o habilitar escritura, JEV deberá reunir las fuentes canónicas aplicables, sus revisiones, el commit observado, el objetivo, las restricciones, la evidencia de fallo y los criterios de aceptación. El Control Layer deberá bloquear la escritura si falta un elemento obligatorio, las fuentes vigentes se contradicen o el plan excede la autorización. Una ampliación de alcance o decisión de producto deberá seguir el flujo de replanning y autorización antes de editar.
+
+### REQ-REP-003 · Memoria de proyecto
+
+El Context Compiler podrá consultar RSC Brain por API como fuente complementaria, aislada por proyecto. Cada hallazgo recuperado conservará su referencia, procedencia y vigencia cuando se conozcan. Las decisiones vigentes se obtendrán de las fuentes canónicas de JEV. Los agentes podrán registrar hallazgos o proponer lecciones, con revisión humana para su incorporación a la wiki aprobada. Sus credenciales carecerán de permisos de escritura directa sobre esa wiki. Se filtrarán datos sensibles antes de enviar evidencia al proveedor de memoria. Una caída de RSC Brain bloqueará la tarea únicamente si queda contexto obligatorio sin otra fuente válida.
+
+### REQ-REP-004 · Implementación y prueba
+
+La reparación se ejecutará en el workspace aislado asociado a la Task, con límites de intentos, tiempo y coste. Antes de presentar la PR como lista, el Verifier independiente deberá constatar que la misma prueba de regresión falla en la base sin el parche y pasa con la corrección, y que las comprobaciones obligatorias pasan para el SHA propuesto. Si el fallo no puede reproducirse o se agotan los intentos, la tarea se eleva con diagnóstico y evidencia.
+
+### REQ-REP-005 · Revisión humana y Telegram
+
+Cuando corresponda revisión humana y la implementación esté autorizada, JEV preparará primero el parche, verificación y staging aplicable. La solicitud incluirá incidente, causa o hipótesis comprobada, resumen del diff, motivo de escalación, SHA, PR, pruebas y enlace a staging cuando aplique. El Centro de Atención mostrará la revisión. Una vez habilitado PLT-026, el aviso se podrá enviar al Telegram vinculado del operador autorizado con un enlace a JEV, sin logs sensibles ni credenciales. En JEV se podrá aprobar, pedir cambios o rechazar. La entrega fallida por Telegram se registrará y la solicitud seguirá visible en el Centro de Atención.
+
+### REQ-REP-006 · Política de riesgo
+
+JEV aplicará una política versionada y activada por un operador autorizado para un proyecto, repositorio y entorno concretos. El agente podrá sugerir riesgo. El Control Layer resolverá la elegibilidad con reglas comprobables sobre el diff real, la evidencia y las superficies permitidas, incluidas las dependencias afectadas. Los cambios que toquen datos, migraciones, permisos, secretos, reglas de negocio sensibles o controles de seguridad, riesgo, aprobación y promoción quedan fuera de la ruta automática. La incertidumbre, la ausencia de política o el desacuerdo con los checks exigidos impiden la promoción automática. Las restricciones específicas del proyecto y de autodesarrollo prevalecen.
+
+### REQ-REP-007 · Merge y despliegue automáticos controlados
+
+Una reparación de bajo riesgo elegible podrá integrarse y desplegarse mediante una PR específica, con verificación independiente, checks obligatorios y readiness de staging cuando aplique. El ejecutor usará una identidad de servicio de alcance mínimo y la rama permanecerá protegida. La decisión automática deberá registrar Task, PR, SHA, versión de política, entorno, checks y evidencia. Si cambian el SHA, la evidencia o la política aplicable, se deberá reevaluar antes de integrar o desplegar. La identidad que construye el parche no puede otorgar permisos, ampliar la política ni modificar los controles que la aplican.
+
+### REQ-REP-008 · Activación y compatibilidad
+
+La política actual de aprobación humana se aplica hasta que la ruta automática esté implementada y aceptada mediante un piloto específico. Antes de activarla deberán alinearse los contratos canónicos de Foundation, el estado de promoción, el Control Layer y la protección de GitHub. Una decisión automática no se registrará como aprobación humana. Los gates de autodesarrollo y auto-mejora de las secciones 30 y 41 se conservan.
+
+### REQ-REP-009 · Confirmación tras despliegue
+
+JEV correlacionará el despliegue con el incidente y comprobará el servicio durante una ventana configurada por proyecto utilizando la señal del fallo y un health check pertinente. Cerrará el incidente después de confirmar recuperación. Si el fallo reaparece, reabrirá o escalará el incidente y aplicará el rollback cuando la política del proyecto lo permita.
+
+### REQ-REP-010 · Recuperación externa de JEV
+
+La supervisión de disponibilidad y la ejecución de acciones preautorizadas, como reiniciar o revertir a una versión compatible, deberán poder operar fuera de la API, el worker y la cola de JEV. El monitor tendrá permisos acotados al procedimiento aprobado, registrará resultado y verificará la recuperación. Una acción fallida o fuera de política escalará al operador. La corrección posterior del código de JEV se rige por PLT-038.
+
+---
+
+## 48. Experiencia del agente y conocimiento verificable
+
+Los requisitos AX aplican a capacidades y trabajos sobre cualquier superficie de un proyecto o repo autorizado, incluidos módulos, flujos de usuario, servicios, APIs, reglas de negocio, datos, integraciones, automatizaciones e infraestructura. Aplican a proyectos nuevos y existentes, a los sistemas creados por JEV y a la plataforma JEV dentro de la política de autodesarrollo. El alcance, las pruebas y los controles de cada ejecución se derivan de la tarea y del riesgo.
+
+### REQ-AX-001 · Inspección y plan de preparación
+
+Al crear o conectar un repositorio, JEV podrá inspeccionar en solo lectura su revisión objetivo, manifiestos, estructura, instrucciones del agente, decisiones, comandos de prueba y herramientas. El resultado distinguirá hechos, inferencias y datos pendientes. El plan indicará cambios propuestos, archivos afectados, verificaciones, evidencia base y perfil de capacidades. Deberá respetar los archivos y las instrucciones preexistentes del proyecto.
+
+### REQ-AX-002 · Aplicación, verificación y recuperación
+
+JEV aplicará únicamente el plan exacto autorizado. Si cambia evidencia relevante, volverá a inspeccionar y solicitará la autorización que corresponda. La aplicación deberá verificar la instalación efectiva, preservar cambios ajenos y probar las capacidades requeridas. Si falla, restaurará los recursos gestionados al estado anterior cuando sea posible y registrará cualquier resto que requiera intervención.
+
+### REQ-AX-003 · Perfil reproducible y salud
+
+Cada tarea deberá quedar ligada a las versiones aprobadas del arnés, adaptador, skills, políticas y herramientas pertinentes. Un worker sustituto verificará que puede ejecutar ese perfil o devolverá un bloqueo estructurado. Las versiones nuevas se validarán antes de activarlas y los cambios de perfil de tareas activas requerirán replanning. JEV deberá detectar divergencia, dependencias faltantes, duplicación de instrucciones o controles y verificaciones que ya no se puedan ejecutar. El diagnóstico indicará causa y siguiente acción.
+
+### REQ-AX-004 · Inventario y frescura
+
+El inventario reutilizará Project Registry, Requirement Graph, artefactos, revisiones, evidencias y despliegues. Enlazará capacidades, flujos, componentes y cambios con repositorios, revisiones, ubicaciones de código o configuración, PR, pruebas y entornos. Incluye superficies que abarquen varios repositorios y tipos de artefactos. Se actualizará al incorporar cambios de repo, PR, verificación o despliegue. Deberá conservar procedencia, revisión observada y frescura por fuente. Si el inventario contradice código, documentación o despliegue, mostrará la discrepancia y conservará las fuentes.
+
+### REQ-AX-005 · Consulta del usuario y reutilización
+
+JEV deberá responder consultas de solo lectura con las fuentes autorizadas para el proyecto y el entorno. Distinguirá documentación, implementación en el código, verificación y despliegue. Podrá consultar el repositorio si el inventario es incompleto o antiguo. Si faltan pruebas para afirmar un estado, devolverá el último estado demostrado y la evidencia que falta. El mismo inventario alimentará el ContextPack y la búsqueda reuse-first de REQ-HYG-005. La consulta no podrá crear órdenes ni modificar repositorios.
+
+### REQ-AX-006 · Herramientas y selección de skills
+
+El catálogo de capacidades por repo deberá enlazar cada integración con su permiso, entorno y última prueba válida, sin almacenar secretos en el inventario. JEV anotará por qué recomendó una skill y comprobará que está disponible en el ejecutor. Las capacidades reales se intersectarán con la autorización de la tarea. Cuando falte una capacidad requerida, el agente recibirá el motivo y la acción siguiente.
+
+### REQ-AX-007 · Handoff y reanudación
+
+Un agente nuevo deberá poder ejecutar un paso usando solo su handoff autorizado. Recibirá objetivo, restricciones, recursos, revisión del plan, contexto, estado del workspace, comandos permitidos y evidencia exigida. Los puntos de reanudación persistirán paso, revisión, SHA, comandos y verificaciones ejecutados, artefactos y siguiente acción. Tras una interrupción, JEV verificará la vigencia del plan y del entorno, reconciliará efectos de resultado incierto y retomará sin duplicar mutaciones ya confirmadas.
+
+### REQ-AX-008 · Decisiones pendientes y procesos proporcionales
+
+JEV distinguirá consulta, cambio acotado y trabajo con especificación en el AdaptiveWorkflow. Una ampliación material activará replanning y reevaluación del riesgo. Cuando una decisión bloquee un paso, JEV pausará ese paso y sus dependientes, y conservará ejecutables los pasos independientes que cumplan sus autorizaciones, locks y presupuesto. La solicitud incluirá pregunta, opciones, efecto y evidencia. Se registrará en el Centro de Atención y, con PLT-026 habilitado, podrá avisarse por Telegram con enlace a JEV.
+
+### REQ-AX-009 · Revisión orientada a evidencia
+
+El verificador seleccionará revisiones y comprobaciones pertinentes al diff y a los gates mínimos vigentes. Cada hallazgo registrará criterio, evidencia, revisión, severidad y resultado. JEV consolidará duplicados verificables, limitará rondas y elevará desacuerdos que no converjan. Si el mismo hallazgo vuelve después de corregido, se tratará como regresión. Los checks de navegador, si aplican, deberán adjuntar evidencia o indicar por qué están pendientes. Un cambio de SHA invalida la evidencia y las aprobaciones que correspondan.
+
+### REQ-AX-010 · Higiene y limpieza trazable
+
+La ejecución paralela respetará el aislamiento, los locks y los límites del workspace. La limpieza identificará qué recursos pertenecen a la tarea, qué evidencia debe preservarse y qué trabajo sigue pendiente. JEV liberará los recursos temporales tras su cierre conforme a la política de retención, sin borrar trabajo sin integrar fuera de ese alcance.
+
+### REQ-AX-011 · Mejora medible
+
+JEV registrará coste y tiempo por fase, intervención humana, intentos de verificación y estado de la evidencia. Los valores desconocidos deberán quedar identificados. Incidentes repetidos, activaciones equivocadas y regresiones de revisión podrán producir candidatos de mejora con procedencia. Cada candidato seguirá los controles de evaluación, autorización, canary y rollback aplicables de las secciones 39 a 41. Las comparaciones deberán cubrir calidad, coste, latencia y carga humana con casos equivalentes.
+
+### REQ-AX-012 · Piloto de experiencia del agente
+
+En un proyecto piloto, las pruebas deberán cubrir casos representativos de interfaz, lógica de negocio o API, datos, integraciones y despliegue. Deberán incluir una consulta, un cambio nuevo, una mejora de capacidad existente y una reparación. Un agente nuevo deberá identificar el proyecto, confirmar el estado por entorno, localizar y reutilizar componentes cuando proceda, ejecutar un cambio autorizado y probar el resultado. La suite deberá cubrir un proyecto existente y la preparación de un repo nuevo. Un segundo agente deberá retomar tras una interrupción a partir del último paso comprobado. El piloto deberá incluir evidencia fresca y obsoleta, contexto obligatorio ausente, capacidad ausente, fallo de conexión, una decisión pendiente con una tarea independiente y un cambio de SHA tras verificación. Deberá medir latencia de consulta y esfuerzo humano. El piloto no activa por sí solo la ruta de promoción automática de la sección 47.

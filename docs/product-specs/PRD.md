@@ -119,7 +119,7 @@ Las autorizaciones deberán comprobarse server-side.
 
 Los agentes nunca heredarán automáticamente todos los permisos del humano que emitió una orden.
 
-Toda promoción a producción requerirá aprobación humana vigente y ligada a la evidencia exacta que fue revisada.
+La política inicial exige aprobación humana vigente ligada a la evidencia exacta revisada. La reparación de incidentes deberá poder aplicar posteriormente una política de aprobación por riesgo, activada expresamente por proyecto y entorno según la [sección 37](#37-reparación-de-incidentes-y-aprobación-por-riesgo).
 
 ---
 
@@ -789,3 +789,30 @@ Además, deberá demostrar que:
 - los cambios quedan trazados hasta requisito/evidencia;
 - una propuesta de auto-mejora no puede auto-promocionarse;
 - repository hygiene bloquea duplicación/basura no justificada.
+
+
+## 37. Reparación de incidentes y aprobación por riesgo
+
+JEV deberá poder convertir una alerta de un proyecto registrado en una orden de reparación trazable. Identificará el servicio, el repositorio y la versión donde se observó el fallo. Las repeticiones del mismo incidente activo se vincularán a la misma orden. Al crear una aplicación que vaya a gestionar, JEV registrará sus servicios y repositorios. Cada despliegue conservará el commit desplegado.
+
+Antes de planificar o editar, JEV reunirá el requisito vigente, decisiones aprobadas, alcance, código y evidencia del fallo en un ContextPack. Podrá consultar RSC Brain como memoria por proyecto para recuperar incidentes anteriores y lecciones con sus fuentes. JEV conserva la autoridad sobre los requisitos, las decisiones y los permisos. Si falta contexto obligatorio o hay un conflicto que impide determinar el comportamiento esperado, la tarea se bloquea antes de escribir.
+
+Dentro del alcance autorizado, JEV implementará el parche en un workspace aislado, verificará la reparación y preparará una PR con evidencia. Para una aprobación humana, ofrecerá la corrección ya probada y un enlace a staging cuando aplique. Consultará antes de escribir si hace falta ampliar el alcance o tomar una decisión de producto. La revisión permitirá aprobar, pedir ajustes o rechazar la revisión exacta.
+
+- **Bajo riesgo elegible.** Una política habilitada expresamente por proyecto y entorno podrá autorizar merge y despliegue automáticos tras las comprobaciones obligatorias, la evidencia vigente y la verificación independiente.
+- **Riesgo alto, incierto o fuera de la política automática.** JEV solicitará aprobación humana a través del Centro de Atención. Si el operador tiene Telegram conectado y habilitado, JEV enviará un aviso con enlace a la revisión autenticada. La decisión se registra en JEV.
+- **Caída de JEV.** Un monitor externo podrá activar una recuperación operativa preautorizada, incluso si la API o el worker están caídos. La modificación de su propio código se rige por la política de autodesarrollo de la sección 26.
+
+La ruta automática requiere su implementación y aceptación antes de activarse. El piloto inicial conserva el gate humano del alcance vigente.
+
+---
+
+## 38. Experiencia del agente y conocimiento del proyecto
+
+La experiencia del agente es transversal a los proyectos y repositorios autorizados de JEV, incluidas las aplicaciones que crea y el propio JEV cuando su política de autodesarrollo lo permita. Abarca consultas, cambios nuevos, mejoras y reparaciones en cualquier superficie del proyecto, desde interfaz y lógica de negocio hasta datos, integraciones y despliegues. JEV deberá permitir que un agente nuevo entienda y ejecute la tarea con la información autorizada para ella. Al preparar un proyecto, JEV inspeccionará el repositorio, reconocerá su stack y reglas, detectará herramientas, identificará verificaciones y presentará un plan reproducible. Al aceptar y aplicar el plan, JEV comprobará que los archivos, herramientas y permisos coinciden con lo previsto.
+
+El usuario podrá preguntar en lenguaje natural qué capacidad, componente o comportamiento existe, dónde está implementado y si pasó pruebas o llegó a producción. JEV deberá responder con evidencia del repositorio y del entorno pertinente. El agente usará ese mismo conocimiento para localizar implementaciones existentes y decidir con evidencia si puede reutilizarlas.
+
+JEV distinguirá una consulta de solo lectura, un cambio acotado y un cambio que requiere especificación. El agente recibirá contexto y herramientas ajustados a la tarea. Si una decisión humana está pendiente, JEV pausará la parte afectada y continuará los pasos independientes autorizados. Otro agente podrá retomar un trabajo interrumpido sin depender del historial del chat.
+
+El piloto deberá demostrar consulta, reutilización, ejecución, recuperación y verificación independiente con evidencia en varias superficies y tipos de tarea. El [diseño operativo y matriz de cobertura](AGENT_EXPERIENCE.md) detallan los casos y su relación con la auditoría de RSC.
