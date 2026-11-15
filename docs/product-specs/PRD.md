@@ -804,3 +804,15 @@ Dentro del alcance autorizado, JEV implementará el parche en un workspace aisla
 - **Caída de JEV.** Un monitor externo podrá activar una recuperación operativa preautorizada, incluso si la API o el worker están caídos. La modificación de su propio código se rige por la política de autodesarrollo de la sección 26.
 
 La ruta automática requiere su implementación y aceptación antes de activarse. El piloto inicial conserva el gate humano del alcance vigente.
+
+---
+
+## 38. Experiencia del agente y conocimiento del proyecto
+
+JEV deberá permitir que un agente nuevo entienda y ejecute una tarea con la información autorizada para ella. Al preparar un proyecto, JEV inspeccionará el repositorio, reconocerá su stack y reglas, detectará herramientas, identificará verificaciones y presentará un plan reproducible. Al aceptar y aplicar el plan, JEV comprobará que los archivos, herramientas y permisos coinciden con lo previsto.
+
+El usuario podrá preguntar en lenguaje natural qué funcionalidad existe, dónde está implementada y si pasó pruebas o llegó a producción. JEV deberá responder con evidencia del repositorio y del entorno pertinente. El agente usará ese mismo conocimiento para localizar implementaciones existentes y decidir con evidencia si puede reutilizarlas.
+
+JEV distinguirá una consulta de solo lectura, un cambio acotado y un cambio que requiere especificación. El agente recibirá contexto y herramientas ajustados a la tarea. Si una decisión humana está pendiente, JEV pausará la parte afectada y continuará los pasos independientes autorizados. Otro agente podrá retomar un trabajo interrumpido sin depender del historial del chat.
+
+El piloto deberá demostrar consulta, reutilización, ejecución, recuperación y verificación independiente con evidencia. El [diseño operativo y matriz de cobertura](AGENT_EXPERIENCE.md) detallan los casos y su relación con la auditoría de RSC.

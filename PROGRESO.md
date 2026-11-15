@@ -27,7 +27,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
   },
   "next_task": {"task": "PLT-011", "status": "TODO"},
   "requires_operator_authorization": true,
-  "next_action": "Revisar la PR documental de reparación por riesgo y su CI. La aceptación de la remediación en staging y el inicio de PLT-011 requieren autorizaciones separadas."
+  "next_action": "Revisar la PR documental de reparación por riesgo y experiencia del agente y su CI. La aceptación de la remediación en staging y el inicio de PLT-011 requieren autorizaciones separadas."
 }
 ```
 
@@ -47,6 +47,10 @@ de PLT-010 de la aceptación operativa de su remediación de seguridad.
 ### Actualización documental del 15 de noviembre de 2026
 
 El operador autorizó documentar la reparación por incidentes, la memoria RSC Brain como fuente de contexto, la aprobación según riesgo, los avisos por Telegram y la recuperación externa de JEV. La propuesta está en PRD §37, SPEC §47 y ROADMAP. El merge automático de reparaciones se documenta como extensión futura sujeta a alinear la política de Foundation. Los flujos operativos y las políticas del runtime siguen en su etapa actual.
+
+El operador autorizó incorporar las 39 mejoras discutidas y los requisitos de experiencia del agente a la [PR #26](https://github.com/novo34/jev-platform/pull/26). Se actualizó PRD §38, SPEC §48, ROADMAP y la [matriz de cobertura](docs/product-specs/AGENT_EXPERIENCE.md). Los criterios nuevos que alteren el backlog se tramitarán en Foundation antes de comenzar su implementación.
+
+[CodeRabbit](https://github.com/novo34/jev-platform/pull/26#pullrequestreview-5909786773) revisó el SHA `3a352f99e0620deed35daeb20a4ed5fc7a8aed46`, cuyo [CI](https://github.com/novo34/jev-platform/actions/runs/43693224298) pasó. Se contrastaron y corrigieron los dos hallazgos: autorización de la credencial de alertas para el proyecto y coherencia de la fase de promoción con REQ-REP-008. La revisión independiente y CI del nuevo SHA se verifican en la PR.
 
 Se confirmó la integración de [PR #25][continuity-pr] y se ejecutaron el validador de Foundation y NEXT_TASK en checkouts limpios. PLT-011 sigue como siguiente tarea. La continuación de esta actualización es revisar la PR documental y su CI en el SHA publicado, antes de registrar la extensión de reparación en Foundation para implementación.
 

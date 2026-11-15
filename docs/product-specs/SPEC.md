@@ -1472,7 +1472,7 @@ Cost y audit deberán ser visibles y persistentes.
 
 ### REQ-REP-001 · Entrada y trazabilidad
 
-La reparación reutilizará Project Registry, Work Orders, Queue y Control Layer. El ingreso autenticado de alertas de CI o monitorización deberá resolver el proyecto, entorno, servicio, repositorio y commit observado. Se agruparán las repeticiones del mismo incidente activo por ámbito y huella estable. Si no puede determinarse el repositorio o la revisión, JEV registrará el aviso y bloqueará la escritura hasta resolverlos. El diagnóstico parte del commit del fallo y la PR deberá comprobarse contra la rama de destino vigente antes de integrarse.
+La reparación reutilizará Project Registry, Work Orders, Queue y Control Layer. El ingreso autenticado de alertas de CI o monitorización deberá resolver el proyecto, entorno, servicio, repositorio y commit observado. Antes de crear o ejecutar una orden, JEV deberá comprobar que la credencial emisora está autorizada para el proyecto resuelto. Se agruparán las repeticiones del mismo incidente activo por ámbito y huella estable. Si no puede determinarse el repositorio o la revisión, JEV registrará el aviso y bloqueará la escritura hasta resolverlos. El diagnóstico parte del commit del fallo y la PR deberá comprobarse contra la rama de destino vigente antes de integrarse.
 
 ### REQ-REP-002 · Contexto obligatorio
 
@@ -1509,3 +1509,55 @@ JEV correlacionará el despliegue con el incidente y comprobará el servicio dur
 ### REQ-REP-010 · Recuperación externa de JEV
 
 La supervisión de disponibilidad y la ejecución de acciones preautorizadas, como reiniciar o revertir a una versión compatible, deberán poder operar fuera de la API, el worker y la cola de JEV. El monitor tendrá permisos acotados al procedimiento aprobado, registrará resultado y verificará la recuperación. Una acción fallida o fuera de política escalará al operador. La corrección posterior del código de JEV se rige por PLT-038.
+
+---
+
+## 48. Experiencia del agente y conocimiento verificable
+
+### REQ-AX-001 · Inspección y plan de preparación
+
+Al crear o conectar un repositorio, JEV podrá inspeccionar en solo lectura su revisión objetivo, manifiestos, estructura, instrucciones del agente, decisiones, comandos de prueba y herramientas. El resultado distinguirá hechos, inferencias y datos pendientes. El plan indicará cambios propuestos, archivos afectados, verificaciones, evidencia base y perfil de capacidades. Deberá respetar los archivos y las instrucciones preexistentes del proyecto.
+
+### REQ-AX-002 · Aplicación, verificación y recuperación
+
+JEV aplicará únicamente el plan exacto autorizado. Si cambia evidencia relevante, volverá a inspeccionar y solicitará la autorización que corresponda. La aplicación deberá verificar la instalación efectiva, preservar cambios ajenos y probar las capacidades requeridas. Si falla, restaurará los recursos gestionados al estado anterior cuando sea posible y registrará cualquier resto que requiera intervención.
+
+### REQ-AX-003 · Perfil reproducible y salud
+
+Cada tarea deberá quedar ligada a las versiones aprobadas del arnés, adaptador, skills, políticas y herramientas pertinentes. Un worker sustituto verificará que puede ejecutar ese perfil o devolverá un bloqueo estructurado. Las versiones nuevas se validarán antes de activarlas y los cambios de perfil de tareas activas requerirán replanning. JEV deberá detectar divergencia, dependencias faltantes, duplicación de instrucciones o controles y verificaciones que ya no se puedan ejecutar. El diagnóstico indicará causa y siguiente acción.
+
+### REQ-AX-004 · Inventario y frescura
+
+El inventario reutilizará Project Registry, Requirement Graph, artefactos, revisiones, evidencias y despliegues. Enlazará funcionalidades con repositorios, revisiones, ubicaciones de código, PR, pruebas y entornos. Se actualizará al incorporar cambios de repo, PR, verificación o despliegue. Deberá conservar procedencia, revisión observada y frescura por fuente. Si el inventario contradice código, documentación o despliegue, mostrará la discrepancia y conservará las fuentes.
+
+### REQ-AX-005 · Consulta del usuario y reutilización
+
+JEV deberá responder consultas de solo lectura con las fuentes autorizadas para el proyecto y el entorno. Distinguirá documentación, implementación en el código, verificación y despliegue. Podrá consultar el repositorio si el inventario es incompleto o antiguo. Si faltan pruebas para afirmar un estado, devolverá el último estado demostrado y la evidencia que falta. El mismo inventario alimentará el ContextPack y la búsqueda reuse-first de REQ-HYG-005. La consulta no podrá crear órdenes ni modificar repositorios.
+
+### REQ-AX-006 · Herramientas y selección de skills
+
+El catálogo de capacidades por repo deberá enlazar cada integración con su permiso, entorno y última prueba válida, sin almacenar secretos en el inventario. JEV anotará por qué recomendó una skill y comprobará que está disponible en el ejecutor. Las capacidades reales se intersectarán con la autorización de la tarea. Cuando falte una capacidad requerida, el agente recibirá el motivo y la acción siguiente.
+
+### REQ-AX-007 · Handoff y reanudación
+
+Un agente nuevo deberá poder ejecutar un paso usando solo su handoff autorizado. Recibirá objetivo, restricciones, recursos, revisión del plan, contexto, estado del workspace, comandos permitidos y evidencia exigida. Los puntos de reanudación persistirán paso, revisión, SHA, comandos y verificaciones ejecutados, artefactos y siguiente acción. Tras una interrupción, JEV verificará la vigencia del plan y del entorno, reconciliará efectos de resultado incierto y retomará sin duplicar mutaciones ya confirmadas.
+
+### REQ-AX-008 · Decisiones pendientes y procesos proporcionales
+
+JEV distinguirá consulta, cambio acotado y trabajo con especificación en el AdaptiveWorkflow. Una ampliación material activará replanning y reevaluación del riesgo. Cuando una decisión bloquee un paso, JEV pausará ese paso y sus dependientes, y conservará ejecutables los pasos independientes que cumplan sus autorizaciones, locks y presupuesto. La solicitud incluirá pregunta, opciones, efecto y evidencia. Se registrará en el Centro de Atención y, con PLT-026 habilitado, podrá avisarse por Telegram con enlace a JEV.
+
+### REQ-AX-009 · Revisión orientada a evidencia
+
+El verificador seleccionará revisiones y comprobaciones pertinentes al diff y a los gates mínimos vigentes. Cada hallazgo registrará criterio, evidencia, revisión, severidad y resultado. JEV consolidará duplicados verificables, limitará rondas y elevará desacuerdos que no converjan. Si el mismo hallazgo vuelve después de corregido, se tratará como regresión. Los checks de navegador, si aplican, deberán adjuntar evidencia o indicar por qué están pendientes. Un cambio de SHA invalida la evidencia y las aprobaciones que correspondan.
+
+### REQ-AX-010 · Higiene y limpieza trazable
+
+La ejecución paralela respetará el aislamiento, los locks y los límites del workspace. La limpieza identificará qué recursos pertenecen a la tarea, qué evidencia debe preservarse y qué trabajo sigue pendiente. JEV liberará los recursos temporales tras su cierre conforme a la política de retención, sin borrar trabajo sin integrar fuera de ese alcance.
+
+### REQ-AX-011 · Mejora medible
+
+JEV registrará coste y tiempo por fase, intervención humana, intentos de verificación y estado de la evidencia. Los valores desconocidos deberán quedar identificados. Incidentes repetidos, activaciones equivocadas y regresiones de revisión podrán producir candidatos de mejora con procedencia. Cada candidato seguirá los controles de evaluación, autorización, canary y rollback aplicables de las secciones 39 a 41. Las comparaciones deberán cubrir calidad, coste, latencia y carga humana con casos equivalentes.
+
+### REQ-AX-012 · Piloto de experiencia del agente
+
+En un repo de prueba, un agente nuevo deberá encontrar un conector de email existente, confirmar estado por entorno, reutilizarlo en una corrección autorizada y probar el resultado. Un segundo agente deberá retomar tras una interrupción a partir del último paso comprobado. El piloto deberá incluir evidencia fresca y obsoleta, contexto obligatorio ausente, capacidad ausente, fallo de conexión, una decisión pendiente con una tarea independiente y un cambio de SHA tras verificación. Deberá medir latencia de consulta y esfuerzo humano. El piloto no activa por sí solo la ruta de promoción automática de la sección 47.
