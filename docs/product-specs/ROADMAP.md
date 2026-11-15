@@ -733,11 +733,11 @@ Trazabilidad: [PRD §38](PRD.md#38-experiencia-del-agente-y-conocimiento-del-pro
 
 | Entrega | Integración o dependencia | Evidencia de salida |
 |---|---|---|
-| Consulta e inventario verificable | PLT-007, PLT-010, PLT-024, PLT-041, PLT-044 | Respuesta de email con ruta y commit, estados por entorno, evidencia obsoleta identificada y latencia medida. |
+| Consulta e inventario verificable | PLT-007, PLT-010, PLT-024, PLT-041, PLT-044 | Consultas sobre distintas superficies con ruta o artefacto y commit, estados por entorno, evidencia obsoleta identificada y latencia medida. |
 | Preparación, conectores y arnés reproducible | PLT-007, PLT-011, PLT-042, PLT-048 | Plan revisable, invalidación por cambio de evidencia, perfil que se puede reconstruir y diagnóstico de una instalación incompleta. |
 | Handoff, reanudación y pausa selectiva | PLT-006, PLT-011, PLT-014, PLT-016, PLT-018, PLT-026, PLT-040, PLT-041 | Segundo agente reanuda sin repetir una mutación confirmada. Una decisión pendiente solo detiene la tarea afectada y sus dependientes. |
 | Revisión, aprendizaje y mantenimiento | PLT-015, PLT-023, PLT-045, PLT-046, PLT-047, PLT-048, PLT-049 | Verificación por SHA, hallazgos consolidados, regresión trazada, costes medidos y evaluación reproducible de una mejora. |
-| Piloto de experiencia del agente | PLT-035 y capacidades aplicables de las filas anteriores | Un agente nuevo localiza, reutiliza y verifica el conector. El piloto documenta éxitos, bloqueos y tiempos de intervención. |
+| Piloto de experiencia del agente | PLT-035 y capacidades aplicables de las filas anteriores | Un agente nuevo localiza, reutiliza y verifica capacidades de distintas superficies. El piloto cubre consulta, alta, mejora y reparación, con éxitos, bloqueos y tiempos de intervención documentados. |
 
 ---
 

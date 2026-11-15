@@ -1514,6 +1514,8 @@ La supervisión de disponibilidad y la ejecución de acciones preautorizadas, co
 
 ## 48. Experiencia del agente y conocimiento verificable
 
+Los requisitos AX aplican a capacidades y trabajos sobre cualquier superficie de un proyecto o repo autorizado, incluidos módulos, flujos de usuario, servicios, APIs, reglas de negocio, datos, integraciones, automatizaciones e infraestructura. Aplican a proyectos nuevos y existentes, a los sistemas creados por JEV y a la plataforma JEV dentro de la política de autodesarrollo. El alcance, las pruebas y los controles de cada ejecución se derivan de la tarea y del riesgo.
+
 ### REQ-AX-001 · Inspección y plan de preparación
 
 Al crear o conectar un repositorio, JEV podrá inspeccionar en solo lectura su revisión objetivo, manifiestos, estructura, instrucciones del agente, decisiones, comandos de prueba y herramientas. El resultado distinguirá hechos, inferencias y datos pendientes. El plan indicará cambios propuestos, archivos afectados, verificaciones, evidencia base y perfil de capacidades. Deberá respetar los archivos y las instrucciones preexistentes del proyecto.
@@ -1528,7 +1530,7 @@ Cada tarea deberá quedar ligada a las versiones aprobadas del arnés, adaptador
 
 ### REQ-AX-004 · Inventario y frescura
 
-El inventario reutilizará Project Registry, Requirement Graph, artefactos, revisiones, evidencias y despliegues. Enlazará funcionalidades con repositorios, revisiones, ubicaciones de código, PR, pruebas y entornos. Se actualizará al incorporar cambios de repo, PR, verificación o despliegue. Deberá conservar procedencia, revisión observada y frescura por fuente. Si el inventario contradice código, documentación o despliegue, mostrará la discrepancia y conservará las fuentes.
+El inventario reutilizará Project Registry, Requirement Graph, artefactos, revisiones, evidencias y despliegues. Enlazará capacidades, flujos, componentes y cambios con repositorios, revisiones, ubicaciones de código o configuración, PR, pruebas y entornos. Incluye superficies que abarquen varios repositorios y tipos de artefactos. Se actualizará al incorporar cambios de repo, PR, verificación o despliegue. Deberá conservar procedencia, revisión observada y frescura por fuente. Si el inventario contradice código, documentación o despliegue, mostrará la discrepancia y conservará las fuentes.
 
 ### REQ-AX-005 · Consulta del usuario y reutilización
 
@@ -1560,4 +1562,4 @@ JEV registrará coste y tiempo por fase, intervención humana, intentos de verif
 
 ### REQ-AX-012 · Piloto de experiencia del agente
 
-En un repo de prueba, un agente nuevo deberá encontrar un conector de email existente, confirmar estado por entorno, reutilizarlo en una corrección autorizada y probar el resultado. Un segundo agente deberá retomar tras una interrupción a partir del último paso comprobado. El piloto deberá incluir evidencia fresca y obsoleta, contexto obligatorio ausente, capacidad ausente, fallo de conexión, una decisión pendiente con una tarea independiente y un cambio de SHA tras verificación. Deberá medir latencia de consulta y esfuerzo humano. El piloto no activa por sí solo la ruta de promoción automática de la sección 47.
+En un proyecto piloto, las pruebas deberán cubrir casos representativos de interfaz, lógica de negocio o API, datos, integraciones y despliegue. Deberán incluir una consulta, un cambio nuevo, una mejora de capacidad existente y una reparación. Un agente nuevo deberá identificar el proyecto, confirmar el estado por entorno, localizar y reutilizar componentes cuando proceda, ejecutar un cambio autorizado y probar el resultado. La suite deberá cubrir un proyecto existente y la preparación de un repo nuevo. Un segundo agente deberá retomar tras una interrupción a partir del último paso comprobado. El piloto deberá incluir evidencia fresca y obsoleta, contexto obligatorio ausente, capacidad ausente, fallo de conexión, una decisión pendiente con una tarea independiente y un cambio de SHA tras verificación. Deberá medir latencia de consulta y esfuerzo humano. El piloto no activa por sí solo la ruta de promoción automática de la sección 47.

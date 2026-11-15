@@ -10,22 +10,27 @@ La experiencia del agente se mide por su capacidad de identificar el trabajo, co
 4. El verificador comprueba el resultado real y adjunta evidencia vinculada a la revisión. Un cambio de alcance o de SHA activa la reevaluación correspondiente. JEV aplica la [política de reparación por riesgo](SPEC.md#47-reparación-de-incidentes-supervisada-por-riesgo).
 5. Tras integrar o desplegar, JEV actualiza el inventario y conserva lo aprendido con sus fuentes. RSC Brain puede aportar memoria de proyecto. Las decisiones aprobadas y la evidencia del repositorio, las pruebas y los entornos determinan el estado que JEV afirma.
 
-## Ejemplo de consulta y reparación
+## Alcance y ejemplos
 
-**Pregunta:** «¿Ya enviamos emails en este proyecto?».
+La experiencia del agente se aplica a todo trabajo autorizado de JEV y a todos los proyectos que gestiona. Incluye consultar qué existe, crear o ampliar una capacidad, reparar fallos y retomar trabajo. Los mismos controles de contexto, autorización y evidencia se aplican en cada caso. Las pruebas concretas dependen de la superficie y el riesgo.
 
-La consulta identifica proyecto, repo, revisión y entorno. Una respuesta de ejemplo es «El conector está implementado en este commit y su prueba pasó en staging. La última evidencia de despliegue corresponde a otra versión, así que el funcionamiento en producción está sin confirmar». La respuesta cita las fuentes y su fecha. Si el índice está desactualizado, JEV consulta el repositorio autorizado o declara qué evidencia le falta.
+| Superficie | Ejemplo de consulta | Evidencia o prueba pertinente |
+|---|---|---|
+| Interfaz y experiencia de usuario | «¿Ya se puede filtrar esta tabla por cliente?» | Componente, ruta, PR y prueba de navegador en staging. |
+| API y lógica de negocio | «¿Qué reglas se aplican al calcular el IVA?» | Servicio, fuente de la regla, pruebas de integración y versión en cada entorno. |
+| Datos y persistencia | «¿La nueva columna ya existe en producción?» | Migración, versión aplicada y evidencia autorizada del entorno. |
+| Integraciones y automatizaciones | «¿Ya enviamos emails?» | Conector, llamada, última prueba de integración y versión desplegada. |
+| Infraestructura y despliegue | «¿Este servicio tiene rollback verificado?» | Configuración, release y resultado de una prueba de recuperación. |
 
-**Tarea:** «Corrige este fallo al enviar emails».
-
-Un agente nuevo recupera el mismo inventario y localiza el conector existente. Recibe el fallo observado, las restricciones y el comando de prueba. Reproduce el error, reutiliza el conector, prueba el parche y deja la PR y el punto de reanudación. Si para corregirlo hace falta decidir una regla de negocio, JEV detiene la parte afectada y presenta la pregunta concreta. Una vez preparada y verificada una reparación dentro del alcance, el operador puede revisar la PR y staging en JEV, con aviso por Telegram cuando esté habilitado.
+En una **consulta**, JEV cita las fuentes y la fecha. Cuando la evidencia es incompleta u obsoleta, comprueba el repositorio autorizado o indica qué falta para confirmar el resultado. En un **cambio**, un agente nuevo recibe lo necesario para localizar y reutilizar lo que corresponda, ejecutar las pruebas y dejar el punto de reanudación. Si hace falta decidir una regla o ampliar el alcance, JEV detiene solo el trabajo afectado. Cuando se pide aprobación para una corrección implementada, el operador puede revisar la PR, las pruebas y staging cuando aplique, con aviso por Telegram si está habilitado.
 
 ## Piloto y métricas
 
 | Caso | Resultado esperado |
 |---|---|
 | Consulta con índice actualizado y consulta con datos antiguos | La primera cita fuentes vigentes. La segunda verifica la evidencia disponible y explica qué estado queda sin confirmar. Medir ambas latencias. |
-| Dos proyectos tienen conectores distintos | Cada consulta y ContextPack devuelve solo el proyecto autorizado y conserva el repo y commit correctos. |
+| Dos proyectos contienen capacidades de nombre similar | Cada consulta y ContextPack devuelve solo el proyecto autorizado y conserva los repos y commits correctos. |
+| Casos de distintas superficies | La suite cubre interfaz, API o lógica de negocio, datos, integraciones y despliegue. Verifica consultas, cambios nuevos, mejoras, reparaciones y las pruebas adecuadas para cada caso. |
 | Nace un proyecto o se conecta un repo existente | JEV propone el perfil, preserva configuración propia y detecta si la evidencia cambió antes de aplicar el plan aceptado. |
 | Falta una regla obligatoria, una herramienta o una prueba de conexión | Antes de escribir, JEV devuelve el elemento que falta y qué acción permite continuar. |
 | Worker interrumpido después de un efecto confirmado | El segundo agente valida el contexto y la revisión, conserva la evidencia existente y reanuda sin duplicar la operación. |
