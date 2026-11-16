@@ -3,7 +3,7 @@
 ## Identificación
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
-- Rama de trabajo: `codex/plt-050-browser-session`. Base integrada: `main`.
+- Rama de trabajo: `codex/plt-050-staging-evidence`. Base integrada: `main`.
 - Última actualización: 2026-11-16. Entorno: Codex Desktop, Windows, verificación remota de GitHub y Dokploy.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
@@ -17,7 +17,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 ```json
 {
   "foundation_sha": "38d6f06656d78b441b30d59025f45ad778dd13d7",
-  "platform_sha": "3fbe4c094ca38c4cb20985bc69592e1858bb9067",
+  "platform_sha": "faceb121968a8557ba66c2a6d37ede25ead851c7",
   "last_completed": {
     "task": "PLT-010",
     "status": "DONE",
@@ -27,12 +27,12 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
   },
   "next_task": {"task": "PLT-050", "status": "TODO"},
   "requires_operator_authorization": true,
-  "next_action": "Verificar el candidato PLT-050 con CI y revisión independiente, y validar persistencia de sesión, retorno de GitHub y logout en staging tras su autorización de despliegue."
+  "next_action": "Integrar en Foundation el cierre de PLT-050 validado en staging y comprobar NEXT_TASK antes de iniciar PLT-051."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. El operador autorizó específicamente el inicio de PLT-050. Foundation main conserva TODO hasta registrar el avance canónico. Staging aceptó la integración
+`DONE`. PLT-050 está desplegado y aceptado en staging; esta proyección usa Foundation main anterior al cierre canónico. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -67,7 +67,10 @@ Los cambios principales de PLT-010 están en
 
 ## Pruebas y evidencias
 
-- PLT-050. El [CI de la primera revisión de PR #28](https://github.com/novo34/jev-platform/actions/runs/43872739376) pasó en `a25fb2428d44a1f59ac51797dc16d196fb3d203e`. Incluyó autenticación, caducidad, revocación y CSRF en PostgreSQL y recarga, retorno simulado de GitHub y cierre de sesión en Chromium. Los checks del head actual y la aceptación real en staging se verifican por separado.
+- [PLT-050, PR #28](https://github.com/novo34/jev-platform/pull/28). CodeRabbit y los cuatro jobs del [CI final](https://github.com/novo34/jev-platform/actions/runs/43877821397) pasaron en `936e5bd7df907539705f8dbf6f9d638db27f5f49`; se resolvieron seis observaciones. El [CI de main](https://github.com/novo34/jev-platform/actions/runs/43879815373) pasó en `faceb121968a8557ba66c2a6d37ede25ead851c7`.
+- Dokploy mostró Done para ese commit. El operador confirmó el 16 de noviembre de 2026 que la sesión siguió abierta al recargar y al volver del OAuth real de GitHub, y que logout seguido de recarga dejó visible el login. PostgreSQL de CI cubrió expiración, revocación, clientes Bearer y CSRF.
+
+- PLT-050. El [CI de la primera revisión de PR #28](https://github.com/novo34/jev-platform/actions/runs/43872739376) pasó en `a25fb2428d44a1f59ac51797dc16d196fb3d203e`. Incluyó autenticación, caducidad, revocación y CSRF en PostgreSQL y recarga, retorno simulado de GitHub y cierre de sesión en Chromium. Los resultados de la revisión final y de staging constan arriba.
 
 - Remediación de PLT-010 (2026-11-16). Tarea `9f62af00-2562-47b1-9237-6447e11447e7`,
   ciclo `4cb5efe7-4d07-49b4-a91d-700ca4c0738d`. Se verificó localmente la firma
@@ -150,7 +153,7 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. CI, revisión y prueba en staging pendientes.
+Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. Queda incorporar el cierre en Foundation.
 
 ## Bloqueos y dependencias
 
@@ -185,9 +188,8 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Consultar el head vigente de la [PR #28](https://github.com/novo34/jev-platform/pull/28) y comprobar el CI y la revisión independiente de ese SHA antes de integrar el candidato de PLT-050.
-2. Validar PLT-050 en staging tras autorización de despliegue.
-3. Registrar el resultado antes de tramitar el inicio de PLT-051.
+1. Integrar el cierre canónico de PLT-050 en Foundation y comprobar NEXT_TASK.
+2. Sincronizar la proyección de Foundation y tramitar el inicio de PLT-051.
 
 ## Instrucciones para continuar en otra sesión
 
