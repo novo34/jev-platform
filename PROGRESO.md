@@ -3,7 +3,7 @@
 ## Identificación
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
-- Rama de trabajo: `codex/plt-050-staging-evidence`. Base integrada: `main`.
+- Rama de trabajo: `codex/plt-051-password-recovery`. Base integrada: `main`.
 - Última actualización: 2026-11-16. Entorno: Codex Desktop, Windows, verificación remota de GitHub y Dokploy.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
@@ -16,23 +16,26 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 
 ```json
 {
-  "foundation_sha": "38d6f06656d78b441b30d59025f45ad778dd13d7",
-  "platform_sha": "faceb121968a8557ba66c2a6d37ede25ead851c7",
+  "foundation_sha": "7bdc8444d5698a590356c61233f6e2a148b43787",
+  "platform_sha": "e552e770769796ee87913b205d1e14f78cbdb6f9",
   "last_completed": {
-    "task": "PLT-010",
+    "task": "PLT-050",
     "status": "DONE",
-    "pr": "https://github.com/novo34/jev-platform/pull/23",
-    "ci": "https://github.com/novo34/jev-platform/actions/runs/40024024437",
-    "review": "https://github.com/novo34/jev-platform/pull/23#issuecomment-6374750357"
+    "pr": "https://github.com/novo34/jev-platform/pull/28",
+    "ci": "https://github.com/novo34/jev-platform/actions/runs/43879815373",
+    "review": "https://github.com/novo34/jev-platform/pull/28#pullrequestreview-5920599221"
   },
-  "next_task": {"task": "PLT-050", "status": "TODO"},
+  "next_task": {
+    "task": "PLT-051",
+    "status": "TODO"
+  },
   "requires_operator_authorization": true,
-  "next_action": "Integrar en Foundation el cierre de PLT-050 validado en staging y comprobar NEXT_TASK antes de iniciar PLT-051."
+  "next_action": "Implementar la recuperación por correo de PLT-051, ejecutar su CI y preparar la prueba de entrega y restablecimiento en staging."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 está desplegado y aceptado en staging; esta proyección usa Foundation main anterior al cierre canónico. Staging aceptó la integración
+`DONE`. PLT-050 está DONE en Foundation. NEXT_TASK seleccionó PLT-051 y el operador autorizó su inicio. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -153,11 +156,11 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. Queda incorporar el cierre en Foundation.
+Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
 ## Bloqueos y dependencias
 
-El siguiente candidato en Foundation main es PLT-050. La recuperación por
+El [CI de Foundation](https://github.com/novo34/base-skills_klever/actions/runs/43896184283) confirmó PLT-051 como NEXT_TASK. La recuperación por
 correo requiere un proveedor de envío configurado para la prueba en staging.
 El validador comprueba el formato de `last_completed.pr`, `last_completed.ci` y
 `last_completed.review`. Los demás enlaces, incluidos los destinos Markdown
@@ -188,8 +191,9 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Integrar el cierre canónico de PLT-050 en Foundation y comprobar NEXT_TASK.
-2. Sincronizar la proyección de Foundation y tramitar el inicio de PLT-051.
+1. Añadir la solicitud de recuperación y el formulario de nueva contraseña. Responder igual para cuentas conocidas y desconocidas y limitar solicitudes.
+2. Guardar únicamente el hash de cada token aleatorio y asociarlo a la cuenta, con caducidad y consumo único. Actualizar la contraseña y revocar sesiones en una sola transacción con privilegios acotados.
+3. Probar el flujo con PostgreSQL y un transporte de correo simulado, incluidos rechazo de tokens caducados, inválidos o usados y revocación de sesiones. Configurar y probar el proveedor de envío en staging antes de aceptar PLT-051.
 
 ## Instrucciones para continuar en otra sesión
 
@@ -220,7 +224,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
    queda fuera de ese control automático. CI valida el archivo sin escribirlo.
 
 [gate]: https://github.com/novo34/base-skills_klever/blob/main/docs/JEV_MASTER_BACKLOG.md
-[backlog]: https://github.com/novo34/base-skills_klever/blob/38d6f06656d78b441b30d59025f45ad778dd13d7/backlog/jev-master-tasks.yaml
+[backlog]: https://github.com/novo34/base-skills_klever/blob/7bdc8444d5698a590356c61233f6e2a148b43787/backlog/jev-master-tasks.yaml
 [pr]: https://github.com/novo34/jev-platform/pull/23
 [ci]: https://github.com/novo34/jev-platform/actions/runs/40024024437
 [main-ci]: https://github.com/novo34/jev-platform/actions/runs/40024566808
