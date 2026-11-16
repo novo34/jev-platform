@@ -11,8 +11,7 @@ interface ProviderStatus {
   updatedAt?: string;
 }
 
-interface LoginResponse {
-  token: string;
+interface BrowserSession {
   user: {
     displayName: string;
     role: string;
@@ -21,23 +20,29 @@ interface LoginResponse {
 
 const DEFAULT_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000001";
 
+class ApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 async function api<T>(
   path: string,
-  options: RequestInit = {},
-  token?: string
+  options: RequestInit = {}
 ): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...options,
+    credentials: "same-origin",
     headers: {
       ...(options.body != null ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "X-JEV-Browser-Session": "1",
       ...(options.headers ?? {})
     }
   });
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: "REQUEST_FAILED" }));
-    throw new Error(body.message ??
+    throw new ApiError(response.status, body.message ??
       (typeof body.error === "object" ? body.error?.message : body.error) ?? `HTTP ${response.status}`);
   }
 
@@ -51,7 +56,7 @@ async function api<T>(
 function Login({
   onLogin
 }: {
-  onLogin: (session: LoginResponse) => void;
+  onLogin: (session: BrowserSession) => void;
 }) {
   const [organizationId, setOrganizationId] = useState(DEFAULT_ORGANIZATION_ID);
   const [email, setEmail] = useState("admin@jev.local");
@@ -64,7 +69,7 @@ function Login({
     setError("");
     setSubmitting(true);
     try {
-      const session = await api<LoginResponse>("/auth/login", {
+      const session = await api<BrowserSession>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ organizationId, email, password })
       });
@@ -118,12 +123,10 @@ function Login({
 function ProviderCard({
   provider,
   status,
-  token,
   refresh
 }: {
   provider: ProviderName;
   status: ProviderStatus;
-  token: string;
   refresh: () => Promise<void>;
 }) {
   const [apiKey, setApiKey] = useState("");
@@ -146,8 +149,7 @@ function ProviderCard({
     try {
       await api(
         `/providers/${provider}/credential`,
-        { method: "PUT", body: JSON.stringify({ apiKey }) },
-        token
+        { method: "PUT", body: JSON.stringify({ apiKey }) }
       );
       setApiKey("");
       setMessage("Credencial guardada de forma segura.");
@@ -165,8 +167,7 @@ function ProviderCard({
     try {
       const result = await api<{ ok: boolean; detail?: string }>(
         `/providers/${provider}/test`,
-        { method: "POST" },
-        token
+        { method: "POST" }
       );
       setMessage(result.ok ? "Conexión correcta." : result.detail ?? "La prueba falló.");
     } catch (caught) {
@@ -183,8 +184,7 @@ function ProviderCard({
     try {
       await api(
         `/providers/${provider}/credential`,
-        { method: "DELETE" },
-        token
+        { method: "DELETE" }
       );
       setMessage("Credencial eliminada.");
       await refresh();
@@ -239,7 +239,7 @@ function ProviderCard({
   );
 }
 
-function GitHubSettings({ session }: { session: LoginResponse }) {
+function GitHubSettings({ session }: { session: BrowserSession }) {
   const [projectId, setProjectId] = useState("");
   const [repositoryId, setRepositoryId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -251,7 +251,7 @@ function GitHubSettings({ session }: { session: LoginResponse }) {
     try {
       const result = await api<{ data: { installUrl: string } }>("/control/commands", {
         method: "POST", body: JSON.stringify({ commandId: crypto.randomUUID(), action, projectId, payload: { repositoryId } })
-      }, session.token);
+      });
       const url = new URL(result.data.installUrl);
       if (url.origin !== "https://github.com") throw new Error("Destino de autorización inválido");
       window.location.assign(url.toString());
@@ -288,10 +288,14 @@ function GitHubSettings({ session }: { session: LoginResponse }) {
 
 function Settings({
   session,
-  onLogout
+  onLogout,
+  loggingOut,
+  logoutError
 }: {
-  session: LoginResponse;
+  session: BrowserSession;
   onLogout: () => void;
+  loggingOut: boolean;
+  logoutError: string;
 }) {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [error, setError] = useState("");
@@ -300,9 +304,7 @@ function Settings({
     try {
       setError("");
       const result = await api<{ providers: ProviderStatus[] }>(
-        "/providers",
-        {},
-        session.token
+        "/providers"
       );
       setProviders(result.providers);
     } catch (caught) {
@@ -326,7 +328,8 @@ function Settings({
           <button className="nav-item active">Settings</button>
           <button className="nav-item active-sub">Providers</button>
         </nav>
-        <button className="nav-item" onClick={onLogout}>Cerrar sesión</button>
+        <button className="nav-item" onClick={onLogout} disabled={loggingOut}>Cerrar sesión</button>
+          {logoutError ? <p role="alert">{logoutError}</p> : null}
       </aside>
 
       <section className="content">
@@ -351,7 +354,6 @@ function Settings({
                 key={provider}
                 provider={provider}
                 status={status}
-                token={session.token}
                 refresh={refresh}
               />
             );
@@ -364,22 +366,63 @@ function Settings({
 }
 
 function App() {
-  const [session, setSession] = useState<LoginResponse | null>(null);
+  const [session, setSession] = useState<BrowserSession | null | undefined>(undefined);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const [error, setError] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
 
-  if (!session) {
-    return <Login onLogin={setSession} />;
+  useEffect(() => {
+    const request = new AbortController();
+    api<BrowserSession>("/auth/me", { signal: request.signal }).then(
+      (result) => { if (!request.signal.aborted) setSession(result); },
+      (caught: unknown) => {
+        if (request.signal.aborted) return;
+        if (caught instanceof ApiError && caught.status === 401) {
+          setSession(null);
+        } else {
+          setError("No se pudo comprobar la sesión.");
+        }
+      }
+    );
+    return () => request.abort();
+  }, [restoreAttempt]);
+
+  if (session === undefined) {
+    return (
+      <main className="auth-shell">
+        <div className="auth-card">
+          {error ? <>
+            <p role="alert">{error}</p>
+            <button type="button" onClick={() => {
+              setError("");
+              setRestoreAttempt((attempt) => attempt + 1);
+            }}>Reintentar</button>
+          </> : <p role="status">Comprobando sesión…</p>}
+        </div>
+      </main>
+    );
   }
 
+  if (!session) return <Login onLogin={setSession} />;
+
   async function logout() {
-    if (!session) return;
+    setError("");
+    setLoggingOut(true);
     try {
-      await api("/auth/logout", { method: "POST" }, session.token);
-    } finally {
+      await api("/auth/logout", { method: "POST" });
       setSession(null);
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 401) {
+        setSession(null);
+      } else {
+        setError("No se pudo cerrar la sesión. Vuelve a intentarlo.");
+      }
+    } finally {
+      setLoggingOut(false);
     }
   }
 
-  return <Settings session={session} onLogout={() => void logout()} />;
+  return <Settings session={session} onLogout={() => void logout()} loggingOut={loggingOut} logoutError={error} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
