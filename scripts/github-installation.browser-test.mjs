@@ -88,6 +88,7 @@ async function pageWithSession(controlResponse) {
     return route.abort();
   });
   await page.goto(origin);
+  await page.getByLabel("Email").fill("browser-admin@example.test");
   await page.locator('input[type="password"]').fill("disposable-browser-password");
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
   const form = page.getByRole("article", { name: "GitHub App" });
@@ -166,4 +167,42 @@ test("browser returns to login when logout finds an expired session", async () =
     await value.page.getByRole("button", { name: "Entrar", exact: true }).waitFor();
     assertBrowserFindings(value, 401);
   } finally { await value.context.close(); }
+});
+
+test("browser requests recovery and submits a reset link without its fragment in the URL", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const token = "a".repeat(43);
+  const password = "disposable-new-password";
+  let recovery, reset;
+  await context.route(origin + "/api/**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === "/api/auth/me") return route.fulfill({ status: 401, json: { error: "UNAUTHENTICATED" } });
+    if (pathname === "/api/auth/password-recovery") {
+      recovery = request.postDataJSON();
+      return route.fulfill({ status: 202, json: { accepted: true } });
+    }
+    if (pathname === "/api/auth/password-reset") {
+      reset = request.postDataJSON();
+      return route.fulfill({ status: 204 });
+    }
+    return route.abort();
+  });
+  try {
+    await page.goto(origin);
+    await page.getByRole("button", { name: "Olvidé mi contraseña" }).click();
+    await page.getByLabel("Email").fill("browser-admin@example.test");
+    await page.getByRole("button", { name: "Enviar enlace" }).click();
+    await page.getByRole("status").filter({ hasText: "Si existe una cuenta" }).waitFor();
+    assert.equal(recovery.email, "browser-admin@example.test");
+    const resetPage = await context.newPage();
+    await resetPage.goto(origin + "/#reset=" + token);
+    await resetPage.getByLabel("Nueva contraseña").fill(password);
+    await resetPage.getByLabel("Confirma la contraseña").fill(password);
+    assert.equal(new URL(resetPage.url()).hash, "");
+    await resetPage.getByRole("button", { name: "Cambiar contraseña" }).click();
+    await resetPage.getByRole("status").filter({ hasText: "Contraseña actualizada" }).waitFor();
+    assert.deepEqual(reset, { token, password });
+  } finally { await context.close(); }
 });

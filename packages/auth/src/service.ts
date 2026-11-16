@@ -53,16 +53,32 @@ export async function login(
   }
 
   const token = randomBytes(32).toString("base64url");
-  const session = await pool.query<{ id: string }>(
-    `INSERT INTO auth_sessions (user_id, token_hash, expires_at)
-     VALUES ($1, $2, $3)
-     RETURNING id`,
-    [row.id, tokenHash(token), new Date(Date.now() + SESSION_TTL_MS)]
-  );
+  const client = await pool.connect();
+  let sessionId: string;
+  try {
+    await client.query("BEGIN");
+    // Serialize issuance with password reset and recheck the verified hash after waiting.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 51))", [row.id]);
+    const session = await client.query<{ id: string }>(
+      `INSERT INTO auth_sessions (user_id, token_hash, expires_at)
+       SELECT id, $2, $3 FROM users
+       WHERE id = $1 AND password_hash = $4 AND status = 'ACTIVE'
+       RETURNING id`,
+      [row.id, tokenHash(token), new Date(Date.now() + SESSION_TTL_MS), row.password_hash]
+    );
+    if (!session.rows[0]) throw new AuthError("INVALID_CREDENTIALS");
+    sessionId = session.rows[0].id;
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 
   return {
     token,
-    user: toAuthenticatedUser(row, session.rows[0].id)
+    user: toAuthenticatedUser(row, sessionId)
   };
 }
 

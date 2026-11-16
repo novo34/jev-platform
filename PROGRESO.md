@@ -156,6 +156,8 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
+PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable. Revisar el CI del candidato y validar el correo real después de configurar un remitente de staging.
+
 Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
 ## Bloqueos y dependencias
