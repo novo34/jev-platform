@@ -127,6 +127,11 @@ describe("password recovery routes", () => {
         });
         expect(flood.statusCode).toBe(202);
       }
+      // Let pending flood issuance settle so the concurrency bound cannot
+      // drop the target request on a slow database.
+      await expect.poll(() => pool.waitingCount === 0 && pool.idleCount === pool.totalCount,
+        { timeout: 5_000 }).toBe(true);
+      await new Promise((resolve) => setImmediate(resolve));
       const target = await app.inject({
         method: "POST", url: "/auth/password-recovery",
         payload: { organizationId, email: floodEmail.toUpperCase() }

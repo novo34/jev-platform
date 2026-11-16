@@ -63,6 +63,10 @@ function limiter(max: number, maxKeys = 10_000) {
   };
 }
 
+// Secondary bound on fire-and-forget issuance work. Each request costs one
+// short query, so only a sustained volumetric flood keeps this saturated.
+const MAX_PENDING_DELIVERIES = 32;
+
 export function registerPasswordRecovery(
   app: FastifyInstance, pool: Pool, options?: PasswordRecoveryOptions
 ): void {
@@ -86,7 +90,7 @@ export function registerPasswordRecovery(
     if (!options) return reply.code(503).send({ error: "PASSWORD_RECOVERY_UNAVAILABLE" });
     const { organizationId, email } = request.body;
     const account = organizationId.toLowerCase() + ":" + email.trim().toLowerCase();
-    if (admitAccount(account) && deliveries.size < 8) {
+    if (admitAccount(account) && deliveries.size < MAX_PENDING_DELIVERIES) {
       const delivery = (async () => {
         const token = randomBytes(32).toString("base64url");
         const result = await pool.query<{ recipient: string | null }>(
