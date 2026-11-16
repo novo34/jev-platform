@@ -40,24 +40,36 @@ function digest(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function limiter(max: number) {
-  let windowEnd = 0;
-  let count = 0;
-  return () => {
+// Per-key fixed windows. Anonymous callers cannot exhaust a shared bucket:
+// a full map evicts expired keys first and then the oldest key, which only
+// resets that key's counter (the database still throttles issuance per account).
+function limiter(max: number, maxKeys = 10_000) {
+  const buckets = new Map<string, { end: number; count: number }>();
+  return (key: string) => {
     const now = Date.now();
-    if (now >= windowEnd) {
-      windowEnd = now + 60_000;
-      count = 0;
+    let bucket = buckets.get(key);
+    if (!bucket || now >= bucket.end) {
+      buckets.delete(key);
+      if (buckets.size >= maxKeys) {
+        for (const [stale, entry] of buckets) if (now >= entry.end) buckets.delete(stale);
+        if (buckets.size >= maxKeys) buckets.delete(buckets.keys().next().value!);
+      }
+      bucket = { end: now + 60_000, count: 0 };
+      buckets.set(key, bucket);
     }
-    return count < max && ++count <= max;
+    if (bucket.count >= max) return false;
+    bucket.count += 1;
+    return true;
   };
 }
 
 export function registerPasswordRecovery(
   app: FastifyInstance, pool: Pool, options?: PasswordRecoveryOptions
 ): void {
-  const admitRequest = limiter(60);
-  const admitReset = limiter(30);
+  const admitAccount = limiter(3);
+  const admitToken = limiter(5);
+  // Secondary ceiling on password hashing. Only holders of a live link reach it.
+  const admitHashing = limiter(120, 1);
   const deliveries = new Set<Promise<void>>();
   app.addHook("onClose", async () => { await Promise.all(deliveries); });
 
@@ -72,8 +84,9 @@ export function registerPasswordRecovery(
   }, async (request, reply) => {
     reply.header("Cache-Control", "no-store");
     if (!options) return reply.code(503).send({ error: "PASSWORD_RECOVERY_UNAVAILABLE" });
-    if (admitRequest() && deliveries.size < 8) {
-      const { organizationId, email } = request.body;
+    const { organizationId, email } = request.body;
+    const account = organizationId.toLowerCase() + ":" + email.trim().toLowerCase();
+    if (admitAccount(account) && deliveries.size < 8) {
       const delivery = (async () => {
         const token = randomBytes(32).toString("base64url");
         const result = await pool.query<{ recipient: string | null }>(
@@ -102,11 +115,21 @@ export function registerPasswordRecovery(
     } }
   }, async (request, reply) => {
     reply.header("Cache-Control", "no-store");
-    if (!admitReset()) return reply.code(429).send({ error: "RATE_LIMITED" });
     const { token, password } = request.body;
+    const tokenHash = digest(token);
+    // Unknown or expired links are rejected before scrypt, so random tokens
+    // cost one indexed lookup and cannot consume the hashing budget.
+    const live = await pool.query(
+      "SELECT 1 FROM password_reset_tokens WHERE token_hash = $1 AND expires_at > clock_timestamp()",
+      [tokenHash]
+    );
+    if (!live.rowCount) return reply.code(400).send({ error: "INVALID_RESET_TOKEN" });
+    if (!admitToken(tokenHash) || !admitHashing("global")) {
+      return reply.code(429).send({ error: "RATE_LIMITED" });
+    }
     const result = await pool.query<{ applied: boolean }>(
       "SELECT jev_consume_password_reset($1::text, $2::text) AS applied",
-      [digest(token), hashPassword(password)]
+      [tokenHash, hashPassword(password)]
     );
     if (!result.rows[0]?.applied) return reply.code(400).send({ error: "INVALID_RESET_TOKEN" });
     return reply.code(204).send();
