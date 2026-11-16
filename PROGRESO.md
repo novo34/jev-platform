@@ -4,7 +4,7 @@
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
 - Rama de trabajo: `codex/plt-051-password-recovery`. Base integrada: `main`.
-- Última actualización: 2026-11-16. Entorno: Codex Desktop, Windows, verificación remota de GitHub y Dokploy.
+- Última actualización: 2026-11-16. Entorno: Claude Code en la nube (Linux), PostgreSQL 16 local desechable y verificación remota de GitHub.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
 
@@ -30,7 +30,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Implementar la recuperación por correo de PLT-051, ejecutar su CI y preparar la prueba de entrega y restablecimiento en staging."
+  "next_action": "Confirmar el CI y CodeRabbit de PR #30, configurar Resend en staging y probar la entrega y el restablecimiento reales."
 }
 ```
 
@@ -69,6 +69,8 @@ Los cambios principales de PLT-010 están en
 [pruebas de navegador](scripts/github-installation.browser-test.mjs).
 
 ## Pruebas y evidencias
+
+- PLT-051, [PR #30](https://github.com/novo34/jev-platform/pull/30). El [CI de `df7810d`](https://github.com/novo34/jev-platform/actions/runs/43897717852) falló en `validate`: la prueba de migraciones no listaba `0027`. Al reproducirlo con PostgreSQL 16 local aparecieron tres fallos más del gate de producción: el rol de CI no recibía EXECUTE sobre `jev_issue_password_reset` y `jev_consume_password_reset`, el inventario de CHECK no incluía `password_reset_tokens_token_hash_check` y el smoke esperaba ocho writers controlados. La corrección concede ambos writers en `packages/db/security/provision-runtime-role.sql`, fija el predicado exacto de la CHECK, actualiza el recuento a diez y aplica `0027` en la prueba ACL. En local pasaron `npm run check`, `smoke:restricted-runtime` (10 writers, 27 migraciones) y el smoke de desarrollo. El CI y CodeRabbit del nuevo head se consultan en la PR.
 
 - [PLT-050, PR #28](https://github.com/novo34/jev-platform/pull/28). CodeRabbit y los cuatro jobs del [CI final](https://github.com/novo34/jev-platform/actions/runs/43877821397) pasaron en `936e5bd7df907539705f8dbf6f9d638db27f5f49`; se resolvieron seis observaciones. El [CI de main](https://github.com/novo34/jev-platform/actions/runs/43879815373) pasó en `faceb121968a8557ba66c2a6d37ede25ead851c7`.
 - Dokploy mostró Done para ese commit. El operador confirmó el 16 de noviembre de 2026 que la sesión siguió abierta al recargar y al volver del OAuth real de GitHub, y que logout seguido de recarga dejó visible el login. PostgreSQL de CI cubrió expiración, revocación, clientes Bearer y CSRF.
@@ -193,9 +195,9 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Añadir la solicitud de recuperación y el formulario de nueva contraseña. Responder igual para cuentas conocidas y desconocidas y limitar solicitudes.
-2. Guardar únicamente el hash de cada token aleatorio y asociarlo a la cuenta, con caducidad y consumo único. Actualizar la contraseña y revocar sesiones en una sola transacción con privilegios acotados.
-3. Probar el flujo con PostgreSQL y un transporte de correo simulado, incluidos rechazo de tokens caducados, inválidos o usados y revocación de sesiones. Configurar y probar el proveedor de envío en staging antes de aceptar PLT-051.
+1. Comprobar que los cuatro jobs del CI de PR #30 pasan en el head vigente y contrastar los hallazgos de CodeRabbit con el código y las pruebas.
+2. Configurar Resend en staging (clave, remitente y dominio verificado) y desplegar la rama en JEV Staging.
+3. Probar en staging la entrega real del enlace, el restablecimiento, el consumo único y la revocación de sesiones. Después, registrar la evidencia y tramitar el cierre en Foundation.
 
 ## Instrucciones para continuar en otra sesión
 
