@@ -54,28 +54,40 @@ async function api<T>(
 }
 
 function Login({
-  onLogin
+  onLogin,
+  notice
 }: {
   onLogin: (session: BrowserSession) => void;
+  notice?: string;
 }) {
   const [organizationId, setOrganizationId] = useState(DEFAULT_ORGANIZATION_ID);
-  const [email, setEmail] = useState("admin@jev.local");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoverySent, setRecoverySent] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
     setSubmitting(true);
     try {
+      if (recovering) {
+        await api("/auth/password-recovery", {
+          method: "POST", body: JSON.stringify({ organizationId, email })
+        });
+        setRecoverySent(true);
+        return;
+      }
       const session = await api<BrowserSession>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ organizationId, email, password })
       });
       onLogin(session);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No se pudo iniciar sesión");
+      setError(recovering ? "No se pudo solicitar la recuperación. Inténtalo más tarde." :
+        caught instanceof Error ? caught.message : "No se pudo iniciar sesión");
     } finally {
       setSubmitting(false);
     }
@@ -86,7 +98,7 @@ function Login({
       <form className="auth-card" onSubmit={submit}>
         <div>
           <p className="eyebrow">JEV Platform</p>
-          <h1>Acceso administrativo</h1>
+          <h1>{recovering ? "Recuperar contraseña" : "Acceso administrativo"}</h1>
           <p className="muted">
             Entorno local de desarrollo. Las credenciales de proveedores se
             cifran en el servidor y nunca vuelven a mostrarse completas.
@@ -99,22 +111,34 @@ function Login({
         </label>
         <label>
           Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input type="email" name="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
-        <label>
+        {!recovering ? <label>
           Contraseña
           <input
             type="password"
+            autoComplete="current-password"
+            required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-        </label>
+        </label> : null}
 
-        {error ? <p className="error">{error}</p> : null}
+        {notice && !recovering ? <p role="status">{notice}</p> : null}
+        {recoverySent && recovering
+          ? <p role="status">Si existe una cuenta con esos datos, recibirás un correo con un enlace.</p>
+          : null}
+        {error ? <p className="error" role="alert">{error}</p> : null}
 
         <button className="primary" type="submit" disabled={submitting}>
-          {submitting ? "Entrando…" : "Entrar"}
+          {submitting ? "Enviando…" : recovering ? "Enviar enlace" : "Entrar"}
         </button>
+        <button type="button" disabled={submitting} onClick={() => {
+          setError("");
+          setPassword("");
+          setRecoverySent(false);
+          setRecovering(!recovering);
+        }}>{recovering ? "Volver al acceso" : "Olvidé mi contraseña"}</button>
       </form>
     </main>
   );
@@ -365,13 +389,69 @@ function Settings({
   );
 }
 
+function ResetPassword({ token, onDone }: { token: string; onDone: () => void }) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (password !== confirmation) {
+      setError("Las contraseñas no coinciden.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api("/auth/password-reset", {
+        method: "POST", body: JSON.stringify({ token, password })
+      });
+      onDone();
+    } catch (caught) {
+      setError(caught instanceof ApiError && caught.message === "INVALID_RESET_TOKEN"
+        ? "El enlace ya no es válido. Solicita otro desde el formulario de acceso."
+        : "No se pudo cambiar la contraseña. Inténtalo de nuevo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <form className="auth-card" onSubmit={submit}>
+        <h1>Cambiar contraseña</h1>
+        <label>Nueva contraseña
+          <input type="password" autoComplete="new-password" minLength={12} maxLength={1024} required
+            value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
+        <label>Confirma la contraseña
+          <input type="password" autoComplete="new-password" minLength={12} maxLength={1024} required
+            value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
+        </label>
+        {error ? <p className="error" role="alert">{error}</p> : null}
+        <button type="submit" className="primary" disabled={busy}>Cambiar contraseña</button>
+        <a href="/">Volver al acceso</a>
+      </form>
+    </main>
+  );
+}
+
 function App() {
+  const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get("reset"));
+  const [resetCompleted, setResetCompleted] = useState(false);
   const [session, setSession] = useState<BrowserSession | null | undefined>(undefined);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [error, setError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
+    if (resetToken !== null) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      return;
+    }
+    if (resetCompleted) return;
+
     const request = new AbortController();
     api<BrowserSession>("/auth/me", { signal: request.signal }).then(
       (result) => { if (!request.signal.aborted) setSession(result); },
@@ -385,8 +465,15 @@ function App() {
       }
     );
     return () => request.abort();
-  }, [restoreAttempt]);
+  }, [resetToken, resetCompleted, restoreAttempt]);
 
+  if (resetToken !== null) {
+    return <ResetPassword token={resetToken} onDone={() => {
+      setSession(null);
+      setResetCompleted(true);
+      setResetToken(null);
+    }} />;
+  }
   if (session === undefined) {
     return (
       <main className="auth-shell">
@@ -403,7 +490,7 @@ function App() {
     );
   }
 
-  if (!session) return <Login onLogin={setSession} />;
+  if (!session) return <Login notice={resetCompleted ? "Contraseña actualizada. Inicia sesión." : undefined} onLogin={setSession} />;
 
   async function logout() {
     setError("");

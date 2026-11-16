@@ -81,7 +81,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO jev_runtime;
 
 -- Definer writer privileges are explicit and non-delegable. Historical
 -- PUBLIC/foreign grants must fail the verifier; sanitize PUBLIC and runtime
--- GRANT OPTION before reinstating the eight approved EXECUTE grants.
+-- GRANT OPTION before reinstating the approved EXECUTE grants.
 DO $jev_writers$
 DECLARE
   signature text;
@@ -94,7 +94,9 @@ BEGIN
     'jev_lock_project_scope(uuid)',
     'jev_lock_actor_authorization(uuid,uuid)',
     'jev_create_deployment(uuid,uuid,uuid,uuid,text,text,text,text,jsonb)',
-    'jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)'
+    'jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)',
+    'jev_issue_password_reset(uuid,text,text)',
+    'jev_consume_password_reset(text,text)'
   ]
   LOOP
     EXECUTE pg_catalog.format(
@@ -119,6 +121,8 @@ GRANT INSERT ON TABLE projects, repositories, orders, requirements, task_require
 GRANT UPDATE (status) ON TABLE orders TO jev_runtime;
 -- API authentication and audit paths; no guarded-table privileges.
 GRANT INSERT ON TABLE auth_sessions, audit_events TO jev_runtime;
+GRANT EXECUTE ON FUNCTION jev_issue_password_reset(uuid, text, text) TO jev_runtime;
+GRANT EXECUTE ON FUNCTION jev_consume_password_reset(text, text) TO jev_runtime;
 GRANT UPDATE (last_seen_at) ON TABLE auth_sessions TO jev_runtime;
 GRANT DELETE ON TABLE auth_sessions TO jev_runtime;
 -- Control API changes only project operational state.

@@ -20,7 +20,9 @@ const controlled = [
   "jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)",
   "jev_set_deployment_status(uuid,uuid[],text)",
   "jev_lock_project_scope(uuid)",
-  "jev_lock_actor_authorization(uuid,uuid)"
+  "jev_lock_actor_authorization(uuid,uuid)",
+  "jev_issue_password_reset(uuid,text,text)",
+  "jev_consume_password_reset(text,text)"
 ];
 
 /**
@@ -36,7 +38,9 @@ const auditedWriterFiles = new Map([
   ["jev_create_approval(uuid,uuid,uuid,text,text,text,text,text,jsonb)", "0017_atomic_approved_task_rework.sql"],
   ["jev_set_deployment_status(uuid,uuid[],text)", "0011_scope_controlled_writer_to_schema.sql"],
   ["jev_lock_project_scope(uuid)", "0014_controlled_project_scope_lock.sql"],
-  ["jev_lock_actor_authorization(uuid,uuid)", "0024_github_authorization_serialization.sql"]
+  ["jev_lock_actor_authorization(uuid,uuid)", "0024_github_authorization_serialization.sql"],
+  ["jev_issue_password_reset(uuid,text,text)", "0027_password_recovery.sql"],
+  ["jev_consume_password_reset(text,text)", "0027_password_recovery.sql"]
 ]);
 
 function extractAuditedWriterBody(sql, signature) {
@@ -456,8 +460,13 @@ async function validateCheckConstraintSurface(pool) {
     ["github_operations:github_operations_status_check", "CHECK ((status = ANY (ARRAY['PENDING'::text, 'SUCCESS'::text, 'FAILED'::text, 'UNKNOWN'::text])))"],
     ["github_user_identities:github_user_identities_github_user_id_check", "CHECK ((github_user_id > 0))"]
   ]);
+  // Exact PostgreSQL 16 expression from immutable PLT-051 migration 0027.
+  const passwordRecoveryChecks = new Map([
+    ["password_reset_tokens:password_reset_tokens_token_hash_check", "CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))"]
+  ]);
   const expected = new Set([
     ...githubChecks.keys(),
+    ...passwordRecoveryChecks.keys(),
     "repositories:repositories_role_check",
     "environments:environments_kind_check",
     "tasks:tasks_risk_check",
@@ -499,6 +508,10 @@ async function validateCheckConstraintSurface(pool) {
     const definition = githubChecks.get(row.table_name + ":" + row.constraint_name);
     return definition === undefined || definition === row.definition;
   }), "GitHub CHECK constraint predicate drifted from audited migration");
+  assert(checks.rows.every(row => {
+    const definition = passwordRecoveryChecks.get(row.table_name + ":" + row.constraint_name);
+    return definition === undefined || definition === row.definition;
+  }), "password recovery CHECK constraint predicate drifted from audited migration");
 
   // An altered constraint retaining a known name must not be allowed to
   // smuggle invoker functions or custom operators into privileged writers.

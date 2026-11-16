@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import type { Pool } from "pg";
 import { createHealthStatus } from "@jev/shared";
 import { registerAuthRoutes } from "./auth.js";
+import { registerPasswordRecovery, type PasswordRecoveryOptions } from "./password-recovery.js";
 import { registerControlRoutes } from "./control.js";
 import type { ProviderRegistry } from "@jev/model-gateway";
 import { registerProviderRoutes } from "./providers.js";
@@ -13,6 +14,7 @@ interface BuildApiOptions {
   providerRegistry?: ProviderRegistry;
   githubInstallation?: GitHubInstallationFlow;
   githubOperations?: GitHubOperations;
+  passwordRecovery?: PasswordRecoveryOptions;
 }
 
 export function buildApi(options: BuildApiOptions = {}) {
@@ -36,6 +38,7 @@ export function buildApi(options: BuildApiOptions = {}) {
 
   if (options.pool) {
     registerAuthRoutes(app, options.pool);
+    registerPasswordRecovery(app, options.pool, options.passwordRecovery);
     registerControlRoutes(app, options.pool, new ControlService(options.pool, options.githubInstallation, options.githubOperations));
     registerProviderRoutes(app, options.pool, {
       encryptionKey: options.providerEncryptionKey,
