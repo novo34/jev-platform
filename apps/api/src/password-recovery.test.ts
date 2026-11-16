@@ -11,8 +11,12 @@ const userId = randomUUID();
 const otherUserId = randomUUID();
 const floodUserId = randomUUID();
 const raceUserId = randomUUID();
+const blockerUserId = randomUUID();
+const saturatedUserId = randomUUID();
 const floodEmail = "flood-target@test.local";
 const raceEmail = "race-target@test.local";
+const blockerEmail = "blocker-target@test.local";
+const saturatedEmail = "saturated-target@test.local";
 const email = "recovery@test.local";
 const originalPassword = "original-test-password";
 const replacement = "different-test-password";
@@ -26,14 +30,18 @@ beforeAll(async () => {
      VALUES ($1, $2, $5, 'Recovery admin', 'ADMIN', $6),
             ($3, $4, $5, 'Other admin', 'ADMIN', $6),
             ($7, $2, $8, 'Flood target', 'ADMIN', $6),
-            ($9, $2, $10, 'Race target', 'ADMIN', $6)`,
+            ($9, $2, $10, 'Race target', 'ADMIN', $6),
+            ($11, $2, $12, 'Blocker target', 'ADMIN', $6),
+            ($13, $2, $14, 'Saturated target', 'ADMIN', $6)`,
     [userId, organizationId, otherUserId, otherOrganizationId, email, hashPassword(originalPassword),
-      floodUserId, floodEmail, raceUserId, raceEmail]
+      floodUserId, floodEmail, raceUserId, raceEmail,
+      blockerUserId, blockerEmail, saturatedUserId, saturatedEmail]
   );
 });
 
 afterAll(async () => {
-  await pool.query("DELETE FROM users WHERE id IN ($1, $2, $3, $4)", [userId, otherUserId, floodUserId, raceUserId]);
+  await pool.query("DELETE FROM users WHERE id IN ($1, $2, $3, $4, $5, $6)",
+    [userId, otherUserId, floodUserId, raceUserId, blockerUserId, saturatedUserId]);
   await pool.query("DELETE FROM organizations WHERE id IN ($1, $2)", [organizationId, otherOrganizationId]);
   await pool.end();
 });
@@ -185,6 +193,67 @@ describe("password recovery routes", () => {
     } finally {
       await holder.query("ROLLBACK").catch(() => undefined);
       holder.release();
+      await app.close();
+    }
+  });
+
+  it("does not spend the account budget on requests dropped while deliveries are saturated", async () => {
+    const sent: Array<{ recipient: string; link: URL }> = [];
+    const app = buildApi({
+      pool,
+      passwordRecovery: {
+        origin: "https://jev.example.test",
+        send: async (recipient, url) => { sent.push({ recipient, link: new URL(url) }); },
+        maxPendingDeliveries: 1
+      }
+    });
+    const request = (requestedEmail: string) => app.inject({
+      method: "POST", url: "/auth/password-recovery",
+      payload: { organizationId, email: requestedEmail }
+    });
+    const holder = await pool.connect();
+    let released = false;
+    try {
+      const key = (await holder.query<{ high: string; low: string }>(
+        `SELECT ((k >> 32) & 4294967295)::text AS high, (k & 4294967295)::text AS low
+           FROM (SELECT hashtextextended($1::text, 51) AS k) AS lock_key`, [blockerUserId]
+      )).rows[0];
+      await holder.query("BEGIN");
+      await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 51))", [blockerUserId]);
+      expect((await request(blockerEmail)).statusCode).toBe(202);
+      await expect.poll(async () => (await pool.query<{ waiting: number }>(
+        `SELECT count(*)::int AS waiting FROM pg_locks
+          WHERE locktype = 'advisory' AND NOT granted
+            AND classid = $1::bigint::oid AND objid = $2::bigint::oid`, [key.high, key.low]
+      )).rows[0].waiting, { timeout: 5_000 }).toBe(1);
+
+      // The only delivery slot is held, so these are dropped without sending.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const dropped = await request(saturatedEmail);
+        expect(dropped.statusCode).toBe(202);
+        expect(dropped.json()).toEqual({ accepted: true });
+      }
+      expect(sent).toEqual([]);
+
+      await holder.query("COMMIT");
+      // Return the blocker connection so the pool can report fully idle below.
+      holder.release();
+      released = true;
+      await expect.poll(() => sent.map((message) => message.recipient), { timeout: 5_000 })
+        .toEqual([blockerEmail]);
+      await expect.poll(() => pool.waitingCount === 0 && pool.idleCount === pool.totalCount,
+        { timeout: 5_000 }).toBe(true);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // The dropped attempts must not have consumed the 3-per-minute account budget.
+      expect((await request(saturatedEmail)).statusCode).toBe(202);
+      await expect.poll(() => sent.map((message) => message.recipient), { timeout: 2_000 })
+        .toEqual([blockerEmail, saturatedEmail]);
+    } finally {
+      if (!released) {
+        await holder.query("ROLLBACK").catch(() => undefined);
+        holder.release();
+      }
       await app.close();
     }
   });

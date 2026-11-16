@@ -8,6 +8,8 @@ type SendResetEmail = (recipient: string, url: string) => Promise<void>;
 export interface PasswordRecoveryOptions {
   origin: string;
   send: SendResetEmail;
+  // Cap on in-flight issuances; exists for tests and operational tuning.
+  maxPendingDeliveries?: number;
 }
 
 export function resendPasswordRecovery(env: NodeJS.ProcessEnv): PasswordRecoveryOptions | undefined {
@@ -70,6 +72,7 @@ const MAX_PENDING_DELIVERIES = 32;
 export function registerPasswordRecovery(
   app: FastifyInstance, pool: Pool, options?: PasswordRecoveryOptions
 ): void {
+  const maxPending = options?.maxPendingDeliveries ?? MAX_PENDING_DELIVERIES;
   const admitAccount = limiter(3);
   const admitToken = limiter(5);
   // Secondary ceiling on password hashing. Only holders of a live link reach it.
@@ -90,7 +93,8 @@ export function registerPasswordRecovery(
     if (!options) return reply.code(503).send({ error: "PASSWORD_RECOVERY_UNAVAILABLE" });
     const { organizationId, email } = request.body;
     const account = organizationId.toLowerCase() + ":" + email.trim().toLowerCase();
-    if (admitAccount(account) && deliveries.size < MAX_PENDING_DELIVERIES) {
+    // Check capacity first so a dropped request does not consume the account budget.
+    if (deliveries.size < maxPending && admitAccount(account)) {
       const delivery = (async () => {
         const token = randomBytes(32).toString("base64url");
         const result = await pool.query<{ recipient: string | null }>(
