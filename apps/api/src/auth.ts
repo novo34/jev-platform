@@ -32,7 +32,7 @@ function browserSessionRequest(request: FastifyRequest): boolean {
   // A cross-origin form cannot set this header. Cross-origin fetch cannot
   // send it because the API does not enable CORS.
   return request.headers["x-jev-browser-session"] === "1" &&
-    (site === undefined || site === "same-origin");
+    site === "same-origin";
 }
 
 function sessionCookie(value: string): string {

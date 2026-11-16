@@ -95,6 +95,27 @@ describe("control API", () => {
     await app.close();
   });
 
+  it("accepts same-origin control commands authenticated with the browser cookie", async () => {
+    const app = buildApi({ pool });
+    const browserHeaders = { "x-jev-browser-session": "1", "sec-fetch-site": "same-origin" };
+    try {
+      const login = await app.inject({
+        method: "POST", url: "/auth/login", headers: browserHeaders,
+        payload: { organizationId, email: "api-control@test.local", password }
+      });
+      expect(login.statusCode).toBe(200);
+      const cookie = String(login.headers["set-cookie"]).split(";")[0];
+      const result = await app.inject({
+        method: "POST", url: "/control/commands", headers: { ...browserHeaders, cookie },
+        payload: { action: "GET_PROJECT_STATUS", projectId }
+      });
+      expect(result.statusCode).toBe(200);
+      expect(result.json()).toMatchObject({ ok: true, action: "GET_PROJECT_STATUS" });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns a stable unauthenticated error contract", async () => {
     const app = buildApi({ pool });
 

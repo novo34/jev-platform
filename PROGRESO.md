@@ -67,6 +67,8 @@ Los cambios principales de PLT-010 están en
 
 ## Pruebas y evidencias
 
+- PLT-050. El [CI de la primera revisión de PR #28](https://github.com/novo34/jev-platform/actions/runs/43872739376) pasó en `a25fb2428d44a1f59ac51797dc16d196fb3d203e`. Incluyó autenticación, caducidad, revocación y CSRF en PostgreSQL y recarga, retorno simulado de GitHub y cierre de sesión en Chromium. Los checks del head actual y la aceptación real en staging se verifican por separado.
+
 - Remediación de PLT-010 (2026-11-16). Tarea `9f62af00-2562-47b1-9237-6447e11447e7`,
   ciclo `4cb5efe7-4d07-49b4-a91d-700ca4c0738d`. Se verificó localmente la firma
   Ed25519 de `qa-v1` y PostgreSQL confirmó `VERIFIED` con el informe registrado.
@@ -183,7 +185,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Revisar el CI y CodeRabbit del cambio documental sobre su SHA publicado.
+1. Consultar el head vigente de la [PR #28](https://github.com/novo34/jev-platform/pull/28) y comprobar el CI y la revisión independiente de ese SHA antes de integrar el candidato de PLT-050.
 2. Validar PLT-050 en staging tras autorización de despliegue.
 3. Registrar el resultado antes de tramitar el inicio de PLT-051.
 

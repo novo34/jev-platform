@@ -64,6 +64,10 @@ async function pageWithSession(controlResponse) {
       }
       if (url.pathname === "/api/auth/logout") {
         assert.equal(request.headers()["x-jev-browser-session"], "1");
+        const cookie = (await request.allHeaders()).cookie;
+        if (revoked || !cookie?.includes(sessionCookie)) {
+          return route.fulfill({ status: 401, json: { error: "UNAUTHENTICATED" } });
+        }
         revoked = true;
         return route.fulfill({ status: 204, headers: { "Set-Cookie": `__Host-jev_session=; ${attributes}; Max-Age=0` } });
       }
@@ -91,7 +95,8 @@ async function pageWithSession(controlResponse) {
   await form.getByLabel("Repositorio del registro (ID)").fill("22222222-2222-4222-8222-222222222222");
   // The initial anonymous session lookup returns an expected 401.
   consoleErrors.length = 0;
-  return { context, page, form, commands, githubRequests, runtimeErrors, consoleErrors, networkFailures };
+  return { context, page, form, commands, githubRequests, runtimeErrors, consoleErrors, networkFailures,
+    expireSession: () => { revoked = true; } };
 }
 
 function assertBrowserFindings(value, expectedHttpStatus) {
@@ -150,5 +155,15 @@ test("browser refuses an authorization redirect outside GitHub", async () => {
     assert.match(await value.form.getByRole("alert").textContent(), /Destino de autorización inválido/);
     assert.equal(new URL(value.page.url()).origin, origin);
     assertBrowserFindings(value);
+  } finally { await value.context.close(); }
+});
+
+test("browser returns to login when logout finds an expired session", async () => {
+  const value = await pageWithSession({ status: 200 });
+  try {
+    value.expireSession();
+    await value.page.getByRole("button", { name: "Cerrar sesión" }).click();
+    await value.page.getByRole("button", { name: "Entrar", exact: true }).waitFor();
+    assertBrowserFindings(value, 401);
   } finally { await value.context.close(); }
 });

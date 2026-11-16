@@ -105,7 +105,16 @@ describe("auth HTTP routes", () => {
       expect((await me()).statusCode).toBe(200);
 
       for (const headers of [
+        { cookie: `${cookie}; ${cookie}` },
+        { cookie: "__Host-jev_session=short" },
+        { cookie, authorization: "Bearer invalid" }
+      ]) {
+        expect((await app.inject({ method: "GET", url: "/auth/me", headers })).statusCode).toBe(401);
+      }
+
+      for (const headers of [
         { cookie },
+        { cookie, "x-jev-browser-session": "1" },
         { cookie, "x-jev-browser-session": "1", "sec-fetch-site": "same-site" }
       ]) {
         for (const url of ["/auth/logout", "/control/commands"]) {
@@ -123,7 +132,7 @@ describe("auth HTTP routes", () => {
         headers: { cookie, "x-jev-browser-session": "1", "sec-fetch-site": "same-origin" }
       });
       expect(logout.statusCode).toBe(204);
-      expect(String(logout.headers["set-cookie"])).toContain("Max-Age=0");
+      expect(String(logout.headers["set-cookie"])).toBe("__Host-jev_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
       expect((await me()).statusCode).toBe(401);
     } finally {
       await app.close();
@@ -135,7 +144,7 @@ describe("auth HTTP routes", () => {
     try {
       const login = await app.inject({
         method: "POST", url: "/auth/login",
-        headers: { "x-jev-browser-session": "1" },
+        headers: { "x-jev-browser-session": "1", "sec-fetch-site": "same-origin" },
         payload: { organizationId, email: "api-owner@test.local", password }
       });
       expect(login.statusCode).toBe(200);
