@@ -88,6 +88,65 @@ describe("auth HTTP routes", () => {
     await app.close();
   });
 
+  it("restores browser sessions, rejects CSRF and revokes access on logout", async () => {
+    const app = buildApi({ pool });
+    try {
+      const login = await app.inject({
+        method: "POST", url: "/auth/login",
+        headers: { "x-jev-browser-session": "1", "sec-fetch-site": "same-origin" },
+        payload: { organizationId, email: "api-owner@test.local", password }
+      });
+      expect(login.statusCode).toBe(200);
+      expect(login.json()).toEqual({ user: expect.objectContaining({ id: userId }) });
+      const setCookie = String(login.headers["set-cookie"]);
+      expect(setCookie).toMatch(/^__Host-jev_session=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; Secure; SameSite=Lax$/);
+      const cookie = setCookie.split(";")[0];
+      const me = () => app.inject({ method: "GET", url: "/auth/me", headers: { cookie } });
+      expect((await me()).statusCode).toBe(200);
+
+      for (const headers of [
+        { cookie },
+        { cookie, "x-jev-browser-session": "1", "sec-fetch-site": "same-site" }
+      ]) {
+        for (const url of ["/auth/logout", "/control/commands"]) {
+          const denied = await app.inject({
+            method: "POST", url, headers,
+            ...(url === "/control/commands" ? { payload: { action: "GET_PROJECT_STATUS", projectId: randomUUID() } } : {})
+          });
+          expect(denied.statusCode).toBe(403);
+        }
+      }
+      expect((await me()).statusCode).toBe(200);
+
+      const logout = await app.inject({
+        method: "POST", url: "/auth/logout",
+        headers: { cookie, "x-jev-browser-session": "1", "sec-fetch-site": "same-origin" }
+      });
+      expect(logout.statusCode).toBe(204);
+      expect(String(logout.headers["set-cookie"])).toContain("Max-Age=0");
+      expect((await me()).statusCode).toBe(401);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects expired browser cookies through the existing session lookup", async () => {
+    const app = buildApi({ pool });
+    try {
+      const login = await app.inject({
+        method: "POST", url: "/auth/login",
+        headers: { "x-jev-browser-session": "1" },
+        payload: { organizationId, email: "api-owner@test.local", password }
+      });
+      expect(login.statusCode).toBe(200);
+      const cookie = String(login.headers["set-cookie"]).split(";")[0];
+      await pool.query("UPDATE auth_sessions SET expires_at = now() - interval '1 minute' WHERE id = $1", [login.json().user.sessionId]);
+      expect((await app.inject({ method: "GET", url: "/auth/me", headers: { cookie } })).statusCode).toBe(401);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects invalid credentials without leaking user existence", async () => {
     const app = buildApi({ pool });
 

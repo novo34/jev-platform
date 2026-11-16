@@ -25,11 +25,40 @@ function authErrorStatus(error: AuthError): number {
   }
 }
 
+const browserSessionCookie = "__Host-jev_session";
+
+function browserSessionRequest(request: FastifyRequest): boolean {
+  const site = request.headers["sec-fetch-site"];
+  // A cross-origin form cannot set this header. Cross-origin fetch cannot
+  // send it because the API does not enable CORS.
+  return request.headers["x-jev-browser-session"] === "1" &&
+    (site === undefined || site === "same-origin");
+}
+
+function sessionCookie(value: string): string {
+  const attributes = "Path=/; HttpOnly; Secure; SameSite=Lax";
+  return `${browserSessionCookie}=${value}; ${attributes}${value ? "" : "; Max-Age=0"}`;
+}
+
+function requestSessionToken(request: FastifyRequest): string | undefined {
+  const authorization = request.headers.authorization;
+  if (authorization !== undefined) return bearerToken(authorization);
+
+  const prefix = `${browserSessionCookie}=`;
+  const matches = request.headers.cookie?.split(";").map((part) => part.trim())
+    .filter((part) => part.startsWith(prefix)) ?? [];
+  const token = matches.length === 1 ? matches[0].slice(prefix.length) : undefined;
+  if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
+  if (request.method !== "GET" && request.method !== "HEAD" &&
+      !browserSessionRequest(request)) throw new AuthError("FORBIDDEN");
+  return token;
+}
+
 export async function requireAuthenticatedUser(
   pool: Pool,
   request: FastifyRequest
 ) {
-  return authenticateToken(pool, bearerToken(request.headers.authorization));
+  return authenticateToken(pool, requestSessionToken(request));
 }
 
 const loginBuckets = new Map<string, { count: number; resetAt: number }>();
@@ -68,11 +97,18 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
       }
     },
     async (request, reply) => {
+      if (request.headers["x-jev-browser-session"] !== undefined && !browserSessionRequest(request)) {
+        return reply.code(403).send({ error: "FORBIDDEN" });
+      }
       if (!checkLoginLimit(request.body.email, request.body.organizationId)) {
         return reply.code(429).send({ error: "RATE_LIMITED" });
       }
       try {
         const result = await login(pool, request.body);
+        reply.header("Cache-Control", "no-store");
+        if (browserSessionRequest(request)) {
+          return reply.header("Set-Cookie", sessionCookie(result.token)).code(200).send({ user: result.user });
+        }
         return reply.code(200).send(result);
       } catch (error) {
         if (error instanceof AuthError) {
@@ -86,6 +122,7 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
   );
 
   app.get("/auth/me", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
     try {
       const user = await requireAuthenticatedUser(pool, request);
       return reply.code(200).send({ user });
@@ -103,6 +140,9 @@ export function registerAuthRoutes(app: FastifyInstance, pool: Pool): void {
     try {
       const user = await requireAuthenticatedUser(pool, request);
       await logout(pool, user.sessionId);
+      if (request.headers.authorization === undefined) {
+        reply.header("Set-Cookie", sessionCookie(""));
+      }
       return reply.code(204).send();
     } catch (error) {
       if (error instanceof AuthError) {

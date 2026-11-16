@@ -41,6 +41,10 @@ async function pageWithSession(controlResponse) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const commands = [], githubRequests = [];
+  const sessionCookie = "__Host-jev_session=disposable-browser-session";
+  const attributes = "Path=/; Secure; HttpOnly; SameSite=Lax";
+  const user = { displayName: "Test Admin", role: "ADMIN" };
+  let revoked = false;
   const runtimeErrors = [], consoleErrors = [], networkFailures = [];
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
@@ -48,11 +52,27 @@ async function pageWithSession(controlResponse) {
   await context.route("**/*", async (route) => {
     const request = route.request(), url = new URL(request.url());
     if (url.origin === origin) {
-      if (url.pathname === "/api/auth/login") return route.fulfill({ json: { token: "disposable-browser-session", user: { displayName: "Test Admin", role: "ADMIN" } } });
+      if (url.pathname === "/api/auth/login") {
+        assert.equal(request.headers()["x-jev-browser-session"], "1");
+        return route.fulfill({ json: { user }, headers: { "Set-Cookie": `${sessionCookie}; ${attributes}` } });
+      }
+      if (url.pathname === "/api/auth/me") {
+        const cookie = (await request.allHeaders()).cookie;
+        return !revoked && cookie?.includes(sessionCookie)
+          ? route.fulfill({ json: { user } })
+          : route.fulfill({ status: 401, json: { error: "UNAUTHENTICATED" } });
+      }
+      if (url.pathname === "/api/auth/logout") {
+        assert.equal(request.headers()["x-jev-browser-session"], "1");
+        revoked = true;
+        return route.fulfill({ status: 204, headers: { "Set-Cookie": `__Host-jev_session=; ${attributes}; Max-Age=0` } });
+      }
       if (url.pathname === "/api/providers") return route.fulfill({ json: { providers: [] } });
       if (url.pathname === "/api/control/commands") {
         commands.push(request.postDataJSON());
-        assert.equal(request.headers().authorization, "Bearer disposable-browser-session");
+        assert.equal(request.headers().authorization, undefined);
+        assert.equal(request.headers()["x-jev-browser-session"], "1");
+        assert.ok((await request.allHeaders()).cookie?.includes(sessionCookie));
         return route.fulfill(controlResponse);
       }
       return route.continue();
@@ -69,6 +89,8 @@ async function pageWithSession(controlResponse) {
   const form = page.getByRole("article", { name: "GitHub App" });
   await form.getByLabel("Proyecto del registro (ID)").fill("11111111-1111-4111-8111-111111111111");
   await form.getByLabel("Repositorio del registro (ID)").fill("22222222-2222-4222-8222-222222222222");
+  // The initial anonymous session lookup returns an expected 401.
+  consoleErrors.length = 0;
   return { context, page, form, commands, githubRequests, runtimeErrors, consoleErrors, networkFailures };
 }
 
@@ -97,6 +119,15 @@ for (const [button, action] of [
     assert.equal(value.githubRequests[0].authorization, undefined);
     assert.equal(value.githubRequests[0].cookie, undefined);
     assertBrowserFindings(value);
+    await value.page.goto(origin);
+    await value.form.waitFor();
+    await value.page.reload();
+    await value.form.waitFor();
+    await value.page.getByRole("button", { name: "Cerrar sesión" }).click();
+    await value.page.getByRole("button", { name: "Entrar", exact: true }).waitFor();
+    assert.equal((await value.context.cookies(origin)).find((item) => item.name === "__Host-jev_session"), undefined);
+    await value.page.reload();
+    await value.page.getByRole("button", { name: "Entrar", exact: true }).waitFor();
   } finally { await value.context.close(); }
 });
 

@@ -3,7 +3,7 @@
 ## Identificación
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
-- Rama de trabajo: `codex/plt-010-staging-evidence`. Base integrada: `main`.
+- Rama de trabajo: `codex/plt-050-browser-session`. Base integrada: `main`.
 - Última actualización: 2026-11-16. Entorno: Codex Desktop, Windows, verificación remota de GitHub y Dokploy.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
@@ -16,8 +16,8 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 
 ```json
 {
-  "foundation_sha": "209cf728d4aea9a71af52d948a33a4db309112ac",
-  "platform_sha": "ba18d4f8e54375eaea9533a8ea385d74c2ef0649",
+  "foundation_sha": "38d6f06656d78b441b30d59025f45ad778dd13d7",
+  "platform_sha": "3fbe4c094ca38c4cb20985bc69592e1858bb9067",
   "last_completed": {
     "task": "PLT-010",
     "status": "DONE",
@@ -25,14 +25,14 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "ci": "https://github.com/novo34/jev-platform/actions/runs/40024024437",
     "review": "https://github.com/novo34/jev-platform/pull/23#issuecomment-6374750357"
   },
-  "next_task": {"task": "PLT-011", "status": "TODO"},
+  "next_task": {"task": "PLT-050", "status": "TODO"},
   "requires_operator_authorization": true,
-  "next_action": "Revisar el registro de aceptación de PLT-010 y la propuesta de Foundation para las incidencias de acceso. PLT-011 sigue siendo el siguiente candidato en main."
+  "next_action": "Verificar el candidato PLT-050 con CI y revisión independiente, y validar persistencia de sesión, retorno de GitHub y logout en staging tras su autorización de despliegue."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. No hay tarea Platform activa autorizada. Staging aceptó la integración
+`DONE`. El operador autorizó específicamente el inicio de PLT-050. Foundation main conserva TODO hasta registrar el avance canónico. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -148,12 +148,11 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-Registrar la prioridad de persistencia de sesión y recuperación por correo
-mediante una PlanRevision de Foundation. PLT-011 sigue TODO en Foundation main.
+Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. CI, revisión y prueba en staging pendientes.
 
 ## Bloqueos y dependencias
 
-El inicio de PLT-011 requiere autorización específica. La recuperación por
+El siguiente candidato en Foundation main es PLT-050. La recuperación por
 correo requiere un proveedor de envío configurado para la prueba en staging.
 El validador comprueba el formato de `last_completed.pr`, `last_completed.ci` y
 `last_completed.review`. Los demás enlaces, incluidos los destinos Markdown
@@ -185,8 +184,8 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 ## Siguiente paso exacto
 
 1. Revisar el CI y CodeRabbit del cambio documental sobre su SHA publicado.
-2. Revisar en Foundation la propuesta de prioridad de las dos incidencias de acceso.
-3. Consultar NEXT_TASK en Foundation main antes de iniciar el siguiente desarrollo.
+2. Validar PLT-050 en staging tras autorización de despliegue.
+3. Registrar el resultado antes de tramitar el inicio de PLT-051.
 
 ## Instrucciones para continuar en otra sesión
 
@@ -217,7 +216,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
    queda fuera de ese control automático. CI valida el archivo sin escribirlo.
 
 [gate]: https://github.com/novo34/base-skills_klever/blob/main/docs/JEV_MASTER_BACKLOG.md
-[backlog]: https://github.com/novo34/base-skills_klever/blob/209cf728d4aea9a71af52d948a33a4db309112ac/backlog/jev-master-tasks.yaml
+[backlog]: https://github.com/novo34/base-skills_klever/blob/38d6f06656d78b441b30d59025f45ad778dd13d7/backlog/jev-master-tasks.yaml
 [pr]: https://github.com/novo34/jev-platform/pull/23
 [ci]: https://github.com/novo34/jev-platform/actions/runs/40024024437
 [main-ci]: https://github.com/novo34/jev-platform/actions/runs/40024566808
