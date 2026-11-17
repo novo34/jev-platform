@@ -107,7 +107,7 @@ export class QueueService {
         WHERE id = $1 AND status = 'RUNNING' AND locked_by = $3`,
       [jobId, JSON.stringify(result ?? null), workerId]
     );
-    await this.clearWorkerJob(workerId);
+    await this.clearWorkerJob(workerId, jobId);
   }
 
   async fail(workerId: string, job: QueueJob, error: unknown): Promise<void> {
@@ -129,7 +129,7 @@ export class QueueService {
         workerId
       ]
     );
-    await this.clearWorkerJob(workerId);
+    await this.clearWorkerJob(workerId, job.id);
   }
 
   async registerWorker(workerId: string): Promise<void> {
@@ -160,12 +160,40 @@ export class QueueService {
     );
   }
 
-  private async clearWorkerJob(workerId: string): Promise<void> {
+  /**
+   * Returns RUNNING jobs whose worker has no heartbeat within `staleAfterMs`
+   * (or no worker row) to QUEUED, or FAILED when attempts are exhausted.
+   * Single atomic statement; jobs of live workers are never touched.
+   */
+  async recoverStaleJobs(staleAfterMs: number): Promise<number> {
+    const result = await this.pool.query(
+      `UPDATE jobs j
+          SET status = CASE WHEN j.attempt_count < j.max_attempts THEN 'QUEUED' ELSE 'FAILED' END,
+              available_at = CASE WHEN j.attempt_count < j.max_attempts THEN NOW() ELSE j.available_at END,
+              last_error = 'worker_lost',
+              finished_at = CASE WHEN j.attempt_count < j.max_attempts THEN NULL ELSE NOW() END,
+              updated_at = NOW(),
+              locked_by = NULL,
+              locked_at = NULL
+        WHERE j.status = 'RUNNING'
+          AND NOT EXISTS (
+            SELECT 1
+              FROM worker_instances w
+             WHERE w.worker_id = j.locked_by
+               AND w.last_heartbeat_at > NOW() - ($1::double precision * INTERVAL '1 millisecond')
+          )`,
+      [staleAfterMs]
+    );
+    return result.rowCount ?? 0;
+  }
+
+  private async clearWorkerJob(workerId: string, jobId: string): Promise<void> {
     await this.pool.query(
       `UPDATE worker_instances
-          SET current_job_id = NULL, last_heartbeat_at = NOW()
+          SET current_job_id = CASE WHEN current_job_id = $2 THEN NULL ELSE current_job_id END,
+              last_heartbeat_at = NOW()
         WHERE worker_id = $1`,
-      [workerId]
+      [workerId, jobId]
     );
   }
 }

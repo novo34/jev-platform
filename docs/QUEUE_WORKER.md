@@ -26,6 +26,13 @@ On handler failure:
 
 A worker crash cannot mark a job `SUCCEEDED`; completion only occurs after the handler returns successfully and the worker persists the terminal state.
 
+## Worker robustness (PLT-011)
+
+- One job in flight per worker: `pollOnce` does not claim another job while a handler runs. `stop()` stops claiming and waits (up to `stopTimeoutMs`, default 30 s) for the handler; on expiry it aborts the handler signal and leaves the job `RUNNING` for recovery.
+- Per-job timeout (`jobTimeoutMs`, default 60 min): the job fails with `last_error = job_timeout` (retried while attempts remain) and the handler receives an `AbortSignal` via `handler(job, { signal })`. The worker slot is released even if the handler ignores the signal.
+- Orphan recovery: `QueueService.recoverStaleJobs(staleAfterMs)` atomically returns `RUNNING` jobs whose `locked_by` worker has no heartbeat within the threshold (or no worker row) to `QUEUED`, or `FAILED` when attempts are exhausted, with `last_error = worker_lost`. The runtime runs it every `recoveryIntervalMs` (30 s) with `staleWorkerAfterMs` (60 s). Jobs of live workers are untouched. Handlers must be idempotent, since a recovered job may re-run.
+- `complete`/`fail` only clear the worker's `current_job_id` if it points to that job.
+
 ## Runtime boundary
 
 `apps/worker` owns the polling/runtime loop. The API process does not execute queued handlers. PLT-006 intentionally does not implement Docker workspaces or GitHub execution; those remain later tasks.
