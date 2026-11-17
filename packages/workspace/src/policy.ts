@@ -3,14 +3,16 @@
  * building the executor. No value in this file can come from a job or task.
  */
 
-/** Fixed Node image for task containers. Pin by digest when promoting to a server. */
-export const DEFAULT_IMAGE = "node:22-alpine";
+/** Fixed Node image for task containers, pinned by digest (verified in CI job workspace-docker). */
+export const DEFAULT_IMAGE =
+  "node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a";
 
 /**
  * Image used only by the ephemeral clone helper (node:22-alpine has no git).
- * Tag must be verified/pinned by digest in the Docker CI step (PLT-011 step 5).
+ * Pinned by digest (verified in CI job workspace-docker).
  */
-export const DEFAULT_GIT_IMAGE = "alpine/git:v2.47.2";
+export const DEFAULT_GIT_IMAGE =
+  "alpine/git:v2.47.2@sha256:062a01ad7a0eb17cff382bc5e26086b4d710e56dfdfdf001109a49b6d9bd378c";
 
 /** Operator defaults (2026-11-17): 1 CPU, 2 GB RAM without extra swap, 256 pids, 15 min/command, 60 min/task. */
 export const DEFAULT_LIMITS = Object.freeze({

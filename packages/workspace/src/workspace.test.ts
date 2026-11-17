@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertTaskBranch } from "@jev/control";
 import {
-  COMMAND_ALLOWLIST, FakeDockerCli, WorkspaceError, WorkspaceExecutor, isTaskBranch, sanitizeOutput,
+  COMMAND_ALLOWLIST, DEFAULT_GIT_IMAGE, DEFAULT_IMAGE, FakeDockerCli, WorkspaceError, WorkspaceExecutor, isTaskBranch, sanitizeOutput,
   type WorkspaceSpec
 } from "./index.js";
 
@@ -26,6 +26,13 @@ const executor = (fake: FakeDockerCli, extra: Partial<ConstructorParameters<type
   new WorkspaceExecutor({ docker: fake, idGenerator: () => "abc123", ...extra });
 const argvAll = (fake: FakeDockerCli) => fake.calls.map((c) => c.args);
 
+describe("pinned images", () => {
+  it("pins both images by digest", () => {
+    expect(DEFAULT_IMAGE).toMatch(/^node:22-alpine@sha256:[0-9a-f]{64}$/);
+    expect(DEFAULT_GIT_IMAGE).toMatch(/^alpine\/git:v2\.47\.2@sha256:[0-9a-f]{64}$/);
+  });
+});
+
 describe("create", () => {
   it("builds hardened argv with limits, labels and no docker.sock", async () => {
     const fake = fakeDocker();
@@ -35,7 +42,7 @@ describe("create", () => {
     for (const flag of [
       "--user 1000:1000", "--cap-drop ALL", "--security-opt no-new-privileges", "--read-only",
       "--tmpfs /tmp:rw,noexec,nosuid,size=256m", "--cpus 1", "--memory 2g", "--memory-swap 2g", "--pids-limit 256",
-      "--label jev.workspace=abc123", "--label jev.task=task-1", "-v jev-ws-abc123:/workspace", "node:22-alpine sleep infinity"
+      "--label jev.workspace=abc123", "--label jev.task=task-1", "-v jev-ws-abc123:/workspace", `${DEFAULT_IMAGE} sleep infinity`
     ]) expect(joined).toContain(flag);
     expect(fake.callsMatching(["volume", "create"])[0]!.args).toContain("jev.workspace=abc123");
     expect(fake.callsMatching(["start"])).toHaveLength(1);
@@ -181,7 +188,7 @@ describe("install and run", () => {
       "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
       "--cpus", "1", "--memory", "2g", "--memory-swap", "2g", "--pids-limit", "256",
       "-e", "HOME=/tmp", "-v", "jev-ws-abc123:/workspace:ro", "-w", "/workspace",
-      "--entrypoint", "git", "alpine/git:v2.47.2",
+      "--entrypoint", "git", DEFAULT_GIT_IMAGE,
       "--no-pager", "-c", "safe.directory=/workspace", ...sub
     ]);
     expect(call.timeoutMs).toBe(15 * 60_000);

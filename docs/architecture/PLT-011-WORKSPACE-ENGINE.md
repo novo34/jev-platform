@@ -72,7 +72,7 @@ En `task_runs.metadata`. Sin tabla nueva ni escritor controlado nuevo, respetand
 * `SpawnDockerCli` (`spawn('docker', args, { shell: false })`, timeout que mata el proceso, salida acotada) y `FakeDockerCli` para pruebas, ambos tras la interfaz `DockerCli`.
 * `new WorkspaceExecutor({ docker, image?, gitImage?, limits? })`: `create(spec)` devuelve un `Workspace` con `install()`, `run(command)`, `records` y `destroy()`; `withWorkspace(spec, fn)` destruye siempre en `finally`; `sweepOrphans()` elimina contenedores y volúmenes con la etiqueta `jev.workspace` (solo al arrancar).
 * `spec = { taskId, repoFullName, branch, token, signal? }`. Límites, imagen y allowlist son constantes del operador (`policy.ts`), nunca valores del job. La rama se valida con una réplica de `assertTaskBranch` (una prueba la compara con la de `@jev/control`).
-* Clonado: contenedor auxiliar efímero con `alpine/git` (fijar por digest en el paso 5; `node:22-alpine` no trae git), con red. El token entra solo por stdin; un `credential.helper` en línea lo lee de una variable del proceso del auxiliar. No hay token en argv, en el `env` de `docker run`, en archivos ni en la URL del remoto. El auxiliar corre como root con `--cap-drop ALL` y solo CHOWN/DAC_OVERRIDE/FOWNER para dejar el volumen en 1000:1000.
+* Clonado: contenedor auxiliar efímero con `alpine/git` (`node:22-alpine` no trae git), con red. El token entra solo por stdin; un `credential.helper` en línea lo lee de una variable del proceso del auxiliar. No hay token en argv, en el `env` de `docker run`, en archivos ni en la URL del remoto. El auxiliar corre como root con `--cap-drop ALL` y solo CHOWN/DAC_OVERRIDE/FOWNER para dejar el volumen en 1000:1000.
 * `install()` ejecuta `npm ci` con red bridge, desconecta toda red y lo verifica con `docker inspect`; si falla, destruye y lanza `network_disconnect_failed`. `run()` exige instalación correcta. Un timeout de comando destruye el contenedor (el proceso del `exec` podría sobrevivir al cliente) y un `AbortSignal` o el plazo total de la tarea también.
 
 Paso 4 (token, git y job):
@@ -84,8 +84,8 @@ Paso 4 (token, git y job):
 Riesgos residuales:
 
 * `npm ci` ejecuta scripts de instalación con red. Una dependencia maliciosa puede exfiltrar lo legible en el contenedor (el checkout), pero no hay token ni secretos dentro. No se usa `--ignore-scripts` por diseño.
-* El tag `alpine/git` (usado para clonar y para `git status|diff|log`) debe fijarse por digest en el paso 5.
-* El tag `alpine/git` y la imagen Node no están fijados por digest, y la prueba con Docker real no se ha ejecutado aún (sin demonio en el entorno de desarrollo): el job `workspace-docker` de `ci.yml` la ejecuta con `JEV_DOCKER_TESTS=1`, imprime los digests de ambas imágenes y comprueba al final que no quedan contenedores ni volúmenes `jev.workspace`. Pendiente de su primera ejecución en GitHub.
+* Imágenes fijadas por digest en `packages/workspace/src/policy.ts` (única fuente): `DEFAULT_IMAGE` (`node:22-alpine@sha256:1314fb30…8481a`) y `DEFAULT_GIT_IMAGE` (`alpine/git:v2.47.2@sha256:062a01ad…d9bd378c`). El job `workspace-docker` de `ci.yml` lee ambas referencias de `policy.ts`, las descarga con `docker pull`, imprime `RepoDigests`, ejecuta la prueba con Docker real (`JEV_DOCKER_TESTS=1`) y comprueba al final que no quedan contenedores ni volúmenes `jev.workspace`. Verificado en verde en el run 44081305078 sobre `a75ab13`. Una prueba unitaria exige `@sha256:` con 64 hex en ambas constantes.
+* Actualizar una imagen: hacer `docker pull` del nuevo tag, copiar el digest de `RepoDigests` (o de la salida del job) a `policy.ts`, ejecutar `workspace-docker` y registrar la evidencia en `PROGRESO.md`. El digest solo cambia con una decisión explícita.
 * El saneado cubre el token concreto y patrones conocidos; no detecta secretos arbitrarios impresos por el código de la tarea.
 
 ## Fuera de alcance

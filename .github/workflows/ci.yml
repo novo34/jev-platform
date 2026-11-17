@@ -175,10 +175,15 @@ jobs:
 
       # The integration test runs the TypeScript sources through Vitest and imports
       # only ./index.js, so no package build is needed.
-      - name: Pull workspace images and print digests (to pin them)
+      # Images are pinned by digest in packages/workspace/src/policy.ts (single source).
+      - name: Pull pinned workspace images and print digests
         run: |
           set -euo pipefail
-          for image in node:22-alpine alpine/git:v2.47.2; do
+          for image in \
+            "$(sed -n 's/^  "\(node:22-alpine@sha256:[0-9a-f]\{64\}\)";$/\1/p' packages/workspace/src/policy.ts)" \
+            "$(sed -n 's/^  "\(alpine\/git:v2.47.2@sha256:[0-9a-f]\{64\}\)";$/\1/p' packages/workspace/src/policy.ts)"; do
+            [ -n "$image" ] || { echo "Pinned image not found in policy.ts" >&2; exit 1; }
+            grep -qF "\"$image\"" packages/workspace/src/policy.ts
             docker pull "$image"
             docker image inspect --format '{{index .RepoDigests 0}}' "$image"
           done
