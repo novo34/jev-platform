@@ -381,7 +381,7 @@ JEV deberá exponer la tasa de acierto de caché (lecturas de caché sobre entra
 Un fallo, expiración o ausencia de caché no deberá bloquear la llamada: deberá ejecutarse sin caché y registrarse el motivo.
 
 ### REQ-CACHE-007
-La estimación de coste deberá aplicar el precio configurado de escritura y lectura de caché por separado; sin precio configurado para esas categorías, el coste deberá registrarse como no estimable en lugar de asumir el precio de entrada.
+La estimación de coste deberá aplicar el precio configurado de escritura y lectura de caché por separado, sin asumir nunca el precio de entrada. Antes de una llamada pagada, el gateway deberá comprobar que están configuradas todas las tarifas aplicables (entrada, salida, escritura de caché y lectura de caché, si el proveedor cobra la caché); si falta alguna, deberá bloquear la llamada, igual que con cualquier precio ausente. El estado «no estimable» queda solo para respuestas inesperadas ya recibidas, por ejemplo un campo de uso de caché que el proveedor devuelve sin precio previsto; en ese caso se registra con motivo y se alerta.
 
 ---
 
@@ -1137,7 +1137,7 @@ Exceder budget/max_iterations o terminar con required context ausente deberá pr
 Cada tipo de tarea deberá declarar un presupuesto de tokens para su ContextPack; superarlo deberá producir una decisión de truncado registrada o BLOCKED según REQ-CTX-008.
 
 ### REQ-CTX-010
-JEV deberá medir y registrar el tamaño real (tokens) del ContextPack enviado en cada handoff, y compararlo con el presupuesto declarado, para detectar deriva y calcular el ahorro.
+JEV deberá medir y registrar el tamaño real (tokens) del ContextPack enviado en cada handoff, por separado, con el tokenizador o contador del modelo elegido, o con una estimación declarada si el proveedor no ofrece contador, y compararlo con el presupuesto declarado (REQ-CTX-009), para detectar deriva y calcular el ahorro. El uso del proveedor se conserva como dato de la llamada completa.
 
 ---
 

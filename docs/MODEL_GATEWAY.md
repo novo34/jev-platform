@@ -60,7 +60,7 @@ Diseño planificado (REQ-CACHE-001..007 en la [SPEC](product-specs/SPEC.md)):
 
 - Prefijo estable al inicio de la petición: instrucciones del sistema, reglas, skills y especificación. Contenido variable (tarea, ContextPack específico, historial) al final. El prefijo debe ser determinista byte a byte.
 - El futuro adaptador Anthropic debe nacer con caché (`cache_control`); no se añadirá primero sin caché.
-- Cada llamada registra tokens de entrada, salida, escritura de caché y lectura de caché, y se agregan por llamada, tarea y proyecto. El precio de escritura y lectura de caché se configura aparte en `JEV_MODEL_PRICING_JSON`.
+- Cada llamada registra tokens de entrada, salida, escritura de caché y lectura de caché, y se agregan por llamada, tarea y proyecto. El precio de escritura y lectura de caché se configura aparte en `JEV_MODEL_PRICING_JSON`. Antes de una llamada pagada se comprueban todas las tarifas aplicables (entrada, salida, escritura y lectura de caché, si el proveedor cobra la caché) y, si falta alguna, la llamada se bloquea. El estado «no estimable» queda solo para respuestas inesperadas ya recibidas (por ejemplo, un campo de uso de caché sin precio previsto), que se registran con motivo y se alertan.
 - Se expone la tasa de acierto de caché para medir el ahorro real.
 - Un fallo de caché no bloquea la llamada: se ejecuta sin caché y se registra el motivo.
 
