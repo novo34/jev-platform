@@ -13,7 +13,7 @@ Cada mejora indica problema, propuesta, fase o REQ afectado y prioridad. Los IDs
 - **Problema:** el coste de tokens amenaza la viabilidad económica. Hoy el gateway (solo OpenAI y DeepSeek) no usa caché ni mide su efecto, y no hay ContextPack acotado.
 - **Propuesta:** caché de prompts con prefijo estable (sistema, reglas, skills y especificación al inicio; contenido variable al final), adaptador Anthropic con `cache_control` desde su primera versión, y Fase 10 con Context Packs acotados con presupuesto de tokens por tipo de tarea.
 - **Afecta a:** Fase 17, Fase 10; REQ-CACHE-001..007, REQ-CTX-009 y REQ-CTX-010. Detalle en [MODEL_GATEWAY.md](../MODEL_GATEWAY.md#prompt-caching-not_implemented-planificado-prioridad-adelantada).
-- **Prioridad:** alta, adelantada tras la tarea en curso (hoy PLT-012).
+- **Prioridad:** alta, adelantada: PLT-052 es la siguiente tarea (PLT-012 ya está cerrada).
 
 ## 2. Decisión: no integrar rsc-harness ni rsc-brain
 
@@ -95,9 +95,9 @@ Sin añadir al roadmap. Se plantea una capa comercial (clientes potenciales, pro
 - **Riesgo legal en Suiza:** el envío masivo de publicidad por email exige consentimiento (UWG art. 3 apdo. 1 letra o). Debe validarse con un asesor jurídico antes de cualquier diseño.
 - **Estado:** sin decisión; no existe fase ni REQ asociado.
 
-## 12. Pendiente en Foundation
+## 12. Reflejado en Foundation
 
-Reflejar la nueva prioridad en `backlog/jev-master-tasks.yaml` y en NEXT_TASK de `novo34/base-skills_klever`. Esta sesión de Platform no tuvo acceso a Foundation, por lo que no se han creado ni modificado IDs allí. Mientras tanto, NEXT_TASK manda sobre el orden propuesto.
+Reflejado en `backlog/jev-master-tasks.yaml` y en NEXT_TASK de `novo34/base-skills_klever` (novo34/base-skills_klever#28, merge b50843d): PLT-052 → PLT-040 → PLT-041 → PLT-017 → PLT-042/PLT-014. NEXT_TASK manda sobre cualquier orden propuesto.
 
 ## Estado de la aceptación de PLT-009
 
