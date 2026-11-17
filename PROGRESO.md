@@ -30,7 +30,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Implementar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md, pasos 3 a 6 (paso 2, integración en staging_branch, hecho)."
+  "next_action": "Implementar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md, pasos 4 a 6 (pasos 2, integración en staging_branch, y 3, adaptador Dokploy, hechos)."
 }
 ```
 
@@ -219,7 +219,7 @@ PLT-012 (diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/archit
 
 1. HECHO: diseño y decisiones del operador del 2026-11-17.
 2. HECHO: operación GitHub `GITHUB_INTEGRATE_STAGING` (migración 0028, solo amplía la lista del trigger del ledger).
-3. Adaptador Dokploy + plantilla de Compose.
+3. HECHO: adaptador Dokploy + plantilla de Compose en `packages/staging` (`@jev/staging`), probado con un Dokploy simulado; la API exacta queda marcada `VERIFY-R4` (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#implementación-del-adaptador)).
 4. Orquestador + job `STAGING_DEPLOY` + deployments controlados.
 5. Pruebas de CI (Dokploy simulado, PostgreSQL efímero, GitHub simulado).
 6. Paso real con Espacore (R4, aprobación explícita del operador); con esa evidencia se cierra PLT-012.

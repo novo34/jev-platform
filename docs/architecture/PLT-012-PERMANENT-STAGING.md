@@ -61,6 +61,37 @@ Job de cola `STAGING_DEPLOY` (patrón de `WORKSPACE_RUN`), sin activar por defec
 
 Implementada (paso 2): acción `GITHUB_INTEGRATE_STAGING` `{taskId, headSha}`, `project:admin` y rol ADMIN vigente, expuesta por el endpoint genérico de comandos de `apps/api` (sesión, rol y CSRF como las demás). Usa la Merges API (`base`=`staging_branch`, `head`=SHA exacto) con token de instalación `contents: write` de un solo repositorio. Solo se permite con la tarea en `VERIFIED` (los triggers de `0016` exigen un deployment staging `READY` para pasar a `AWAITING_HUMAN`, así que la rama debe llegar a staging antes), con la rama de la tarea en GitHub exactamente en `headSha` y con la verificación técnica firmada del ciclo vigente ligada a ese SHA; no exige aprobación humana, que se concede tras revisar el staging. Rechaza `default_branch`, `main`, `master`, `production`, `prod`, la propia rama de la tarea y un `staging_branch` vacío. Idempotente por hash de petición en el ledger `github_operations`; 409/422 es `GITHUB_CONFLICT` sin reintento. La migración `0028` solo añade la acción a la lista del trigger del ledger (sin tablas, columnas, roles ni GRANTs).
 
+## Implementación del adaptador
+
+Implementada (paso 3) en `packages/staging` (`@jev/staging`), probada solo contra un Dokploy simulado (servidor HTTP local en `src/mock-dokploy.ts`), sin worker ni base de datos.
+
+* **Cliente** (`client.ts`, `errors.ts`, `sanitize.ts`): `fetch` con timeout, `redirect: 'error'`, base `https` (http solo en loopback), `x-api-key` redactada de errores y eventos. `DokployError` con códigos `unauthorized`, `not_found`, `conflict`, `rate_limited`, `upstream`, `timeout`, `invalid_response`; las respuestas usadas se validan de forma estricta.
+* **Mapeo aislado** (`mapping.ts`): único lugar que conoce nombres de endpoint, cuerpos y campos de Dokploy.
+* **Política** (`policy.ts`): equivalente TypeScript de `provider_policy.py` (tipo de entorno, ramas no productivas `main`/`master`/`production`/`prod` y las protegidas, ramas distintas, `staging_url` https bajo `<slug>.staging.<dominio base>`, `database_ref` y `secret_refs` en allowlist). Una violación lanza `StagingPolicyError` antes de cualquier llamada a Dokploy.
+* **Adaptador** (`adapter.ts`): contrato FND-026 (`deploy`, `verifyDatabase`, `applyMigrations`, `seedTestData`, `healthCheck`, `runOnlineE2E`). Nombre determinista `jev-stg-<slug>`; busca el compose por `appName` en el entorno de Dokploy y lo reutiliza; nunca borra. Orden de la creación inicial: `compose.create` (con el fichero generado), `compose.saveEnvironment`, `domain.create` (`letsencrypt`, https, servicio `app`), `compose.deploy`; en repeticiones solo `compose.update` si la plantilla cambia, `saveEnvironment` si cambian las variables, y `compose.redeploy`. Las contraseñas de BD ya guardadas se conservan (nunca se rotan al repetir). Un dominio existente con otro certificado, servicio o puerto falla con conflicto.
+* **Variables** (`env.ts`): `DATABASE_URL` (rol runtime) y `DATABASE_OWNER_URL` (rol owner, solo para migraciones) apuntan al servicio `db` del propio Compose. Se rechazan nombres `PROD_*`/`*_PRODUCTION`, valores con marcadores de producción configurados, cualquier URL de datastore que no apunte a `db` y la sobrescritura de variables reservadas. Los valores de `secret_refs` (permitidos) salen de `secretValues`; los secretos solo viven en el entorno de Dokploy, nunca en el fichero Compose ni en los resultados.
+
+### Decisión: base de datos en el Compose del proyecto
+
+Se incluye PostgreSQL en la plantilla de Compose (`compose-template.ts`) y no como servicio de base de datos de Dokploy (`postgres.create`). Motivos: coincide con la decisión 3 del operador; un único recurso idempotente por proyecto (compose, red interna y volumen con un solo nombre determinista, sin segunda búsqueda/estado que reconciliar); red `internal: true` sin puertos publicados y solo la app en `dokploy-network`; roles owner/runtime creados por un script de inicialización; límites de CPU/RAM por servicio. Contrapartida: las copias de seguridad del volumen quedan a nuestro cargo (pendiente antes del paso real).
+
+### Decisión: migraciones y seeds
+
+El adaptador no ejecuta SQL. Las migraciones y seeds son comandos del proyecto (`migrationCommand`, `seedCommand`) que la plantilla ejecuta como servicios de una sola vez (`migrate`, `seed`, con el rol owner y `STAGING_SEED_SYNTHETIC_ONLY=1`) y de los que depende la app (`service_completed_successfully`). Por eso un despliegue `done` demuestra que terminaron bien; `applyMigrations`/`seedTestData` lo comprueban y, si no hay comando configurado, devuelven `ok` con `metadata.skipped: true` (no se ha ejecutado nada). La copia previa del volumen y el estado de migraciones (`CURRENT`/`PENDING`) no están implementados. `healthCheck` es un GET a la URL pública (2xx, timeout, sin redirecciones) y `runOnlineE2E` es health más rutas configurables (estado 2xx y texto opcional).
+
+### Pendiente de verificar contra la instancia real (antes del paso R4)
+
+Todo lo marcado `VERIFY-R4` en `mapping.ts` y `compose-template.ts`:
+
+1. Búsqueda de composes existentes: `GET environment.one?environmentId=` y su campo `compose`/`composes` (si no existe, usar `project.all`).
+2. Cuerpo exacto de `compose.create` (`sourceType: 'raw'`, `composeFile`), `compose.update` y `compose.saveEnvironment` (se asume `{composeId, env}` con líneas `KEY=VALUE`).
+3. `domain.create`: si exige `domainType: 'compose'`; forma de la respuesta de `domain.byComposeId` y de `compose.one` (`composeStatus` con `idle|running|done|error`).
+4. Si `compose.deploy` deja `composeStatus` en `running` de forma síncrona (si no, la lectura inmediata puede ver el estado anterior) y qué devuelve un despliegue fallido.
+5. Origen del código: el Compose usa `build.context` con URL Git y rama (`https://github.com/<repo>.git#<staging_branch>`); los repositorios privados necesitan credenciales (alternativa: `appImage` o origen GitHub de Dokploy con `composePath`).
+6. Compatibilidad del Compose del host con `configs.content` (script de roles) y con `deploy.resources.limits`; nombre real del volumen y de la red tras el prefijo de Dokploy.
+7. Alcance de la API key y códigos de error reales (401/403 y `retry-after`).
+8. La conexión real a la BD y el estado de migraciones solo se prueban con la ruta de salud del proyecto; falta el comprobador de conexión.
+
 ## Riesgos y mitigaciones
 
 * **Recursos del VPS:** disco limitado (skill 46 de Foundation). Límites de CPU/RAM por servicio y nunca `docker system prune -a --volumes`.
@@ -81,7 +112,7 @@ Implementada (paso 2): acción `GITHUB_INTEGRATE_STAGING` `{taskId, headSha}`, `
 
 1. Diseño (este documento).
 2. Operación GitHub de integración en `staging_branch`.
-3. Adaptador Dokploy + plantilla de Compose.
+3. HECHO: adaptador Dokploy + plantilla de Compose (`packages/staging`).
 4. Orquestador + job `STAGING_DEPLOY` + deployments controlados.
 5. Pruebas de CI.
 6. Paso real con Espacore (aprobación del operador, R4).
