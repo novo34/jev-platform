@@ -30,7 +30,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Implementar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md, pasos 5 y 6 (pasos 2 a 4 hechos: integración en staging_branch, adaptador Dokploy y orquestador con job STAGING_DEPLOY): paso 5 CI y PR; luego paso 6 R4 con el proyecto de prueba novo34/jev-staging-demo (Espacore después)."
+  "next_action": "Continuar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md: paso 5 CI y PR; paso 6 R4 con novo34/jev-staging-demo: primera ejecución real hecha (app sirve 7baa286, /health 503 por BD); corregidos el sufijo de appName y el rol runtime (servicio db-roles); repetir R4 con el motor corregido tras aprobación del operador y confirmar /health 200 (Espacore después)."
 }
 ```
 
@@ -154,7 +154,11 @@ el estado obsoleto del runbook. El resumen del bot de Codex para el head final d
 PR #23 no contiene un recibo final. La revisión técnica independiente tiene
 registro separado.
 
+PLT-012 R4 (primera ejecución real contra Dokploy, 2026-11-17): se creó el compose `jev-stg-demo` en «JEV Proyectos / staging», con el dominio `demo.staging.nuvurent.com` (Let's Encrypt). La app arranca y sirve la revisión `7baa286`, pero `/health` da 503 con `database: "error"`. Pendiente de verificar tras el redespliegue con el motor corregido (ver «Problemas resueltos»); no se cierra PLT-012 hasta tener `/health` en 200 y las seis etapas.
+
 ## Problemas resueltos
+
+PLT-012 R4, hallazgos de la primera ejecución real: (1) Dokploy guarda `appName` con un sufijo aleatorio (`jev-stg-demo-dotuoz`); el adaptador reconoce el compose por `name` y `appName` esperado más sufijo (commit `02610cb`, esta PR). (2) El rol runtime no se creaba: el init de `configs.content` usaba `:"DBNAME"` sin definir y solo corre con el volumen vacío. Corrección (commit `fix(PLT-012): aprovisionar el rol runtime en cada despliegue`): servicio one-shot idempotente `db-roles` antes de `migrate`, `seed` y `app`, healthcheck de `db` por TCP, sin init ni `configs.content`; `verifyDatabase` lo exige. Pruebas en `packages/staging/src/compose-template.test.ts` (incluido el SQL contra PostgreSQL real). Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#hallazgo-r4-rol-runtime-sin-crear-health-503).
 
 PLT-010 filtró campos sensibles de las respuestas de GitHub, solicitó
 `statuses: read` para observar estados y serializó la autorización para
@@ -224,7 +228,7 @@ PLT-012 (diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/archit
 4b. HECHO (commit `fix(PLT-012): desplegar staging desde el SHA exacto registrado`): el Compose construye desde `https://github.com/<repo>.git#<sha40>` (no la rama), `appImage` exige digest, `JEV_STAGING_REVISION` en el Compose, el health/E2E comprueba la revisión (distinta: `FAILED`; no informada: «no verificable», VERIFY-R4) y el job exige que `revision` coincida con el `sha` de `GITHUB_INTEGRATE_STAGING` en el ledger (solo SELECT). Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#integridad-de-la-revisión-desplegada). Al activar el job, `StagingJobDeps.integratedRevision` debe cablearse con `loadIntegratedRevision(pool, ids)`.
 4c. HECHO (commit `fix(PLT-012): atender la revisión de Greptile (revisión integrada, propiedad, E2E degradado y reserva)`): 4 hallazgos de Greptile sobre `2150435` (https://github.com/novo34/jev-platform/pull/35#issuecomment-6951991817), todos reales. (P1) un 204 de la Merges API registraba `headSha` aunque no fuera la punta de `staging_branch`: ahora registra la punta actual (`headSha` aparte). (P1) el Compose se reutilizaba solo por `appName`: ahora lleva `JEV_STAGING_OWNER=<proyecto>:<repositorio>` y se rechaza con `staging_resource_owned_by_other_project` antes de escribir (también si otro compose del entorno sirve el host); `ProjectRegistryService.register` rechaza un `staging_url` repetido (`STAGING_URL_IN_USE`, sin migración). (P1) `runOnlineE2E` descartaba `degraded`: ahora lo conserva con evidencia por ruta y da `BLOCKED`. (P2) dos ejecuciones sobre el mismo staging podían pisarse: `PgDeploymentRegistry` toma un `pg_try_advisory_lock` de sesión hasta `finish` y la segunda termina `BLOCKED` `staging_busy` sin tocar Dokploy. Sin migraciones ni permisos nuevos. Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#revisión-de-greptile-de-la-pr-35-sobre-2150435). Segunda ronda de Greptile sobre `03a4473` (2 hallazgos, ambos reales), corregida en `fix(PLT-012): reutilizar la conexión reservada y ordenar los bloqueos de registro`: (P1) `PgDeploymentRegistry.begin` pedía otra conexión al pool además de la del bloqueo (con `max: 1` se colgaba): ahora la conexión reservada sirve a `ensureStagingEnvironment`, `createDeployment` y `setDeploymentStatuses` (los escritores de `@jev/db` aceptan `Queryable`, `Pool` o `PoolClient`, mismo SQL) y se libera en `finish`; prueba con pool `max: 1`. (P2) `register` bloqueaba los hosts en el orden recibido y A/B con B/A daba `40P01`: ahora se deduplican y ordenan antes de bloquear; prueba con registros concurrentes. Sin migraciones ni permisos nuevos. Pendiente: revisión de Greptile del nuevo commit.
 5. Pruebas de CI (Dokploy simulado, PostgreSQL efímero, GitHub simulado).
-6. Paso real con `novo34/jev-staging-demo` (R4, aprobación explícita del operador; Espacore después); con esa evidencia se cierra PLT-012.
+6. Paso real con `novo34/jev-staging-demo` (R4, aprobación explícita del operador; Espacore después); con esa evidencia se cierra PLT-012. Estado: primera ejecución hecha (compose `jev-stg-demo`, dominio `demo.staging.nuvurent.com`, app sirve `7baa286`, `/health` 503 por BD); corregidos el sufijo de `appName` y el rol runtime (`db-roles`); falta repetir R4 con el motor corregido (redespliegue sin borrar datos) y confirmar `/health` 200.
 
 Historial de PLT-011 (cerrada):
 

@@ -297,6 +297,18 @@ describe("verifyDatabase, migrations and seeds", () => {
     expect(await stagingAdapter.verifyDatabase(request())).toMatchObject({ ok: false, detail: "database_url_not_staging" });
   });
 
+  it("fails when the idempotent db-roles step is missing or an initdb script is back", async () => {
+    const stagingAdapter = adapter();
+    await stagingAdapter.deploy(request());
+    const compose = [...mock.composes.values()][0]!;
+    const goodFile = compose.composeFile;
+    expect(goodFile).toMatch(/^ {2}db-roles:/m);
+    compose.composeFile = goodFile.replace(/^ {2}db-roles:/m, "  db-roles-x:");
+    expect(await stagingAdapter.verifyDatabase(request())).toMatchObject({ ok: false, detail: "database_roles_step_missing" });
+    compose.composeFile = `${goodFile}# /docker-entrypoint-initdb.d/10-roles.sh\n`;
+    expect(await stagingAdapter.verifyDatabase(request())).toMatchObject({ ok: false, detail: "database_roles_step_missing" });
+  });
+
   it("runs project migrations and seeds as one-shot services that gate the app", async () => {
     const stagingAdapter = adapter({ migrationCommand: "npm run db:migrate", seedCommand: "npm run db:seed" });
     await stagingAdapter.deploy(request());

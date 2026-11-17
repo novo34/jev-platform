@@ -120,6 +120,22 @@ El deployment `READY` (que habilita `AWAITING_HUMAN` y la aprobación ligada a l
 
 **Corrección:** `findCompose` identifica el compose propio por `name === <appName esperado>` y lo confirma con `compose.one`: el `appName` real debe ser el esperado o el esperado seguido de `-` y un sufijo `[a-z0-9]{1,12}`, y debe llevar la marca `JEV_STAGING_OWNER` correcta (excepción existente: entorno completamente vacío por una creación interrumpida). Un compose con el mismo `name` pero un `appName` que no encaja no se adopta; uno que encaja pero sin marca o con otra marca se rechaza (`staging_resource_owned_by_other_project`). Si hay más de un candidato válido, la etapa falla con `staging_compose_ambiguous` y nunca se adopta uno al azar. Las consultas posteriores usan el `composeId` encontrado; `metadata.appName` de `deploy` es el `appName` real. El Dokploy simulado añade el mismo sufijo aleatorio en `compose.create`.
 
+### Hallazgo R4: rol runtime sin crear (`/health` 503)
+
+**Síntoma:** tras la primera ejecución real, la demo arranca y sirve la revisión `7baa286`, pero `/health` responde 503 con `database: "error"`, aunque `migrate` y `seed` (rol owner) terminaron bien.
+
+**Causa:** el script de init de PostgreSQL (`configs.content` montado en `/docker-entrypoint-initdb.d`) usaba `:"DBNAME"`, una variable psql que nunca se definía (solo `rt_user`, `rt_pw` y `owner`); con `ON_ERROR_STOP` el init abortaba y el rol runtime quedaba sin existir o sin `GRANT` ni `DEFAULT PRIVILEGES`. Además `initdb.d` solo se ejecuta con el volumen vacío, así que nunca se repetía en los redespliegues. El healthcheck `pg_isready` por socket podía dar por sano el servidor temporal del init.
+
+**Corrección (`@jev/staging`):**
+
+1. Se elimina el init y la dependencia de `configs.content`. Un servicio one-shot `db-roles` (imagen de PostgreSQL, rol owner, por TCP a `db`) corre en CADA despliegue, tras `db` sano y antes de `migrate`, `seed` y `app` (`service_completed_successfully`; `seed` además tras `migrate`).
+2. El SQL (`STAGING_ROLES_SQL`) es idempotente: `CREATE ROLE` solo si no existe y siempre `ALTER ROLE ... LOGIN PASSWORD` con la contraseña actual (sin superusuario, `CREATEDB` ni `CREATEROLE`); `GRANT CONNECT`, `USAGE ON SCHEMA public`, `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>` para tablas (SELECT/INSERT/UPDATE/DELETE) y secuencias (USAGE/SELECT), y `GRANT ... ON ALL TABLES/SEQUENCES` para lo que ya exista. Va antes de `migrate`: las tablas que cree el owner después quedan cubiertas por los privilegios por defecto, y las de volúmenes antiguos por el `GRANT ON ALL`. Repara el staging ya desplegado sin borrar datos en el siguiente redespliegue.
+3. Los secretos viajan en variables de entorno (`PGPASSWORD`, `STAGING_DB_RUNTIME_PASSWORD`) y psql las lee con `\getenv`; los identificadores y literales usan `:"x"`/`:'x'` o `format(%I/%L)`. Ningún secreto en la línea de comandos. El script no contiene `$` (interpolación de Compose).
+4. Healthcheck de `db`: `pg_isready -h 127.0.0.1 -U <owner> -d <db>` (TCP; el servidor temporal del init solo escucha por socket).
+5. `verifyDatabase` exige el servicio `db-roles` y rechaza un `docker-entrypoint-initdb.d` (`database_roles_step_missing`).
+
+**Pruebas:** `packages/staging/src/compose-template.test.ts` (variables psql definidas, sin secretos en la línea de comandos, dependencias, healthcheck TCP y, con `psql` y `DATABASE_URL`, el SQL real dos veces sobre una BD temporal con lectura/escritura del rol runtime sobre una tabla del owner) y `staging.test.ts`. Ningún job de CI levanta el Compose generado con Docker (`staging-runtime-smoke` levanta `docker-compose.staging.yml`, otro stack), así que la comprobación con Docker queda pendiente de la siguiente ejecución R4.
+
 ### Pendiente de verificar contra la instancia real (antes del paso R4)
 
 Verificado lo anterior, siguen marcados `VERIFY-R4` (en `mapping.ts`, `compose-template.ts` y `adapter.ts`):
@@ -128,7 +144,7 @@ Verificado lo anterior, siguen marcados `VERIFY-R4` (en `mapping.ts`, `compose-t
 2. Valores reales de `composeStatus` (`idle|running|done|error`) y forma de la respuesta de `domain.byComposeId` en un despliegue real.
 4. Si `compose.deploy` deja `composeStatus` en `running` de forma síncrona (si no, la lectura inmediata puede ver el estado anterior) y qué devuelve un despliegue fallido.
 5. Origen del código: el Compose usa `build.context` con URL Git fijada al SHA exacto de la revisión (`https://github.com/<repo>.git#<sha40>`, Docker admite un commit como ref; nunca la rama); los repositorios privados necesitan credenciales (alternativa: `appImage` o origen GitHub de Dokploy con `composePath`). Ver «Integridad de la revisión desplegada».
-6. Compatibilidad del Compose del host con `configs.content` (script de roles) y con `deploy.resources.limits`; nombre real del volumen y de la red tras el prefijo de Dokploy.
+6. Compatibilidad del Compose del host con `deploy.resources.limits` (ya no se usa `configs.content`); nombre real del volumen y de la red tras el prefijo de Dokploy.
 7. Alcance de la API key y códigos de error reales (401/403 y `retry-after`).
 8. La conexión real a la BD y el estado de migraciones solo se prueban con la ruta de salud del proyecto; falta el comprobador de conexión.
 

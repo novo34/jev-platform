@@ -3,15 +3,17 @@
  *
  * - The database sits only on the `internal` network (internal: true), without
  *   published ports. Only the app joins `dokploy-network`.
- * - Roles: owner (migrations) and runtime (app), PLT-008 style.
+ * - Roles: owner (migrations) and runtime (app), PLT-008 style. The runtime role
+ *   is provisioned by the one-shot `db-roles` service on EVERY deployment
+ *   (idempotent), not by `/docker-entrypoint-initdb.d`, which only runs on an
+ *   empty volume and failed silently in the first real run (R4).
  * - Optional one-shot `migrate` and `seed` services run the project's own
  *   commands before the app starts (`service_completed_successfully`).
  *
  * The app is built from the exact commit (`#<sha40>`), never from a branch.
  *
- * VERIFY-R4: `configs.content` (inline init script) needs a recent Compose
- * version on the Dokploy host; resource `deploy.resources.limits` is honoured
- * by Compose v2 outside Swarm.
+ * VERIFY-R4: resource `deploy.resources.limits` is honoured by Compose v2
+ * outside Swarm.
  */
 
 import { StagingPolicyError, STAGING_REVISION_RE } from "./policy.js";
@@ -32,6 +34,31 @@ export interface ComposeTemplateInput {
   seedCommand?: string;
   limits: { appMemory: string; appCpus: string; dbMemory: string; dbCpus: string };
 }
+
+/**
+ * Idempotent runtime-role provisioning, run by psql (>= 15, `\\getenv`) as the
+ * owner. Secrets travel in environment variables, never on the command line;
+ * every identifier/literal goes through `:"x"` / `:'x'` quoting or format().
+ * Must contain no dollar sign (Compose interpolation). Runs BEFORE `migrate`:
+ * the default privileges cover every table the owner creates afterwards, and
+ * the GRANT ON ALL covers tables that already exist (volume from older deploys).
+ */
+export const STAGING_ROLES_SQL = [
+  "\\getenv rt_user STAGING_DB_RUNTIME",
+  "\\getenv rt_pw STAGING_DB_RUNTIME_PASSWORD",
+  "\\getenv owner PGUSER",
+  "\\getenv dbname PGDATABASE",
+  "SELECT format('CREATE ROLE %I', :'rt_user') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'rt_user') \\gexec",
+  "SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE', :'rt_user', :'rt_pw') \\gexec",
+  'GRANT CONNECT ON DATABASE :"dbname" TO :"rt_user";',
+  'GRANT USAGE ON SCHEMA public TO :"rt_user";',
+  'ALTER DEFAULT PRIVILEGES FOR ROLE :"owner" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"rt_user";',
+  'ALTER DEFAULT PRIVILEGES FOR ROLE :"owner" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO :"rt_user";',
+  'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :"rt_user";',
+  'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"rt_user";'
+].join("\n");
+
+export const STAGING_ROLES_COMMAND = `psql -X -q -v ON_ERROR_STOP=1 -f - <<'SQL'\n${STAGING_ROLES_SQL}\nSQL`;
 
 const q = (value: string): string => JSON.stringify(value);
 
@@ -60,23 +87,33 @@ export function renderStagingCompose(input: ComposeTemplateInput): string {
   lines.push('      POSTGRES_DB: "${STAGING_DB_NAME}"');
   lines.push('      POSTGRES_USER: "${STAGING_DB_OWNER}"');
   lines.push('      POSTGRES_PASSWORD: "${STAGING_DB_OWNER_PASSWORD}"');
-  lines.push('      STAGING_DB_RUNTIME: "${STAGING_DB_RUNTIME}"');
-  lines.push('      STAGING_DB_RUNTIME_PASSWORD: "${STAGING_DB_RUNTIME_PASSWORD}"');
   lines.push("    volumes:");
   lines.push("      - db-data:/var/lib/postgresql/data");
-  lines.push("    configs:");
-  lines.push("      - source: init_roles");
-  lines.push("        target: /docker-entrypoint-initdb.d/10-roles.sh");
-  lines.push("        mode: 0555");
   lines.push("    networks: [internal]");
   lines.push("    healthcheck:");
-  lines.push('      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]');
+  lines.push('      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]');
   lines.push("      interval: 5s");
   lines.push("      timeout: 5s");
   lines.push("      retries: 20");
   lines.push("    deploy:");
   lines.push("      resources:");
   lines.push(`        limits: { memory: ${q(input.limits.dbMemory)}, cpus: ${q(input.limits.dbCpus)} }`);
+
+  // One-shot, idempotent runtime-role provisioning on every deployment (owner credentials, over TCP to `db`).
+  lines.push("  db-roles:");
+  lines.push(`    image: ${q(input.postgresImage)}`);
+  lines.push('    restart: "no"');
+  lines.push(`    command: ["sh", "-c", ${q(STAGING_ROLES_COMMAND)}]`);
+  lines.push("    environment:");
+  lines.push('      PGHOST: "db"');
+  lines.push('      PGDATABASE: "${STAGING_DB_NAME}"');
+  lines.push('      PGUSER: "${STAGING_DB_OWNER}"');
+  lines.push('      PGPASSWORD: "${STAGING_DB_OWNER_PASSWORD}"');
+  lines.push('      STAGING_DB_RUNTIME: "${STAGING_DB_RUNTIME}"');
+  lines.push('      STAGING_DB_RUNTIME_PASSWORD: "${STAGING_DB_RUNTIME_PASSWORD}"');
+  lines.push("    depends_on:");
+  lines.push("      db: { condition: service_healthy }");
+  lines.push("    networks: [internal]");
 
   const oneShot = (name: "migrate" | "seed", command: string, dependsOn: string[]): void => {
     lines.push(`  ${name}:`);
@@ -88,14 +125,14 @@ export function renderStagingCompose(input: ComposeTemplateInput): string {
     for (const dep of dependsOn) lines.push(dep === "db" ? "      db: { condition: service_healthy }" : `      ${dep}: { condition: service_completed_successfully }`);
     lines.push("    networks: [internal]");
   };
-  const appDepends = ["db"];
+  const appDepends = ["db", "db-roles"];
   if (input.migrationCommand) {
-    oneShot("migrate", input.migrationCommand, ["db"]);
+    oneShot("migrate", input.migrationCommand, ["db", "db-roles"]);
     appDepends.push("migrate");
   }
   if (input.seedCommand) {
     // Seeds run after migrations when both exist.
-    oneShot("seed", input.seedCommand, input.migrationCommand ? ["db", "migrate"] : ["db"]);
+    oneShot("seed", input.seedCommand, input.migrationCommand ? ["db", "db-roles", "migrate"] : ["db", "db-roles"]);
     appDepends.push("seed");
   }
 
@@ -119,19 +156,5 @@ export function renderStagingCompose(input: ComposeTemplateInput): string {
   lines.push("    internal: true");
   lines.push("  dokploy-network:");
   lines.push("    external: true");
-  lines.push("configs:");
-  lines.push("  init_roles:");
-  lines.push("    content: |");
-  for (const line of [
-    "#!/bin/sh",
-    "set -eu",
-    'psql -v ON_ERROR_STOP=1 -v rt_user="$${STAGING_DB_RUNTIME}" -v rt_pw="$${STAGING_DB_RUNTIME_PASSWORD}" -v owner="$${POSTGRES_USER}" --username "$${POSTGRES_USER}" --dbname "$${POSTGRES_DB}" <<\'SQL\'',
-    "CREATE ROLE :\"rt_user\" LOGIN PASSWORD :'rt_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE;",
-    'GRANT CONNECT ON DATABASE :"DBNAME" TO :"rt_user";',
-    'GRANT USAGE ON SCHEMA public TO :"rt_user";',
-    'ALTER DEFAULT PRIVILEGES FOR ROLE :"owner" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"rt_user";',
-    'ALTER DEFAULT PRIVILEGES FOR ROLE :"owner" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO :"rt_user";',
-    "SQL"
-  ]) lines.push(`      ${line}`);
   return `${lines.join("\n")}\n`;
 }

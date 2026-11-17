@@ -175,6 +175,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       const env = parseEnv(compose.env);
       const file = compose.composeFile;
       if (!/^ {2}db:/m.test(file) || !/^ {2}db-data:/m.test(file)) return { ok: false, detail: "database_service_missing" };
+      if (!/^ {2}db-roles:/m.test(file) || /docker-entrypoint-initdb\.d/.test(file)) return { ok: false, detail: "database_roles_step_missing" };
       if (/^\s+ports:/m.test(file)) return { ok: false, detail: "database_ports_published" };
       try {
         const url = env.DATABASE_URL ? new URL(env.DATABASE_URL) : null;
