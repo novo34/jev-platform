@@ -44,3 +44,12 @@ export class StagingOwnershipError extends Error {
     this.name = "StagingOwnershipError";
   }
 }
+
+/** More than one compose of the environment matches the expected name/appName. Nothing is adopted or modified. */
+export class StagingAmbiguousComposeError extends Error {
+  readonly code = "staging_compose_ambiguous";
+  constructor(readonly count: number) {
+    super("staging_compose_ambiguous");
+    this.name = "StagingAmbiguousComposeError";
+  }
+}

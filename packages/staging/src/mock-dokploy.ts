@@ -54,6 +54,11 @@ export class MockDokploy {
     readonly environmentId = "env_1"
   ) {}
 
+  private randomSuffix(): string {
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  }
+
   fail(failure: ProgrammedFailure): void {
     this.failures.push({ times: 1, ...failure });
   }
@@ -124,16 +129,19 @@ export class MockDokploy {
       case "POST compose.create": {
         if (!need("name", "environmentId", "composeType", "sourceType")) return send(400, { message: "invalid body" });
         const composeId = `cmp_${++this.sequence}`;
+        // Real Dokploy always appends "-<6 chars [a-z0-9]>" to the requested appName.
+        const requested = String(body.appName ?? body.name);
+        const appName = `${requested}-${this.randomSuffix()}`;
         this.composes.set(composeId, {
           composeId,
           name: String(body.name),
-          appName: String(body.appName ?? body.name),
+          appName,
           environmentId: String(body.environmentId),
           composeFile: String(body.composeFile ?? ""),
           env: "",
           composeStatus: "idle"
         });
-        return send(200, { composeId, name: body.name, appName: body.appName });
+        return send(200, { composeId, name: body.name, appName });
       }
       case "POST compose.update": {
         const compose = this.composes.get(String(body.composeId));
