@@ -209,10 +209,10 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Robustez del worker: una tarea en vuelo, timeout por tarea y recuperación de jobs `RUNNING` sin latido.
-2. Ejecutor `packages/workspace`: contenedor aislado, allowlist, límites y limpieza.
-3. Token de instalación acotado y job de workspace.
-4. Prueba Docker real en el CI (aislamiento, límites, allowlist, rechazo de `main`, limpieza).
+1. HECHO (`e3ebb6b`): robustez del worker (una tarea en vuelo, timeout y recuperación de jobs `RUNNING` sin latido).
+2. HECHO (`2595b3b`): ejecutor `packages/workspace` (contenedor aislado, allowlist, límites y limpieza).
+3. HECHO (commit `feat(PLT-011): token de clonado, git aislado y job de workspace`): `GitHubOperations.cloneToken` (solo lectura, un repositorio), `git status/diff/log` en un auxiliar `alpine/git` sin red con el volumen `:ro`, y el handler `WORKSPACE_RUN` (`apps/worker/src/workspace-job.ts`, estado en `jobs.result`, no registrado en `server.ts`).
+4. Siguiente: paso 5, prueba Docker real en el CI (aislamiento, límites, allowlist, rechazo de `main`, limpieza).
 
 ## Instrucciones para continuar en otra sesión
 

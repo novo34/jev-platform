@@ -112,7 +112,7 @@ export class WorkspaceExecutor {
     const id = this.newId();
     if (!SAFE_NAME.test(id)) throw new WorkspaceError("invalid_spec", "invalid workspace id");
     const ws = new Workspace({
-      id, taskId: spec.taskId, token: spec.token, signal: spec.signal, docker: this.docker, limits: this.limits,
+      id, taskId: spec.taskId, token: spec.token, signal: spec.signal, docker: this.docker, limits: this.limits, gitImage: this.gitImage,
       now: this.now, log: this.log, deadline: this.now() + this.limits.taskTimeoutMs
     });
     try {
@@ -196,7 +196,7 @@ export class WorkspaceExecutor {
 
 interface WorkspaceInit {
   id: string; taskId: string; token: string; signal?: AbortSignal; docker: DockerCli;
-  limits: WorkspaceLimits; now: () => number; log: (event: WorkspaceLogEvent) => void; deadline: number;
+  limits: WorkspaceLimits; gitImage: string; now: () => number; log: (event: WorkspaceLogEvent) => void; deadline: number;
 }
 
 type State = "created" | "installed" | "dead";
@@ -207,6 +207,7 @@ export class Workspace {
   readonly volumeName: string;
   readonly containerName: string;
   readonly cloneName: string;
+  readonly gitName: string;
   readonly records: CommandRecord[] = [];
   private state: State = "created";
   private cleaned = false;
@@ -218,6 +219,7 @@ export class Workspace {
     this.volumeName = `jev-ws-${init.id}`;
     this.containerName = `jev-ws-${init.id}`;
     this.cloneName = `jev-clone-${init.id}`;
+    this.gitName = `jev-git-${init.id}`;
   }
 
   /** @internal */
@@ -300,6 +302,24 @@ export class Workspace {
     if (remaining !== "{}" && remaining !== "null") throw new Error("container still has network attachments");
   }
 
+  /**
+   * node:22-alpine has no git, so git commands run in an ephemeral helper of the git image:
+   * no network, unprivileged, read-only root and the workspace volume mounted read-only.
+   */
+  private gitArgs(argv: readonly string[]): string[] {
+    const { limits } = this.init;
+    return [
+      "run", "--rm", "--name", this.gitName,
+      "--label", `${LABEL_WORKSPACE}=${this.id}`, "--label", `${LABEL_TASK}=${this.taskId}`,
+      "--network", "none", "--user", CONTAINER_USER, "--cap-drop", "ALL",
+      "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", TMPFS_SPEC,
+      "--cpus", limits.cpus, "--memory", limits.memory, "--memory-swap", limits.memorySwap, "--pids-limit", String(limits.pidsLimit),
+      "-e", "HOME=/tmp", "-v", `${this.volumeName}:${WORKSPACE_DIR}:ro`, "-w", WORKSPACE_DIR,
+      "--entrypoint", "git", this.init.gitImage,
+      "--no-pager", "-c", `safe.directory=${WORKSPACE_DIR}`, ...argv.slice(1).filter((arg) => arg !== "--no-pager")
+    ];
+  }
+
   private async exec(command: string): Promise<CommandRecord> {
     const argv = COMMAND_ALLOWLIST.get(command)!;
     this.checkAbort();
@@ -311,7 +331,7 @@ export class Workspace {
     const timeoutMs = Math.min(this.init.limits.commandTimeoutMs, remaining);
     const started = this.init.now();
     const result = await this.init.docker.run(
-      ["exec", "--user", CONTAINER_USER, "-w", WORKSPACE_DIR, this.containerName, ...argv],
+      argv[0] === "git" ? this.gitArgs(argv) : ["exec", "--user", CONTAINER_USER, "-w", WORKSPACE_DIR, this.containerName, ...argv],
       { timeoutMs, signal: this.init.signal }
     );
     const durationMs = Math.max(0, this.init.now() - started);
@@ -342,7 +362,7 @@ export class Workspace {
   private async doDestroy(): Promise<boolean> {
     let ok = true;
     const steps: string[][] = [
-      ["rm", "-f", this.cloneName, this.containerName],
+      ["rm", "-f", this.cloneName, this.gitName, this.containerName],
       ["volume", "rm", "-f", this.volumeName]
     ];
     for (const args of steps) {

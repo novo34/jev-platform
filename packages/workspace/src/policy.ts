@@ -57,8 +57,10 @@ export const HARDENING_FLAGS: readonly string[] = Object.freeze([
  * projects need install scripts. Mitigations: non-root, no caps, resource limits,
  * no credentials inside, network removed right after.
  *
- * `git` commands need git inside the task image; node:22-alpine has none, so they
- * exit 127 unless a git-capable image is configured.
+ * `git` commands run in an ephemeral helper of the git image (node:22-alpine has no git):
+ * `--network none`, unprivileged, read-only root and the workspace volume mounted `:ro`
+ * (see Workspace.gitArgs). The argv here is the git subcommand; the helper adds
+ * `--no-pager -c safe.directory=/workspace`.
  */
 export const COMMAND_ALLOWLIST: ReadonlyMap<string, readonly string[]> = new Map([
   ["npm ci", ["npm", "ci"]],

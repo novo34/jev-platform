@@ -153,6 +153,32 @@ describe("install and run", () => {
     expect([...COMMAND_ALLOWLIST.keys()]).toEqual(["npm ci", "npm test", "npm run build", "npm run lint", "git status", "git diff", "git log"]);
   });
 
+  it.each([
+    ["git status", ["status"]], ["git diff", ["diff"]], ["git log", ["log"]]
+  ])("runs %s in an offline read-only git helper, not in the task container", async (command, sub) => {
+    const fake = fakeDocker();
+    fake.when(["run", "--rm", "--name", "jev-git-abc123"], { stdout: `ok ${TOKEN}` });
+    const ws = await executor(fake).create(spec());
+    await ws.install();
+    const record = await ws.run(command);
+    expect(record).toMatchObject({ command, exitCode: 0 });
+    expect(record.output).not.toContain(TOKEN);
+    const call = fake.callsMatching(["run", "--rm", "--name", "jev-git-abc123"])[0]!;
+    expect(call.args).toEqual([
+      "run", "--rm", "--name", "jev-git-abc123", "--label", "jev.workspace=abc123", "--label", "jev.task=task-1",
+      "--network", "none", "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+      "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
+      "--cpus", "1", "--memory", "2g", "--memory-swap", "2g", "--pids-limit", "256",
+      "-e", "HOME=/tmp", "-v", "jev-ws-abc123:/workspace:ro", "-w", "/workspace",
+      "--entrypoint", "git", "alpine/git:v2.47.2",
+      "--no-pager", "-c", "safe.directory=/workspace", ...sub
+    ]);
+    expect(call.timeoutMs).toBe(15 * 60_000);
+    expect(call.stdin).toBeUndefined();
+    // never an exec into the task container for git
+    expect(fake.callsMatching(["exec"]).some((c) => c.args.includes("git"))).toBe(false);
+  });
+
   it("records sanitized, truncated output", async () => {
     const fake = fakeDocker();
     const big = "x".repeat(40_000);
@@ -231,7 +257,7 @@ describe("withWorkspace and destroy", () => {
     expect(await ws.destroy()).toBe(true);
     expect(await ws.destroy()).toBe(true);
     expect(fake.callsMatching(["volume", "rm"])).toHaveLength(1);
-    expect(fake.callsMatching(["rm", "-f"])[0]!.args).toEqual(["rm", "-f", "jev-clone-abc123", "jev-ws-abc123"]);
+    expect(fake.callsMatching(["rm", "-f"])[0]!.args).toEqual(["rm", "-f", "jev-clone-abc123", "jev-git-abc123", "jev-ws-abc123"]);
   });
 
   it("destroy swallows docker errors and reports false, retrying later", async () => {

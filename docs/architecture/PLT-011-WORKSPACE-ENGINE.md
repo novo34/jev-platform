@@ -75,10 +75,16 @@ En `task_runs.metadata`. Sin tabla nueva ni escritor controlado nuevo, respetand
 * Clonado: contenedor auxiliar efímero con `alpine/git` (fijar por digest en el paso 5; `node:22-alpine` no trae git), con red. El token entra solo por stdin; un `credential.helper` en línea lo lee de una variable del proceso del auxiliar. No hay token en argv, en el `env` de `docker run`, en archivos ni en la URL del remoto. El auxiliar corre como root con `--cap-drop ALL` y solo CHOWN/DAC_OVERRIDE/FOWNER para dejar el volumen en 1000:1000.
 * `install()` ejecuta `npm ci` con red bridge, desconecta toda red y lo verifica con `docker inspect`; si falla, destruye y lanza `network_disconnect_failed`. `run()` exige instalación correcta. Un timeout de comando destruye el contenedor (el proceso del `exec` podría sobrevivir al cliente) y un `AbortSignal` o el plazo total de la tarea también.
 
+Paso 4 (token, git y job):
+
+* `GitHubOperations.cloneToken(projectId, repoFullName)` / `GitHubAppClient.cloneToken(scope)` emiten un token de instalación de un solo repositorio con `{ contents: "read" }`, reutilizando las validaciones de `token()` (caducidad, alcance, permisos exactos). El repositorio debe estar registrado en el proyecto activo y vinculado a una instalación de su organización. Devuelve `{ token, expiresAt }` y nunca se registra.
+* `git status|diff|log` no corren en el contenedor de tarea (sin git): se ejecutan en un auxiliar efímero `alpine/git` con `--network none`, `--user 1000:1000`, `--cap-drop ALL`, `no-new-privileges`, `--read-only`, el volumen montado `:ro`, `git --no-pager -c safe.directory=/workspace`, y los mismos límites, timeouts, registro y saneado. `destroy()` también elimina ese auxiliar.
+* Job `WORKSPACE_RUN` en `apps/worker/src/workspace-job.ts` (no registrado en `server.ts`; `workspaceHandlers(deps)` lo expone para la activación). Dependencias inyectadas: `WorkspaceExecutor` y `TokenProvider`; el worker no importa `@jev/control` ni tiene la clave de la App. El estado queda en `jobs.result` y no en `task_runs`, porque `jev_runtime` no tiene DML sobre `task_runs` y PLT-008 limita sus escritores. Un comando fallido devuelve `status: "FAILED"` con el detalle y el job termina `COMPLETED` (sin reintento); los errores de infraestructura lanzan y pasan por `queue.fail`. Detalles en [QUEUE_WORKER](../QUEUE_WORKER.md). Activación pendiente de un servidor dedicado.
+
 Riesgos residuales:
 
 * `npm ci` ejecuta scripts de instalación con red. Una dependencia maliciosa puede exfiltrar lo legible en el contenedor (el checkout), pero no hay token ni secretos dentro. No se usa `--ignore-scripts` por diseño.
-* Los comandos `git ...` fallan (127) con `node:22-alpine`, que no trae git; hace falta una imagen de tarea con git o ejecutarlos en el auxiliar (pendiente del paso 4/5).
+* El tag `alpine/git` (usado para clonar y para `git status|diff|log`) debe fijarse por digest en el paso 5.
 * El tag `alpine/git` y la imagen Node no están fijados por digest, y la prueba con Docker real no se ha ejecutado aún en este entorno (sin demonio): se activa con `JEV_DOCKER_TESTS=1` en el CI del paso 5.
 * El saneado cubre el token concreto y patrones conocidos; no detecta secretos arbitrarios impresos por el código de la tarea.
 
