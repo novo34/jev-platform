@@ -16,26 +16,26 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 
 ```json
 {
-  "foundation_sha": "f145a850171fdd3e47638253bd0063e0b93068a8",
-  "platform_sha": "fc29ab37d65c8757f4ee7af9a61d52643e50ef6b",
+  "foundation_sha": "5509b2c41c8e2447cb11137bcf8630acb75a9fec",
+  "platform_sha": "baa23e95f8a5f3baacfcd29139f37018e958d509",
   "last_completed": {
-    "task": "PLT-011",
+    "task": "PLT-012",
     "status": "DONE",
-    "pr": "https://github.com/novo34/jev-platform/pull/34",
-    "ci": "https://github.com/novo34/jev-platform/actions/runs/44094656821",
-    "review": "https://github.com/novo34/jev-platform/pull/34#issuecomment-6945577631"
+    "pr": "https://github.com/novo34/jev-platform/pull/38",
+    "ci": "https://github.com/novo34/jev-platform/actions/runs/44156914917",
+    "review": "https://github.com/novo34/jev-platform/pull/38#issuecomment-6958190841"
   },
   "next_task": {
-    "task": "PLT-012",
+    "task": "PLT-052",
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Continuar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md: paso 5 CI y PR; paso 6 R4 con novo34/jev-staging-demo: primera ejecución real hecha (app sirve 7baa286, /health 503 por BD); corregidos el sufijo de appName y el rol runtime (servicio db-roles); repetir R4 con el motor corregido tras aprobación del operador y confirmar /health 200 (Espacore después)."
+  "next_action": "Esperar la autorización del operador para PLT-052 (caché de prompts del Model Gateway con adaptador Anthropic con caché desde el primer día) y presentarle un diseño con decisiones antes de implementar."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). El operador autorizó el 2026-11-17 iniciar PLT-012. Fase actual: diseño aprobado (decisiones del 2026-11-17 en [PLT-012](docs/architecture/PLT-012-PERMANENT-STAGING.md)); implementación pendiente. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). PLT-012 está DONE en Foundation ([PR #29](https://github.com/novo34/base-skills_klever/pull/29), `5509b2c`) y fusionada en Platform ([PR #38](https://github.com/novo34/jev-platform/pull/38), `baa23e9`). NEXT_TASK pasa a PLT-052 (caché de prompts del Model Gateway), pendiente de autorización del operador. Fase actual: PLT-012 cerrada; sin implementación en curso. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -154,11 +154,13 @@ el estado obsoleto del runbook. El resumen del bot de Codex para el head final d
 PR #23 no contiene un recibo final. La revisión técnica independiente tiene
 registro separado.
 
-PLT-012 R4 (primera ejecución real contra Dokploy, 2026-11-17): se creó el compose `jev-stg-demo` en «JEV Proyectos / staging», con el dominio `demo.staging.nuvurent.com` (Let's Encrypt). La app arranca y sirve la revisión `7baa286`, pero `/health` da 503 con `database: "error"`. Pendiente de verificar tras el redespliegue con el motor corregido (ver «Problemas resueltos»); no se cierra PLT-012 hasta tener `/health` en 200 y las seis etapas.
+PLT-012 R4: la primera ejecución real (2026-11-17) terminó `FAILED`: el compose `jev-stg-demo` sirvió la revisión `7baa286`, pero `/health` daba 503 con `database: "error"`. Sus causas se corrigieron y la repetición terminó `READY` (ver «Problemas resueltos»).
 
 ## Problemas resueltos
 
-PLT-012 R4, hallazgos de la primera ejecución real: (1) Dokploy guarda `appName` con un sufijo aleatorio (`jev-stg-demo-dotuoz`); el adaptador reconoce el compose por `name` y `appName` esperado más sufijo (commit `02610cb`, esta PR). (2) El rol runtime no se creaba: el init de `configs.content` usaba `:"DBNAME"` sin definir y solo corre con el volumen vacío. Corrección (commit `fix(PLT-012): aprovisionar el rol runtime en cada despliegue`): servicio one-shot idempotente `db-roles` antes de `migrate`, `seed` y `app`, healthcheck de `db` por TCP, sin init ni `configs.content`; `verifyDatabase` lo exige. Pruebas en `packages/staging/src/compose-template.test.ts` (incluido el SQL contra PostgreSQL real). Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#hallazgo-r4-rol-runtime-sin-crear-health-503).
+PLT-012 cerrada. El motor llegó en las PRs #35, #36 y #38. La ejecución R4 repetida con el motor corregido terminó `READY` contra Dokploy v0.31.2: proyecto «JEV Proyectos / staging», compose `jev-stg-demo` (aplicación `jev-staging-demo`) en la revisión `7baa286`, publicada en https://demo.staging.nuvurent.com, con las seis etapas completas y `/health` en 200. El repositorio de prueba es público: `novo34/jev-staging-demo`. Evidencia: [PR #38](https://github.com/novo34/jev-platform/pull/38), [CI](https://github.com/novo34/jev-platform/actions/runs/44156914917) y [revisión](https://github.com/novo34/jev-platform/pull/38#issuecomment-6958190841). Limitaciones declaradas: el registro de despliegues está en la BD de control local, no en la de staging; el job `STAGING_DEPLOY` no está registrado en el worker (`server.ts`) y queda para una tarea posterior, por decisión del operador (opción 1). Recursos que permanecen en Dokploy: el compose `jev-stg-demo` y su volumen.
+
+PLT-012 R4, hallazgos de la primera ejecución (`FAILED`), ya corregidos: (1) Dokploy guarda `appName` con un sufijo aleatorio (`jev-stg-demo-dotuoz`); el adaptador reconoce el compose por `name` y `appName` esperado más sufijo (commit `02610cb`, esta PR). (2) El rol runtime no se creaba: el init de `configs.content` usaba `:"DBNAME"` sin definir y solo corre con el volumen vacío. Corrección (commit `fix(PLT-012): aprovisionar el rol runtime en cada despliegue`): servicio one-shot idempotente `db-roles` antes de `migrate`, `seed` y `app`, healthcheck de `db` por TCP, sin init ni `configs.content`; `verifyDatabase` lo exige. Pruebas en `packages/staging/src/compose-template.test.ts` (incluido el SQL contra PostgreSQL real). Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#hallazgo-r4-rol-runtime-sin-crear-health-503).
 
 PLT-010 filtró campos sensibles de las respuestas de GitHub, solicitó
 `statuses: read` para observar estados y serializó la autorización para
@@ -172,6 +174,8 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. La aceptación en staging está comprobada (17 de noviembre de 2026). El cierre en Foundation está completado. Como mejora opcional de UX, validar el enlace de recuperación al abrirlo.
 
 PLT-011 está cerrada. Quedan como tareas posteriores la activación de `WORKSPACE_RUN` en un servidor dedicado y, como mejora, fijar por digest las imágenes base de `deploy/staging/Dockerfile.*`.
+
+PLT-012 está cerrada. Foundation fijó en su [PR #28](https://github.com/novo34/base-skills_klever/pull/28) el nuevo orden: PLT-052 → PLT-040 → PLT-041 → PLT-017 → PLT-042/PLT-014. Quedan como tareas posteriores registrar `STAGING_DEPLOY` en el worker (cableando `StagingJobDeps.integratedRevision` con `loadIntegratedRevision`), decidir el almacenamiento cifrado de la API key de Dokploy y, después, el caso de Espacore. PLT-052 requiere autorización del operador antes de empezar.
 
 Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
@@ -206,6 +210,8 @@ El 17 de noviembre de 2026 el operador decidió para PLT-011 (ver [diseño](docs
 
 El 17 de noviembre de 2026 el operador decidió para PLT-012 (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md)): (1) alcance por fases: primero el motor probado en CI con un Dokploy simulado y después, como paso aparte aprobado (R4), el staging real del primer caso (proyecto de prueba mínimo `novo34/jev-staging-demo`, decisión posterior del operador; Espacore queda para después), con cuya evidencia se cierra PLT-012; (2) proveedor: API de Dokploy detrás del contrato neutral de FND-026, con la API exacta verificada contra la instancia antes del paso real; (3) un contenedor PostgreSQL propio por proyecto con volumen propio y roles owner/runtime separados, sin credenciales ni datos de producción; (4) nueva operación GitHub controlada que integra la rama de la tarea en `staging_branch` con las guardas de PLT-010. Los valores por defecto (dominio, API key cifrada, migraciones con copia previa, seeds sintéticos, E2E mínimo) quedan pendientes de confirmar antes del paso real.
 
+El 17 de noviembre de 2026 el operador autorizó cerrar PLT-012 en Platform y decidió que el job `STAGING_DEPLOY` quede sin registrar en el worker hasta una tarea posterior (opción 1). La autorización para iniciar PLT-052 está pendiente.
+
 ## Higiene del repositorio
 
 El alcance de continuidad abarca el validador, su única llamada desde el CI,
@@ -219,7 +225,13 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-PLT-012 (diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/architecture/PLT-012-PERMANENT-STAGING.md)):
+PLT-052 (caché de prompts del Model Gateway con un adaptador Anthropic con caché desde el primer día), pendiente de autorización del operador:
+
+1. Esperar la autorización del operador para iniciar PLT-052.
+2. Analizarla y presentar un diseño con decisiones antes de implementar.
+3. Implementar con pruebas tras la decisión.
+
+Historial de PLT-012 (cerrada; diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/architecture/PLT-012-PERMANENT-STAGING.md)):
 
 1. HECHO: diseño y decisiones del operador del 2026-11-17.
 2. HECHO: operación GitHub `GITHUB_INTEGRATE_STAGING` (migración 0028, solo amplía la lista del trigger del ledger).
@@ -227,8 +239,8 @@ PLT-012 (diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/archit
 4. HECHO (commit `feat(PLT-012): orquestador de staging, deployments controlados y job STAGING_DEPLOY`): orquestador en `packages/staging` (evidencia saneada por etapa, `READY` solo con las seis etapas), `PgDeploymentRegistry` sobre `jev_create_environment`/`jev_create_deployment`/`jev_set_deployment_status` (wrapper `createEnvironment` en `@jev/db`, sin migraciones ni permisos nuevos) y job `STAGING_DEPLOY` en `apps/worker/src/staging-job.ts`, no registrado en `server.ts`. La API key de Dokploy se inyecta y no va en la BD; su almacenamiento cifrado se decide en la activación (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#implementación-del-orquestador)).
 4b. HECHO (commit `fix(PLT-012): desplegar staging desde el SHA exacto registrado`): el Compose construye desde `https://github.com/<repo>.git#<sha40>` (no la rama), `appImage` exige digest, `JEV_STAGING_REVISION` en el Compose, el health/E2E comprueba la revisión (distinta: `FAILED`; no informada: «no verificable», VERIFY-R4) y el job exige que `revision` coincida con el `sha` de `GITHUB_INTEGRATE_STAGING` en el ledger (solo SELECT). Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#integridad-de-la-revisión-desplegada). Al activar el job, `StagingJobDeps.integratedRevision` debe cablearse con `loadIntegratedRevision(pool, ids)`.
 4c. HECHO (commit `fix(PLT-012): atender la revisión de Greptile (revisión integrada, propiedad, E2E degradado y reserva)`): 4 hallazgos de Greptile sobre `2150435` (https://github.com/novo34/jev-platform/pull/35#issuecomment-6951991817), todos reales. (P1) un 204 de la Merges API registraba `headSha` aunque no fuera la punta de `staging_branch`: ahora registra la punta actual (`headSha` aparte). (P1) el Compose se reutilizaba solo por `appName`: ahora lleva `JEV_STAGING_OWNER=<proyecto>:<repositorio>` y se rechaza con `staging_resource_owned_by_other_project` antes de escribir (también si otro compose del entorno sirve el host); `ProjectRegistryService.register` rechaza un `staging_url` repetido (`STAGING_URL_IN_USE`, sin migración). (P1) `runOnlineE2E` descartaba `degraded`: ahora lo conserva con evidencia por ruta y da `BLOCKED`. (P2) dos ejecuciones sobre el mismo staging podían pisarse: `PgDeploymentRegistry` toma un `pg_try_advisory_lock` de sesión hasta `finish` y la segunda termina `BLOCKED` `staging_busy` sin tocar Dokploy. Sin migraciones ni permisos nuevos. Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#revisión-de-greptile-de-la-pr-35-sobre-2150435). Segunda ronda de Greptile sobre `03a4473` (2 hallazgos, ambos reales), corregida en `fix(PLT-012): reutilizar la conexión reservada y ordenar los bloqueos de registro`: (P1) `PgDeploymentRegistry.begin` pedía otra conexión al pool además de la del bloqueo (con `max: 1` se colgaba): ahora la conexión reservada sirve a `ensureStagingEnvironment`, `createDeployment` y `setDeploymentStatuses` (los escritores de `@jev/db` aceptan `Queryable`, `Pool` o `PoolClient`, mismo SQL) y se libera en `finish`; prueba con pool `max: 1`. (P2) `register` bloqueaba los hosts en el orden recibido y A/B con B/A daba `40P01`: ahora se deduplican y ordenan antes de bloquear; prueba con registros concurrentes. Sin migraciones ni permisos nuevos. Pendiente: revisión de Greptile del nuevo commit.
-5. Pruebas de CI (Dokploy simulado, PostgreSQL efímero, GitHub simulado).
-6. Paso real con `novo34/jev-staging-demo` (R4, aprobación explícita del operador; Espacore después); con esa evidencia se cierra PLT-012. Estado: primera ejecución hecha (compose `jev-stg-demo`, dominio `demo.staging.nuvurent.com`, app sirve `7baa286`, `/health` 503 por BD); corregidos el sufijo de `appName` y el rol runtime (`db-roles`); falta repetir R4 con el motor corregido (redespliegue sin borrar datos) y confirmar `/health` 200.
+5. HECHO: pruebas de CI (Dokploy simulado, PostgreSQL efímero, GitHub simulado) y PR #38 fusionada con Greptile revisado.
+6. HECHO: paso real R4 con `novo34/jev-staging-demo` en `READY` (revisión `7baa286`, https://demo.staging.nuvurent.com, seis etapas, `/health` 200). La primera ejecución `FAILED` se corrigió (sufijo de `appName` y rol runtime con `db-roles`). Espacore queda para después.
 
 Historial de PLT-011 (cerrada):
 
@@ -269,7 +281,7 @@ Historial de PLT-011 (cerrada):
    queda fuera de ese control automático. CI valida el archivo sin escribirlo.
 
 [gate]: https://github.com/novo34/base-skills_klever/blob/main/docs/JEV_MASTER_BACKLOG.md
-[backlog]: https://github.com/novo34/base-skills_klever/blob/f145a850171fdd3e47638253bd0063e0b93068a8/backlog/jev-master-tasks.yaml
+[backlog]: https://github.com/novo34/base-skills_klever/blob/5509b2c41c8e2447cb11137bcf8630acb75a9fec/backlog/jev-master-tasks.yaml
 [pr]: https://github.com/novo34/jev-platform/pull/23
 [ci]: https://github.com/novo34/jev-platform/actions/runs/40024024437
 [main-ci]: https://github.com/novo34/jev-platform/actions/runs/40024566808
