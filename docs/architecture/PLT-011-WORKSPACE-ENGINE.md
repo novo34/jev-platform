@@ -65,6 +65,23 @@ En `task_runs.metadata`. Sin tabla nueva ni escritor controlado nuevo, respetand
 * Unitarias con adaptador Docker simulado.
 * Job de CI opt-in con Docker real que demuestra: aislamiento (sin root, sin capacidades, sin red tras instalar), límites, rechazo de comandos fuera de la allowlist, rechazo de `main` y limpieza (sin contenedores con la etiqueta tras terminar, incluso con fallo).
 
+## Implementación del ejecutor
+
+`@jev/workspace` (paso 3). API:
+
+* `SpawnDockerCli` (`spawn('docker', args, { shell: false })`, timeout que mata el proceso, salida acotada) y `FakeDockerCli` para pruebas, ambos tras la interfaz `DockerCli`.
+* `new WorkspaceExecutor({ docker, image?, gitImage?, limits? })`: `create(spec)` devuelve un `Workspace` con `install()`, `run(command)`, `records` y `destroy()`; `withWorkspace(spec, fn)` destruye siempre en `finally`; `sweepOrphans()` elimina contenedores y volúmenes con la etiqueta `jev.workspace` (solo al arrancar).
+* `spec = { taskId, repoFullName, branch, token, signal? }`. Límites, imagen y allowlist son constantes del operador (`policy.ts`), nunca valores del job. La rama se valida con una réplica de `assertTaskBranch` (una prueba la compara con la de `@jev/control`).
+* Clonado: contenedor auxiliar efímero con `alpine/git` (fijar por digest en el paso 5; `node:22-alpine` no trae git), con red. El token entra solo por stdin; un `credential.helper` en línea lo lee de una variable del proceso del auxiliar. No hay token en argv, en el `env` de `docker run`, en archivos ni en la URL del remoto. El auxiliar corre como root con `--cap-drop ALL` y solo CHOWN/DAC_OVERRIDE/FOWNER para dejar el volumen en 1000:1000.
+* `install()` ejecuta `npm ci` con red bridge, desconecta toda red y lo verifica con `docker inspect`; si falla, destruye y lanza `network_disconnect_failed`. `run()` exige instalación correcta. Un timeout de comando destruye el contenedor (el proceso del `exec` podría sobrevivir al cliente) y un `AbortSignal` o el plazo total de la tarea también.
+
+Riesgos residuales:
+
+* `npm ci` ejecuta scripts de instalación con red. Una dependencia maliciosa puede exfiltrar lo legible en el contenedor (el checkout), pero no hay token ni secretos dentro. No se usa `--ignore-scripts` por diseño.
+* Los comandos `git ...` fallan (127) con `node:22-alpine`, que no trae git; hace falta una imagen de tarea con git o ejecutarlos en el auxiliar (pendiente del paso 4/5).
+* El tag `alpine/git` y la imagen Node no están fijados por digest, y la prueba con Docker real no se ha ejecutado aún en este entorno (sin demonio): se activa con `JEV_DOCKER_TESTS=1` en el CI del paso 5.
+* El saneado cubre el token concreto y patrones conocidos; no detecta secretos arbitrarios impresos por el código de la tarea.
+
 ## Fuera de alcance
 
 * Activación en servidor.
