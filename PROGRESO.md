@@ -30,7 +30,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Implementar PLT-011 según docs/architecture/PLT-011-WORKSPACE-ENGINE.md, empezando por la robustez del worker."
+  "next_action": "Implementar PLT-011 según docs/architecture/PLT-011-WORKSPACE-ENGINE.md, empezando por la robustez del worker. Después de PLT-011 (decisión del operador, pendiente de Foundation): caché de prompts, Fase 10 y guard de presupuesto mínimo antes de las Fases 12/20."
 }
 ```
 
@@ -194,6 +194,8 @@ El 17 de noviembre de 2026 el operador decidió dejar CodeRabbit y usar Greptile
 
 El 17 de noviembre de 2026 el operador autorizó iniciar PLT-011 y fusionar la PR #33.
 
+El 17 de noviembre de 2026 el operador decidió, en la fase de investigación previa al desarrollo, adelantar en el roadmap la caché de prompts del Model Gateway y la Fase 10 (Context Runtime con Context Packs acotados) por el coste de tokens, y documentar las mejoras detectadas ([ROADMAP](docs/product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17), [mejoras](docs/architecture/MEJORAS-PRE-DESARROLLO-2026-11.md)). Orden: PLT-011 (en curso, sin interrumpir) → caché de prompts y adaptador Anthropic → Fase 10 → guard de presupuesto mínimo (PLT-017) → Fases 12/20. **Pendiente de Foundation:** reflejarlo en `backlog/jev-master-tasks.yaml` y en NEXT_TASK; hasta entonces NEXT_TASK manda. Discrepancia abierta para el operador: PLT-009 figura `DONE` aquí, pero `docs/MODEL_GATEWAY.md` y `docs/PLT-009-LIVE-ACCEPTANCE.md` mantienen la aceptación en vivo como pendiente.
+
 El 17 de noviembre de 2026 el operador decidió para PLT-011 (ver [diseño](docs/architecture/PLT-011-WORKSPACE-ENGINE.md)): (1) el ejecutor se prueba con Docker real en el CI de GitHub y no se activa en JEV Staging; su activación en un servidor o VM dedicado es posterior; (2) el ejecutor clona fuera del contenedor, que tiene red solo durante `npm ci` y después `--network none`; (3) límites por defecto de 1 CPU, 2 GB de RAM, 256 procesos, 15 min por comando y 60 min por tarea; (4) sin retención: el workspace se destruye siempre al terminar.
 
 ## Higiene del repositorio
@@ -216,6 +218,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 5. HECHO (commit `fix(PLT-011): atender la revisión de Greptile (parada, reinicio, plazo y limpieza)`): 4 hallazgos de Greptile sobre `fd2ce68`, todos reales. (P1) `stop()` esperaba una sola vez y `server.ts` cerraba el pool bajo `runOnce`: ahora hay una segunda espera acotada tras abortar y los temporizadores no generan rechazos sin capturar. (P1) un reinicio con el mismo `WORKER_ID` renovaba el latido y los jobs `RUNNING` previos nunca se recuperaban: `start()` llama a `QueueService.releaseWorkerJobs` (`worker_restarted`). (P1) `taskTimeoutMs` solo se aplicaba en `exec()`: el ejecutor arma su propio temporizador desde `create()`, limita cada llamada a Docker al tiempo restante y destruye el workspace inactivo (`task_deadline_exceeded`, antes `task_timeout`). (P2) `withWorkspace` ignoraba el fallo de `destroy()`: ahora lanza `cleanup_failed` y el logger por defecto avisa. Sin migraciones ni permisos nuevos.
    Revisión de Greptile de la PR #34: https://github.com/novo34/jev-platform/pull/34#issuecomment-6945577631. Primera revisión sobre `fd2ce68` con 4 hallazgos, corregidos en `abe44e7`; la revisión de `abe44e7` dejó 2 hallazgos: (P1) `destroy(true)` reutilizaba un barrido pendiente lanzado por el plazo antes de que existiera el contenedor, y ahora espera a ese barrido y ejecuta otro completo (prueba en `packages/workspace/src/workspace.test.ts`); (P2) esta viñeta no enlazaba la revisión (corregido aquí). Corregidos en el commit `fix(PLT-011): repetir el barrido tras una creación abortada y enlazar la revisión`. No quedan hallazgos pendientes conocidos.
    Evidencia de Docker real (PLT-011): `workspace-docker` en verde con Docker real en https://github.com/novo34/jev-platform/actions/runs/44081305078 sobre `a75ab13`; Greptile 5/5 sin hallazgos en `a75ab13`; las imágenes `node:22-alpine` y `alpine/git:v2.47.2` quedan fijadas por digest en `packages/workspace/src/policy.ts` (commit `chore(PLT-011): fijar las imágenes del ejecutor por digest`), y el job las lee de ahí.
+6. DESPUÉS DE PLT-011 (decisión del operador del 2026-11-17, pendiente de Foundation): caché de prompts en el gateway y adaptador Anthropic con caché, Fase 10, guard de presupuesto mínimo (PLT-017) y solo entonces Fases 12/20. Antes de iniciar cada una, confirmar NEXT_TASK y la autorización del operador.
 
 ## Instrucciones para continuar en otra sesión
 

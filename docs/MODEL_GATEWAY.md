@@ -52,6 +52,20 @@ attempt budget expires. Every paid response requires valid usage and
 nonnegative finite configured pricing, capped at CHF 1,000,000 per million tokens per usage category; estimates must fit the persisted NUMERIC(14,6) amount. The supplied order, task, project and
 organization must match exactly for cost attribution.
 
+## Prompt caching: NOT_IMPLEMENTED (planificado, prioridad adelantada)
+
+Estado: **NOT_IMPLEMENTED**. Hoy solo existen los adaptadores OpenAI y DeepSeek, y ninguno marca caché de prompts ni registra tokens de escritura o lectura de caché. El operador adelantó esta capacidad en el roadmap el 2026-11-17 por el coste de tokens (ver [ROADMAP](product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17)); el cambio de prioridad sigue pendiente de reflejarse en Foundation.
+
+Diseño planificado (REQ-CACHE-001..007 en la [SPEC](product-specs/SPEC.md)):
+
+- Prefijo estable al inicio de la petición: instrucciones del sistema, reglas, skills y especificación. Contenido variable (tarea, ContextPack específico, historial) al final. El prefijo debe ser determinista byte a byte.
+- El futuro adaptador Anthropic debe nacer con caché (`cache_control`); no se añadirá primero sin caché.
+- Cada llamada registra tokens de entrada, salida, escritura de caché y lectura de caché, y se agregan por llamada, tarea y proyecto. El precio de escritura y lectura de caché se configura aparte en `JEV_MODEL_PRICING_JSON`.
+- Se expone la tasa de acierto de caché para medir el ahorro real.
+- Un fallo de caché no bloquea la llamada: se ejecuta sin caché y se registra el motivo.
+
 ## Live verification
 
 CI uses deterministic fake adapters and real PostgreSQL. Final PLT-009 acceptance still requires live DeepSeek and OpenAI/Codex calls after credentials are configured through the secure credential path.
+
+> **Discrepancia a confirmar por el operador.** `PROGRESO.md` indica que PLT-009 figura como `DONE` (proyección del backlog de Foundation), mientras que este documento y [PLT-009-LIVE-ACCEPTANCE.md](PLT-009-LIVE-ACCEPTANCE.md) declaran `LIVE_PAID_CALL_ACCEPTANCE=PENDING`: solo constan health checks de OpenAI y DeepSeek (2026-10-12), no una llamada pagada con coste persistido. No se ha encontrado en Platform evidencia de esa aceptación en vivo. Hasta que el operador confirme si el `DONE` de Foundation cubre la aceptación en vivo o solo la implementación, no debe afirmarse que haya llamadas reales aceptadas.

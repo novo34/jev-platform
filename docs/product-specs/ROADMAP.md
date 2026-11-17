@@ -26,6 +26,24 @@ PRD capability
 
 PLT-001 está aceptado. PLT-002 solo puede iniciarse mediante el Development Control Gate / NEXT_TASK y autorización explícita del operador.
 
+## Prioridad de ejecución ajustada (2026-11-17)
+
+El operador decidió el 17 de noviembre de 2026, en la fase de investigación previa al desarrollo, adelantar dos bloques porque el coste de tokens es clave para la viabilidad económica del proyecto: (1) la caché de prompts en el Model Gateway y (2) la Fase 10 (Execution Blueprint / Replanning / Context Runtime, con Context Packs acotados). Las mejoras detectadas en la auditoría previa están en [MEJORAS-PRE-DESARROLLO-2026-11](../architecture/MEJORAS-PRE-DESARROLLO-2026-11.md).
+
+Orden de ejecución propuesto:
+
+1. PLT-011 (Real Docker Workspace Worker), en curso y autorizada. No se interrumpe.
+2. Caché de prompts en el gateway y adaptador Anthropic con caché (Fase 17, REQ-CACHE-001..007).
+3. Fase 10, Context Runtime con Context Packs acotados (REQ-CTX-009 y REQ-CTX-010).
+4. Guard de presupuesto mínimo (PLT-017): al menos el hard stop previo a llamadas pagadas.
+5. Fases 12 y 20, ejecución de agentes con gasto.
+
+Reglas de este ajuste:
+
+- La numeración de las fases no cambia; solo cambia el orden en que se ejecutan. Después del paso 5 se retoma el orden numérico.
+- Ninguna ejecución automatizada de agentes con gasto (Fases 12 y 20) debe empezar antes de los pasos 2 a 4.
+- **Pendiente de Foundation.** El orden ejecutable lo decide el backlog de Foundation (`backlog/jev-master-tasks.yaml`) y su resolver NEXT_TASK. Este cambio de prioridad aún no está reflejado allí; hasta que lo esté, NEXT_TASK manda y esta sección es una decisión del operador registrada en Platform, no un orden ejecutable.
+
 ---
 
 # Fase 1 — Document Freeze
@@ -183,6 +201,10 @@ Convertir órdenes humanas en IntentBrief y AcceptanceContract persistentes ante
 **Backlog:** PLT-041  
 **Depende de:** PLT-006, PLT-008, PLT-040, FND-044..047
 
+> **Prioridad adelantada (2026-11-17).** Por decisión del operador esta fase se ejecuta tras PLT-011 y la caché de prompts, y antes de cualquier ejecución automatizada de agentes con gasto (Fases 12 y 20). Ver [Prioridad de ejecución ajustada](#prioridad-de-ejecución-ajustada-2026-11-17). Queda pendiente de reflejarse en Foundation.
+>
+> **Dependencias revisadas.** Las dependencias declaradas (PLT-006, PLT-008, PLT-040, FND-044..047) pertenecen a fases anteriores; ninguna exige una fase posterior. Sin embargo, algunas fuentes de contexto viven en fases posteriores (Requirement Graph y Decision Ledger, Fase 13; Reuse Engine, Fase 14; Workspace Engine, Fase 19; presupuesto, Fase 25). Se resuelve con alcance mínimo: el ContextPack de esta fase se construye solo con fuentes ya disponibles (Project Registry, Work Orders, IntentBrief/AcceptanceContract, especificaciones y reglas del repositorio, lectura de GitHub de solo lectura). Las fuentes de fases posteriores quedan como tipos de elemento declarados pero no obligatorios; cuando existan se incorporan sin cambiar el contrato del ContextPack. La medición de tokens (REQ-CTX-010) usa el uso normalizado que ya registra el Model Gateway (PLT-009).
+
 ## Exit criteria
 - ExecutionBlueprint versionado;
 - DAG/cycles/resource conflicts validados;
@@ -292,7 +314,8 @@ Adapters reales DeepSeek, OpenAI/Codex, Qwen y GLM. PLT-009 establece además la
 - Qwen/GLM habilitables sin cambiar agent contracts;
 - timeout/retry/typed errors/fallback/circuit breaker;
 - usage/cost;
-- budget guard antes de paid calls.
+- budget guard antes de paid calls;
+- caché de prompts (prioridad adelantada, REQ-CACHE-001..007): prefijo estable (sistema, reglas, skills y especificación) y contenido variable al final; adaptador Anthropic con `cache_control` desde su primera versión; registro de tokens de entrada, salida, escritura y lectura de caché por llamada, tarea y proyecto; métrica de tasa de acierto; un fallo de caché no bloquea la llamada pero se registra.
 
 ---
 
