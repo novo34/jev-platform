@@ -1,0 +1,6 @@
+{
+  "files": [
+    { "path": "AGENTS.md", "description": "Reglas de continuidad y de revisión de JEV Platform" },
+    { "path": "PROGRESO.md", "description": "Checkpoint canónico: estado, evidencias y siguiente acción" }
+  ]
+}
