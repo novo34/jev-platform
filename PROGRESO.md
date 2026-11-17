@@ -30,12 +30,12 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Completar el análisis y el diseño de PLT-011 (aislamiento, límites, allowlist, secretos y limpieza) y obtener la decisión del operador antes de implementar."
+  "next_action": "Implementar PLT-011 según docs/architecture/PLT-011-WORKSPACE-ENGINE.md, empezando por la robustez del worker."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. El operador autorizó el 2026-11-17 iniciar PLT-011 (Real Docker Workspace Worker); NEXT_TASK la seleccionó en Foundation `828af46`. Fase actual: análisis y diseño, sin código. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. El operador autorizó el 2026-11-17 iniciar PLT-011 (Real Docker Workspace Worker); NEXT_TASK la seleccionó en Foundation `828af46`. Fase actual: diseño aprobado por el operador; implementación en curso. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -194,6 +194,8 @@ El 17 de noviembre de 2026 el operador decidió dejar CodeRabbit y usar Greptile
 
 El 17 de noviembre de 2026 el operador autorizó iniciar PLT-011 y fusionar la PR #33.
 
+El 17 de noviembre de 2026 el operador decidió para PLT-011 (ver [diseño](docs/architecture/PLT-011-WORKSPACE-ENGINE.md)): (1) el ejecutor se prueba con Docker real en el CI de GitHub y no se activa en JEV Staging; su activación en un servidor o VM dedicado es posterior; (2) el ejecutor clona fuera del contenedor, que tiene red solo durante `npm ci` y después `--network none`; (3) límites por defecto de 1 CPU, 2 GB de RAM, 256 procesos, 15 min por comando y 60 min por tarea; (4) sin retención: el workspace se destruye siempre al terminar.
+
 ## Higiene del repositorio
 
 El alcance de continuidad abarca el validador, su única llamada desde el CI,
@@ -207,9 +209,10 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Analizar el worker, la cola, los tokens de GitHub y el despliegue.
-2. Presentar al operador un diseño con opciones para dónde se ejecutan los contenedores, límites, allowlist, secretos provisionales y retención.
-3. Implementar con pruebas tras la decisión.
+1. Robustez del worker: una tarea en vuelo, timeout por tarea y recuperación de jobs `RUNNING` sin latido.
+2. Ejecutor `packages/workspace`: contenedor aislado, allowlist, límites y limpieza.
+3. Token de instalación acotado y job de workspace.
+4. Prueba Docker real en el CI (aislamiento, límites, allowlist, rechazo de `main`, limpieza).
 
 ## Instrucciones para continuar en otra sesión
 
