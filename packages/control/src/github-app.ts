@@ -306,6 +306,43 @@ export class GitHubAppClient {
     return { merged: result.merged, sha: result.sha };
   }
 
+  /**
+   * Merges an exact commit SHA into `base` (the repository staging branch) via the Merges API.
+   * 201 = new merge commit, 204 = already contained. A 409 conflict is never retried.
+   * Only `sha` is returned; the upstream response and the token never leave this method.
+   */
+  async mergeIntoBranch(scope: GitHubRepositoryScope, base: string, headSha: string, beforeSend?: () => Promise<void>):
+    Promise<{ merged: true; sha: string; alreadyIntegrated: boolean }> {
+    assertSha(headSha);
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,199}$/.test(base) || base.includes("..")) throw new GitHubError("GITHUB_INVALID_REQUEST");
+    const path = `${repositoryPath(scope)}/merges`;
+    const token = await this.token(scope, { contents: "write" });
+    if (beforeSend) await beforeSend();
+    let response: Response;
+    try {
+      response = await this.fetcher(`https://api.github.com${path}`, {
+        method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000),
+        headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+          Authorization: `Bearer ${token}`, "User-Agent": "JEV-GitHub-App", "Content-Type": "application/json" },
+        body: JSON.stringify({ base, head: headSha, commit_message: `chore: integrate ${headSha.slice(0, 12)} into ${base}` })
+      });
+    } catch { throw new GitHubError("GITHUB_UNAVAILABLE"); }
+    if (response.status === 204) return { merged: true, sha: headSha, alreadyIntegrated: true };
+    if (response.status === 409 || response.status === 422) throw new GitHubError("GITHUB_CONFLICT");
+    if (response.status === 429 || (response.status === 403 && (response.headers.has("retry-after") ||
+        response.headers.get("x-ratelimit-remaining") === "0"))) {
+      const seconds = Number(response.headers.get("retry-after"));
+      throw new GitHubError("GITHUB_RATE_LIMITED", Number.isFinite(seconds) && seconds > 0 ? Math.min(Math.ceil(seconds), 3600) : undefined);
+    }
+    if ([401, 403, 404].includes(response.status)) throw new GitHubError("GITHUB_FORBIDDEN");
+    if (response.status !== 201) throw new GitHubError("GITHUB_UNAVAILABLE");
+    let body: unknown;
+    try { body = await response.json(); } catch { throw new GitHubError("GITHUB_UNAVAILABLE"); }
+    const parsed = z.object({ sha: z.string().regex(/^[a-f0-9]{40}$/) }).safeParse(body);
+    if (!parsed.success) throw new GitHubError("GITHUB_UNAVAILABLE");
+    return { merged: true, sha: parsed.data.sha, alreadyIntegrated: false };
+  }
+
   async checks(scope: GitHubRepositoryScope, sha: string): Promise<{
     checkRuns: unknown; status: unknown; workflowRuns: unknown; observationsOnly: true;
   }> {

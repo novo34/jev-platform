@@ -30,7 +30,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Implementar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md, empezando por la integración en staging_branch."
+  "next_action": "Implementar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md, pasos 3 a 6 (paso 2, integración en staging_branch, hecho)."
 }
 ```
 
@@ -218,7 +218,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 PLT-012 (diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/architecture/PLT-012-PERMANENT-STAGING.md)):
 
 1. HECHO: diseño y decisiones del operador del 2026-11-17.
-2. Operación GitHub de integración en `staging_branch` (mismas guardas que PLT-010).
+2. HECHO: operación GitHub `GITHUB_INTEGRATE_STAGING` (migración 0028, solo amplía la lista del trigger del ledger).
 3. Adaptador Dokploy + plantilla de Compose.
 4. Orquestador + job `STAGING_DEPLOY` + deployments controlados.
 5. Pruebas de CI (Dokploy simulado, PostgreSQL efímero, GitHub simulado).

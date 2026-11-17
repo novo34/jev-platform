@@ -49,17 +49,17 @@ Job de cola `STAGING_DEPLOY` (patrón de `WORKSPACE_RUN`), sin activar por defec
 
 | Foundation | Platform |
 | --- | --- |
-| UNKNOWN | READY (sin despliegue previo) |
+| UNKNOWN | BLOCKED (nunca READY) |
 | DEPLOYING | RUNNING |
-| READY | VERIFIED (tras health y E2E; VERIFYING mientras se ejecutan) |
+| READY | READY |
 | FAILED | FAILED |
-| DEGRADED | BLOCKED (REJECTED si la verificación lo rechaza explícitamente) |
+| DEGRADED | BLOCKED |
 
-El mapeo exacto se fija con pruebas en el paso 4; los vocabularios difieren y es un riesgo conocido.
+`READY` se mapea a `READY` porque es el estado de deployment staging que los triggers de `0016` exigen para pasar la tarea a `AWAITING_HUMAN`; un estado desconocido o degradado nunca puede ser `READY`. `VERIFYING`/`VERIFIED` quedan para la fase de verificación (PLT-015). El mapeo exacto se fija con pruebas en el paso 4; los vocabularios difieren y es un riesgo conocido.
 
 ### Operación GitHub de integración
 
-Nueva operación controlada que integra la rama de la tarea en `staging_branch`: exige las aprobaciones y el estado de la tarea, el SHA exacto y es idempotente. Rechaza `main`, `master` y la rama de producción. Reutiliza las guardas de PLT-010.
+Implementada (paso 2): acción `GITHUB_INTEGRATE_STAGING` `{taskId, headSha}`, `project:admin` y rol ADMIN vigente, expuesta por el endpoint genérico de comandos de `apps/api` (sesión, rol y CSRF como las demás). Usa la Merges API (`base`=`staging_branch`, `head`=SHA exacto) con token de instalación `contents: write` de un solo repositorio. Solo se permite con la tarea en `VERIFIED` (los triggers de `0016` exigen un deployment staging `READY` para pasar a `AWAITING_HUMAN`, así que la rama debe llegar a staging antes), con la rama de la tarea en GitHub exactamente en `headSha` y con la verificación técnica firmada del ciclo vigente ligada a ese SHA; no exige aprobación humana, que se concede tras revisar el staging. Rechaza `default_branch`, `main`, `master`, `production`, `prod`, la propia rama de la tarea y un `staging_branch` vacío. Idempotente por hash de petición en el ledger `github_operations`; 409/422 es `GITHUB_CONFLICT` sin reintento. La migración `0028` solo añade la acción a la lista del trigger del ledger (sin tablas, columnas, roles ni GRANTs).
 
 ## Riesgos y mitigaciones
 

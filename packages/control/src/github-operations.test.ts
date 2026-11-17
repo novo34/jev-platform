@@ -23,6 +23,7 @@ let calls: Array<{ url: string; method?: string; body?: any }>;
 let reviewerId = 900, reviewSha = headSha, checkConclusion = "success", checkApp = 15368, prSha = headSha;
 let serverPolicy = "valid", unrecordedCommit = false;
 let writeTimeout = false;
+let mergesStatus = 201, taskBranchHead = headSha;
 let writeRateLimited = false;
 let reviewsEmpty = false, reviewState = "APPROVED";
 let checkStatus = "completed";
@@ -58,6 +59,12 @@ function service(database = pool, mergeEnabled = true, singleOperator = false, t
       return Response.json({ type: "file", encoding: "base64", content: Buffer.from(text).toString("base64"), size: text.length }); }
     if (path.includes("/users/")) return Response.json({ id: path.endsWith("/implementer") ? 800 : 900 });
     if (path.includes("/pulls/9/commits?")) return Response.json(unrecordedCommit ? [{ sha: "d".repeat(40), author: { id: 900 } }, { sha: headSha }] : [{ sha: headSha }]);
+    if (path.endsWith("/merges")) {
+      if (mergesStatus === 201) return Response.json({ sha: mergeSha, token: "leak-me", commit: { author: { email: "x@y" } } }, { status: 201 });
+      if (mergesStatus === 204) return new Response(null, { status: 204 });
+      return Response.json({ message: "Merge conflict test-install-token" }, { status: mergesStatus });
+    }
+    if (path.includes("/branches/feat%2Fjev-")) return Response.json({ commit: { sha: taskBranchHead } });
     if (path.includes("/branches/")) return Response.json({ commit: { sha: baseSha } });
     if (path.endsWith("/git/refs")) return Response.json({ ref: body.ref, object: { sha: body.sha } });
     if (path.includes("/contents/")) {
@@ -94,6 +101,14 @@ async function transition(status: string) {
 }
 /** Create approval history with signed verification evidence or a targeted invalid fixture. */
 async function approve(verificationCase = "valid") {
+  await verifyTask(verificationCase);
+  for (const status of ["STAGING", "AWAITING_HUMAN"]) await transition(status);
+  await createApproval(pool, { projectId, taskId, actorUserId: userId, decision: "APPROVED", revision: headSha,
+    commitSha: headSha, pullRequestUrl: "https://github.com/owner/op-repo/pull/9", evidence: { verificationSource: "test-fixture" } });
+  await transition("APPROVED");
+}
+/** Leaves the task VERIFIED with signed evidence (the state allowed for staging integration). */
+async function verifyTask(verificationCase = "valid") {
   await execute("GITHUB_WRITE_FILE", { taskId, path: "acceptance.txt", content: "test", message: "feat: acceptance" });
   await execute("GITHUB_CREATE_PR", { taskId, title: "feat: controlled task", body: "test evidence" });
   await transition("VERIFYING");
@@ -117,10 +132,6 @@ async function approve(verificationCase = "valid") {
   if (verificationCase === "tampered") envelope.payload = Buffer.from(JSON.stringify({ ...report, reportSha256: "f".repeat(64) })).toString("base64url");
   const evidence = verificationCase === "missing" ? {} : { technicalVerification: verificationCase === "forged" ? { passed: true, issuer: "independent-qa-process" } : envelope };
   await pool.query("SELECT jev_transition_task($1,'VERIFIED','AGENT','independent-qa-process','technical verification',$2::jsonb)", [taskId, JSON.stringify(evidence)]);
-  for (const status of ["STAGING", "AWAITING_HUMAN"]) await transition(status);
-  await createApproval(pool, { projectId, taskId, actorUserId: userId, decision: "APPROVED", revision: headSha,
-    commitSha: headSha, pullRequestUrl: "https://github.com/owner/op-repo/pull/9", evidence: { verificationSource: "test-fixture" } });
-  await transition("APPROVED");
 }
 
 beforeAll(async () => {
@@ -144,12 +155,97 @@ beforeEach(async () => {
   calls = []; reviewerId = 900; reviewSha = headSha; checkConclusion = "success"; checkApp = 15368; prSha = headSha; writeTimeout = false;
   serverPolicy = "valid"; unrecordedCommit = false;
   onWriteToken = undefined;
-  writeRateLimited = false;
+  writeRateLimited = false; mergesStatus = 201; taskBranchHead = headSha;
+  await pool.query("UPDATE repositories SET staging_branch='staging' WHERE id=$1", [repositoryId]);
   reviewsEmpty = false; reviewState = "APPROVED";
   checkStatus = "completed";
 });
 // Immutable task/approval/audit fixtures remain in the disposable test DB.
 afterAll(async () => { await pool.end(); });
+
+describe("GITHUB_INTEGRATE_STAGING", () => {
+  const integrate = (payload: Record<string, unknown> = { taskId, headSha }, commandId = randomUUID()) => execute("GITHUB_INTEGRATE_STAGING", payload, commandId);
+  const merges = () => calls.filter(call => call.url.endsWith("/merges"));
+  it("integrates the exact verified SHA into staging with a single-repository contents:write token", async () => {
+    await verifyTask();
+    const response = await integrate();
+    expect(response).toMatchObject({ ok: true, data: { merged: true, sha: mergeSha, alreadyIntegrated: false } });
+    expect(merges()).toHaveLength(1);
+    expect(merges()[0]!.method).toBe("POST");
+    expect(merges()[0]!.url).toBe("https://api.github.com/repos/owner/op-repo/merges");
+    expect(merges()[0]!.body).toMatchObject({ base: "staging", head: headSha });
+    const write = calls.filter(call => call.url.endsWith("/access_tokens")).at(-1)!;
+    expect(write.body).toEqual({ repository_ids: [42], permissions: { contents: "write" } });
+    expect(JSON.stringify(response)).not.toMatch(/test-install-token|leak-me|x@y/);
+    const audit = await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE action='GITHUB_INTEGRATE_STAGING'");
+    expect(audit.rows[0].n).toBeGreaterThan(0);
+  });
+  it("reports an already integrated head (204) without a merge commit", async () => {
+    await verifyTask(); mergesStatus = 204;
+    await expect(integrate()).resolves.toMatchObject({ data: { merged: true, sha: headSha, alreadyIntegrated: true } });
+  });
+  it.each(["main", "master", "production", "prod"])("never targets %s", async target => {
+    await verifyTask(); await pool.query("UPDATE repositories SET staging_branch=$2 WHERE id=$1", [repositoryId, target]);
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(merges()).toHaveLength(0);
+  });
+  it("never targets the default branch or a missing staging branch", async () => {
+    await verifyTask(); await pool.query("UPDATE repositories SET default_branch='develop',staging_branch='develop' WHERE id=$1", [repositoryId]);
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    await pool.query("UPDATE repositories SET default_branch='main',staging_branch=NULL WHERE id=$1", [repositoryId]);
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(merges()).toHaveLength(0);
+  });
+  it.each(["release/x", "main", "../x", "refs/heads/main"])("rejects invalid task branch %s", async branch => {
+    await verifyTask(); await pool.query("UPDATE tasks SET branch_name=$2 WHERE id=$1", [taskId, branch]).catch(() => undefined);
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(merges()).toHaveLength(0);
+  });
+  it("rejects a task branch equal to staging", async () => {
+    await verifyTask(); await pool.query("UPDATE tasks SET branch_name='feat/staging' WHERE id=$1", [taskId]);
+    await pool.query("UPDATE repositories SET staging_branch='feat/staging' WHERE id=$1", [repositoryId]);
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(merges()).toHaveLength(0);
+  });
+  it("is idempotent by command and request hash", async () => {
+    await verifyTask(); const commandId = randomUUID();
+    const first = await integrate({ taskId, headSha }, commandId);
+    expect(await integrate({ taskId, headSha }, commandId)).toEqual(first);
+    expect(merges()).toHaveLength(1);
+    await expect(integrate({ taskId, headSha: baseSha }, commandId)).rejects.toMatchObject({ code: "GITHUB_CONFLICT" });
+    expect(merges()).toHaveLength(1);
+  });
+  it("maps a merge conflict to a typed error without retrying or leaking the token", async () => {
+    await verifyTask(); mergesStatus = 409;
+    const error = await integrate().catch(e => e);
+    expect(error).toMatchObject({ code: "GITHUB_CONFLICT" });
+    expect(JSON.stringify(error) + error.message + String(error.stack)).not.toContain("test-install-token");
+    expect(merges()).toHaveLength(1);
+  });
+  it("does not leak the token on upstream failure", async () => {
+    await verifyTask(); mergesStatus = 500;
+    const error = await integrate().catch(e => e);
+    expect(error).toMatchObject({ code: "GITHUB_UNAVAILABLE" });
+    expect(JSON.stringify(error) + error.message + String(error.stack)).not.toContain("test-install-token");
+  });
+  it.each(["RUNNING", "APPROVED"])("rejects a task in state %s", async state => {
+    if (state === "APPROVED") await approve(); else await execute("GITHUB_CREATE_BRANCH", { taskId });
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(merges()).toHaveLength(0);
+  });
+  it.each(["missing", "forged", "tampered", "commitSha", "expired", "implementer-key"])("requires valid signed evidence bound to the SHA: %s", async scenario => {
+    await verifyTask(scenario);
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(merges()).toHaveLength(0);
+  });
+  it("requires the exact head SHA on the task branch and a well-formed SHA", async () => {
+    await verifyTask(); taskBranchHead = "d".repeat(40);
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    await expect(integrate({ taskId, headSha: "HEAD" })).rejects.toMatchObject({ code: "GITHUB_INVALID_REQUEST" });
+    await expect(integrate({ taskId, headSha, base: "main" })).rejects.toMatchObject({ code: "GITHUB_INVALID_REQUEST" });
+    expect(merges()).toHaveLength(0);
+  });
+});
 
 describe("GitHub operations (real PostgreSQL, simulated GitHub)", () => {
   it("rejects merge without persisted independent technical verification", async () => {
