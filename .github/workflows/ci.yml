@@ -156,3 +156,47 @@ jobs:
           docker compose -f docker-compose.staging.yml exec -T postgres psql -U postgres -d jev_staging -Atc "SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member OR r.oid=m.roleid WHERE r.rolname='jev_runtime'" | grep -x '0'
           docker compose -f docker-compose.staging.yml exec -T web wget -q -O /dev/null http://127.0.0.1:8080/
 
+  workspace-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci
+
+      # The integration test runs the TypeScript sources through Vitest and imports
+      # only ./index.js, so no package build is needed.
+      - name: Pull workspace images and print digests (to pin them)
+        run: |
+          set -euo pipefail
+          for image in node:22-alpine alpine/git:v2.47.2; do
+            docker pull "$image"
+            docker image inspect --format '{{index .RepoDigests 0}}' "$image"
+          done
+
+      - name: Workspace executor against real Docker
+        working-directory: packages/workspace
+        env:
+          JEV_DOCKER_TESTS: "1"
+        run: npx vitest run src/docker.integration.test.ts
+
+      - name: Verify no labelled containers or volumes remain
+        if: always()
+        run: |
+          containers="$(docker ps -aq --filter label=jev.workspace)"
+          volumes="$(docker volume ls -q --filter label=jev.workspace)"
+          if [ -n "$containers" ] || [ -n "$volumes" ]; then
+            echo "Leftover jev.workspace resources:" >&2
+            echo "containers: $containers" >&2
+            echo "volumes: $volumes" >&2
+            exit 1
+          fi

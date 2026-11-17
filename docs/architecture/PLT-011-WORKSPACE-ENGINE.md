@@ -85,7 +85,7 @@ Riesgos residuales:
 
 * `npm ci` ejecuta scripts de instalación con red. Una dependencia maliciosa puede exfiltrar lo legible en el contenedor (el checkout), pero no hay token ni secretos dentro. No se usa `--ignore-scripts` por diseño.
 * El tag `alpine/git` (usado para clonar y para `git status|diff|log`) debe fijarse por digest en el paso 5.
-* El tag `alpine/git` y la imagen Node no están fijados por digest, y la prueba con Docker real no se ha ejecutado aún en este entorno (sin demonio): se activa con `JEV_DOCKER_TESTS=1` en el CI del paso 5.
+* El tag `alpine/git` y la imagen Node no están fijados por digest, y la prueba con Docker real no se ha ejecutado aún (sin demonio en el entorno de desarrollo): el job `workspace-docker` de `ci.yml` la ejecuta con `JEV_DOCKER_TESTS=1`, imprime los digests de ambas imágenes y comprueba al final que no quedan contenedores ni volúmenes `jev.workspace`. Pendiente de su primera ejecución en GitHub.
 * El saneado cubre el token concreto y patrones conocidos; no detecta secretos arbitrarios impresos por el código de la tarea.
 
 ## Fuera de alcance
