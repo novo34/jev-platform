@@ -54,7 +54,7 @@ organization must match exactly for cost attribution.
 
 ## Prompt caching: NOT_IMPLEMENTED (planificado, prioridad adelantada)
 
-Estado: **NOT_IMPLEMENTED**. Hoy solo existen los adaptadores OpenAI y DeepSeek, y ninguno marca caché de prompts ni registra tokens de escritura o lectura de caché. El operador adelantó esta capacidad en el roadmap el 2026-11-17 por el coste de tokens (ver [ROADMAP](product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17)); el cambio de prioridad sigue pendiente de reflejarse en Foundation.
+Estado: **NOT_IMPLEMENTED**. Hoy solo existen los adaptadores OpenAI y DeepSeek, y ninguno marca caché de prompts ni registra tokens de escritura o lectura de caché. El operador adelantó esta capacidad en el roadmap el 2026-11-17 por el coste de tokens (ver [ROADMAP](product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17)); el cambio de prioridad ya está reflejado en Foundation (novo34/base-skills_klever#28) como PLT-052, que es la siguiente tarea según NEXT_TASK.
 
 Diseño planificado (REQ-CACHE-001..007 en la [SPEC](product-specs/SPEC.md)):
 

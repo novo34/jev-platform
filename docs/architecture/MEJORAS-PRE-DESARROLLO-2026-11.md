@@ -6,7 +6,7 @@
 
 Cada mejora indica problema, propuesta, fase o REQ afectado y prioridad. Los IDs REQ citados están en la [SPEC](../product-specs/SPEC.md) y el orden de ejecución en el [ROADMAP](../product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17).
 
-**Pendiente de Foundation.** Ninguna prioridad de este documento es ejecutable hasta que se refleje en `backlog/jev-master-tasks.yaml` y en NEXT_TASK (ver la mejora 12). La tarea en curso según PROGRESO.md/NEXT_TASK (hoy PLT-012) no se interrumpe.
+**Reflejado en Foundation** (novo34/base-skills_klever#28): PLT-052 (caché de prompts), PLT-040, PLT-041 (Fase 10), PLT-017, después PLT-042 (Fase 12) y PLT-014 (Fase 20). NEXT_TASK manda (hoy PLT-052; PLT-012 ya está cerrada, Foundation #29).
 
 ## 1. Caché de prompts y Fase 10 (Context Runtime)
 

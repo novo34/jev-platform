@@ -32,9 +32,9 @@ El operador decidió el 17 de noviembre de 2026, en la fase de investigación pr
 
 Orden de ejecución propuesto:
 
-1. La tarea en curso según PROGRESO.md/NEXT_TASK (hoy PLT-012) no se interrumpe.
-2. Caché de prompts en el gateway y adaptador Anthropic con caché (Fase 17, REQ-CACHE-001..007).
-3. Fase 10, Context Runtime con Context Packs acotados (REQ-CTX-009 y REQ-CTX-010).
+1. La tarea en curso según PROGRESO.md/NEXT_TASK no se interrumpe (PLT-012 ya está cerrada, Foundation #29; hoy NEXT_TASK es PLT-052).
+2. PLT-052: caché de prompts en el gateway y adaptador Anthropic con caché (Fase 17, REQ-CACHE-001..007).
+3. PLT-040 y PLT-041: Fase 10, Context Runtime con Context Packs acotados (REQ-CTX-009 y REQ-CTX-010).
 4. Guard de presupuesto mínimo (PLT-017): al menos el hard stop previo a llamadas pagadas.
 5. Fases 12 y 20, ejecución de agentes con gasto.
 
@@ -42,7 +42,7 @@ Reglas de este ajuste:
 
 - La numeración de las fases no cambia; solo cambia el orden en que se ejecutan. Después del paso 5 se retoma el orden numérico.
 - Ninguna ejecución automatizada de agentes con gasto (Fases 12 y 20) debe empezar antes de los pasos 2 a 4.
-- **Pendiente de Foundation.** El orden ejecutable lo decide el backlog de Foundation (`backlog/jev-master-tasks.yaml`) y su resolver NEXT_TASK. Este cambio de prioridad aún no está reflejado allí; hasta que lo esté, NEXT_TASK manda y esta sección es una decisión del operador registrada en Platform, no un orden ejecutable.
+- **Reflejado en Foundation** (novo34/base-skills_klever#28): PLT-052 (caché de prompts), PLT-040, PLT-041 (Fase 10), PLT-017, después PLT-042 (Fase 12) y PLT-014 (Fase 20). NEXT_TASK manda. La tarea en curso PLT-012 ya está cerrada (Foundation #29).
 
 ---
 
@@ -201,7 +201,7 @@ Convertir órdenes humanas en IntentBrief y AcceptanceContract persistentes ante
 **Backlog:** PLT-041  
 **Depende de:** PLT-006, PLT-008, PLT-040, FND-044..047
 
-> **Prioridad adelantada (2026-11-17).** Por decisión del operador esta fase se ejecuta tras la tarea en curso (hoy PLT-012) y la caché de prompts, y antes de cualquier ejecución automatizada de agentes con gasto (Fases 12 y 20). Ver [Prioridad de ejecución ajustada](#prioridad-de-ejecución-ajustada-2026-11-17). Queda pendiente de reflejarse en Foundation.
+> **Prioridad adelantada (2026-11-17).** Por decisión del operador esta fase se ejecuta tras la caché de prompts (PLT-052; PLT-012 ya está cerrada), y antes de cualquier ejecución automatizada de agentes con gasto (Fases 12 y 20). Ver [Prioridad de ejecución ajustada](#prioridad-de-ejecución-ajustada-2026-11-17). Reflejado en Foundation (novo34/base-skills_klever#28): PLT-052 (caché de prompts), PLT-040, PLT-041 (Fase 10), PLT-017, después PLT-042 (Fase 12) y PLT-014 (Fase 20). NEXT_TASK manda.
 >
 > **Dependencias revisadas.** Las dependencias declaradas (PLT-006, PLT-008, PLT-040, FND-044..047) pertenecen a fases anteriores; ninguna exige una fase posterior. Sin embargo, algunas fuentes de contexto viven en fases posteriores (Requirement Graph y Decision Ledger, Fase 13; Reuse Engine, Fase 14; Workspace Engine, Fase 19; presupuesto, Fase 25). Se resuelve con alcance mínimo: el ContextPack de esta fase se construye solo con fuentes ya disponibles (Project Registry, Work Orders, IntentBrief/AcceptanceContract, especificaciones y reglas del repositorio, lectura de GitHub de solo lectura). Las fuentes de fases posteriores quedan como tipos de elemento declarados pero no obligatorios; cuando existan se incorporan sin cambiar el contrato del ContextPack. La medición de tokens (REQ-CTX-010) usa el uso normalizado que ya registra el Model Gateway (PLT-009).
 
