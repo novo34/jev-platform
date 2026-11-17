@@ -1,0 +1,22 @@
+{
+  "strictness": 1,
+  "commentTypes": ["logic", "syntax"],
+  "autoReview": ["open", "push", "rebase"],
+  "fixWithAI": true,
+  "shouldUpdateDescription": false,
+  "autoApprove": { "enabled": false },
+  "instructions": "Escribe todas las revisiones, resúmenes y comentarios en español (es-ES). Este repositorio es JEV Platform. Sigue AGENTS.md y PROGRESO.md: las evidencias deben corresponder al SHA revisado y ninguna revisión automática sustituye al CI, a las revisiones independientes exigidas ni a la autorización del operador.",
+  "rules": [
+    {
+      "id": "jev-prioridades",
+      "rule": "Prioriza fallos reproducibles de seguridad, corrección y regresión. Comprueba que las pruebas cubren el comportamiento cambiado. Señala duplicación y código muerto cuando puedas identificar sus consumidores.",
+      "severity": "high"
+    },
+    {
+      "id": "jev-superficies-sensibles",
+      "rule": "Revisa aislamiento entre organizaciones, permisos mínimos, secretos, idempotencia, concurrencia, migraciones y confianza en las evidencias de CI y revisión. Explica el impacto y cómo reproducir cada hallazgo.",
+      "scope": ["apps/api/**", "packages/auth/**", "packages/control/**", "packages/db/**", "deploy/**", ".github/workflows/**"],
+      "severity": "high"
+    }
+  ]
+}

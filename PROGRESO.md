@@ -3,8 +3,8 @@
 ## Identificación
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
-- Rama de trabajo: `codex/plt-051-password-recovery`. Base integrada: `main`.
-- Última actualización: 2026-11-16. Entorno: Claude Code en la nube (Linux), PostgreSQL 16 local desechable y verificación remota de GitHub.
+- Rama de trabajo: `claude/elegant-turing-c9wz23`. Base integrada: `main`.
+- Última actualización: 2026-11-17. Entorno: Claude Code en la nube (Linux), verificación remota de GitHub.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
 
@@ -17,7 +17,7 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 ```json
 {
   "foundation_sha": "7bdc8444d5698a590356c61233f6e2a148b43787",
-  "platform_sha": "e552e770769796ee87913b205d1e14f78cbdb6f9",
+  "platform_sha": "2d29785b27cf96365bb77e5015fbc77528936cc9",
   "last_completed": {
     "task": "PLT-050",
     "status": "DONE",
@@ -30,12 +30,12 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Confirmar el CI y CodeRabbit de PR #30, configurar Resend en staging y probar la entrega y el restablecimiento reales."
+  "next_action": "Aceptar PLT-051 en JEV Staging con entrega real por Resend, consumo único, revocación de sesiones y caducidad, y registrar el cierre en Foundation."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 está DONE en Foundation. NEXT_TASK seleccionó PLT-051 y el operador autorizó su inicio. Staging aceptó la integración
+`DONE`. PLT-050 está DONE en Foundation. NEXT_TASK seleccionó PLT-051 y el operador autorizó su inicio. PLT-051 está fusionado en `main` en `2d29785` ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y pendiente de aceptación en staging. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -70,7 +70,7 @@ Los cambios principales de PLT-010 están en
 
 ## Pruebas y evidencias
 
-- PLT-051, [PR #30](https://github.com/novo34/jev-platform/pull/30). El [CI de `df7810d`](https://github.com/novo34/jev-platform/actions/runs/43897717852) falló en `validate`: la prueba de migraciones no listaba `0027`. Al reproducirlo con PostgreSQL 16 local aparecieron tres fallos más del gate de producción: el rol de CI no recibía EXECUTE sobre `jev_issue_password_reset` y `jev_consume_password_reset`, el inventario de CHECK no incluía `password_reset_tokens_token_hash_check` y el smoke esperaba ocho writers controlados. La corrección concede ambos writers en `packages/db/security/provision-runtime-role.sql`, fija el predicado exacto de la CHECK, actualiza el recuento a diez y aplica `0027` en la prueba ACL. En local pasaron `npm run check`, `smoke:restricted-runtime` (10 writers, 27 migraciones) y el smoke de desarrollo. El CI y CodeRabbit del nuevo head se consultan en la PR.
+- PLT-051, [PR #30](https://github.com/novo34/jev-platform/pull/30). El [CI de `df7810d`](https://github.com/novo34/jev-platform/actions/runs/43897717852) falló en `validate`: la prueba de migraciones no listaba `0027`. Al reproducirlo con PostgreSQL 16 local aparecieron tres fallos más del gate de producción: el rol de CI no recibía EXECUTE sobre `jev_issue_password_reset` y `jev_consume_password_reset`, el inventario de CHECK no incluía `password_reset_tokens_token_hash_check` y el smoke esperaba ocho writers controlados. La corrección concede ambos writers en `packages/db/security/provision-runtime-role.sql`, fija el predicado exacto de la CHECK, actualiza el recuento a diez y aplica `0027` en la prueba ACL. En local pasaron `npm run check`, `smoke:restricted-runtime` (10 writers, 27 migraciones) y el smoke de desarrollo. La PR se fusionó con squash en `2d29785` desde el head `162df9c`, con [CI del head](https://github.com/novo34/jev-platform/actions/runs/43948435717) y [CI de main](https://github.com/novo34/jev-platform/actions/runs/43949674151) aprobados. La última revisión de CodeRabbit, sobre `162df9c`, no dejó hallazgos. La revisión automática de Codex no se completó por falta de cupo.
 - PLT-051, CodeRabbit sobre `df7810d`. Se contrastaron cinco hallazgos con el código. Dos Major (permisos del rol de CI y recuento de writers) se corrigieron en `e5ccafc`; CodeRabbit marcó como resuelto el de la migración `0027`. Un Major confirmado: `limiter()` usaba un contador global, de modo que un cliente anónimo podía agotar la recuperación de todas las cuentas. Por decisión del operador, se sustituye por cubos por cuenta (organización y correo normalizado, 3 por minuto) y por token (5 por minuto). Los enlaces desconocidos o caducados se rechazan antes de scrypt, con un techo global secundario de 120 hashes por minuto que solo alcanza quien tiene un enlace vigente. No se limita por IP para no depender de la confianza en `X-Forwarded-For`. Los dos hallazgos Trivial se incorporaron como pruebas: límite de un minuto determinista y carrera entre `login` y restablecimiento. Las pruebas nuevas fallaron contra el limitador anterior y contra un `login` sin bloqueo, y pasaron con la corrección. En local pasaron `npm run check` y `smoke:restricted-runtime`.
 - PLT-051, CodeRabbit sobre `23e7087`. Un hallazgo Minor confirmado: la prueba de inundación podía fallar con una base de datos lenta, porque las entregas pendientes llenaban el límite de concurrencia y la solicitud de la cuenta objetivo se descartaba. La prueba espera ahora a que el pool quede inactivo, y el límite de entregas pendientes pasa de 8 a 32 como protección secundaria. No se reprodujo el fallo de temporización en local; la prueba pasó tres veces seguidas, igual que `npm run check` y `smoke:restricted-runtime`. Los hilos de revisión anteriores quedaron respondidos y resueltos.
 - PLT-051, CodeRabbit sobre `3a0def5`. Hallazgo confirmado: con las entregas pendientes en el tope, una solicitud legítima se descartaba igualmente pero consumía uno de los tres intentos por cuenta, así que tres reintentos durante la saturación bloqueaban la cuenta el resto del minuto. Ahora se comprueba primero el hueco y el intento solo se consume si la emisión arranca. `PasswordRecoveryOptions.maxPendingDeliveries` permite fijar el tope en pruebas. La prueba nueva retiene la única entrega con un bloqueo asesor, verifica tres solicitudes descartadas y comprueba que la cuarta, ya sin saturación, envía el correo. Falló por aserción con el orden anterior y pasó con la corrección. En local pasaron tres ejecuciones seguidas, `npm run check` y `smoke:restricted-runtime`.
@@ -104,10 +104,13 @@ Los cambios principales de PLT-010 están en
   atienden en esta actualización. La nueva revisión está pendiente al publicar
   el cambio. Consultar la PR para verificar el resultado del head vigente.
 
-- Auditoría continua de Platform: [.coderabbit.yaml](.coderabbit.yaml) configura
-  revisiones automáticas e incrementales en PR hacia `main`, incluidos borradores.
-  La configuración se incorpora con [PR #25][continuity-pr]. Comprobar
-  el resultado de cada revisión en su PR y SHA.
+- Auditoría continua de Platform: desde el 17 de noviembre de 2026 la revisión
+  automática de PR la hace Greptile, configurado en
+  [.greptile/config.json](.greptile/config.json) con revisión al abrir y en cada
+  push, sin aprobación automática ni reescritura de la descripción, y comentarios
+  en español. La revisión de borradores se activa en el panel de Greptile.
+  CodeRabbit dejó de usarse; sus revisiones anteriores siguen enlazadas como
+  evidencia histórica. Comprobar el resultado de cada revisión en su PR y SHA.
 
 - El [CI del head de PR #23][ci] y el [CI posterior a la integración][main-ci]
   terminaron con los cuatro jobs aprobados. Incluyen typecheck, build, regresión,
@@ -161,7 +164,7 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable. Revisar el CI del candidato y validar el correo real después de configurar un remitente de staging.
+PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. Falta la aceptación real en staging.
 
 Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
@@ -186,6 +189,8 @@ quedó cerrada en Foundation. PR #24 conserva el cambio del runbook
 junto con las correcciones que documenta. La base de #25 incluye la integración
 autorizada de #24.
 
+El 17 de noviembre de 2026 el operador decidió dejar CodeRabbit y usar Greptile como revisor automático. Greptile se limitó en GitHub a los repositorios de JEV y se desactivó el uso de datos para entrenamiento. El operador autorizó fusionar la PR #30.
+
 ## Higiene del repositorio
 
 El alcance de continuidad abarca el validador, su única llamada desde el CI,
@@ -195,12 +200,13 @@ El validador reutiliza NEXT_TASK y aplica un escaneo limitado a patrones comunes
 de credenciales. Se conserva la revisión histórica de higiene de PLT-010 en el
 [runbook](docs/GITHUB_APP.md#technical-checks-and-hygiene). Las referencias
 dinámicas requieren inspección de sus consumidores antes de proponer borrados.
+`.claude/agents/` define dos agentes de Claude Code: `lector-proyecto` (solo lectura) y `escritor-codigo`; no forman parte del producto.
 
 ## Siguiente paso exacto
 
-1. Comprobar que los cuatro jobs del CI de PR #30 pasan en el head vigente y contrastar los hallazgos de CodeRabbit con el código y las pruebas.
-2. Configurar Resend en staging (clave, remitente y dominio verificado) y desplegar la rama en JEV Staging.
-3. Probar en staging la entrega real del enlace, el restablecimiento, el consumo único y la revocación de sesiones. Después, registrar la evidencia y tramitar el cierre en Foundation.
+1. Desplegar `2d29785` en JEV Staging (Dokploy, rama `main`, On Push) con las variables `JEV_STAGING_RESET_*` y comprobar la entrega real del correo de recuperación.
+2. Verificar en staging el cambio de contraseña, el rechazo de la reutilización, la revocación de la sesión anterior y la caducidad del enlace; registrar la evidencia sin copiar enlaces ni credenciales.
+3. Registrar el cierre de PLT-051 en Foundation y comprobar NEXT_TASK.
 
 ## Instrucciones para continuar en otra sesión
 
