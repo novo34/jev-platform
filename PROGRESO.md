@@ -30,12 +30,12 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Obtener la autorización del operador para iniciar PLT-011 y comprobar NEXT_TASK antes de empezar."
+  "next_action": "Completar el análisis y el diseño de PLT-011 (aislamiento, límites, allowlist, secretos y limpieza) y obtener la decisión del operador antes de implementar."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. NEXT_TASK selecciona PLT-011, pendiente de autorización del operador. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. El operador autorizó el 2026-11-17 iniciar PLT-011 (Real Docker Workspace Worker); NEXT_TASK la seleccionó en Foundation `828af46`. Fase actual: análisis y diseño, sin código. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -192,6 +192,8 @@ autorizada de #24.
 
 El 17 de noviembre de 2026 el operador decidió dejar CodeRabbit y usar Greptile como revisor automático. Greptile se limitó en GitHub a los repositorios de JEV y se desactivó el uso de datos para entrenamiento. El operador autorizó fusionar la PR #30.
 
+El 17 de noviembre de 2026 el operador autorizó iniciar PLT-011 y fusionar la PR #33.
+
 ## Higiene del repositorio
 
 El alcance de continuidad abarca el validador, su única llamada desde el CI,
@@ -205,9 +207,9 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Cierre de PLT-051 completado en Foundation y sincronizado aquí.
-2. Obtener la autorización del operador para PLT-011 y comprobar NEXT_TASK antes de empezar.
-3. Valorar la mejora opcional de validar el enlace de recuperación al abrirlo.
+1. Analizar el worker, la cola, los tokens de GitHub y el despliegue.
+2. Presentar al operador un diseño con opciones para dónde se ejecutan los contenedores, límites, allowlist, secretos provisionales y retención.
+3. Implementar con pruebas tras la decisión.
 
 ## Instrucciones para continuar en otra sesión
 
