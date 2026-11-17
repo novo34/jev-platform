@@ -16,26 +16,26 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 
 ```json
 {
-  "foundation_sha": "7bdc8444d5698a590356c61233f6e2a148b43787",
-  "platform_sha": "2d29785b27cf96365bb77e5015fbc77528936cc9",
+  "foundation_sha": "828af46aace249e9a3c83a835215be5fcb2bd446",
+  "platform_sha": "e7302aeaba761c033104c7692ed510746476ef89",
   "last_completed": {
-    "task": "PLT-050",
+    "task": "PLT-051",
     "status": "DONE",
-    "pr": "https://github.com/novo34/jev-platform/pull/28",
-    "ci": "https://github.com/novo34/jev-platform/actions/runs/43879815373",
-    "review": "https://github.com/novo34/jev-platform/pull/28#pullrequestreview-5920599221"
+    "pr": "https://github.com/novo34/jev-platform/pull/30",
+    "ci": "https://github.com/novo34/jev-platform/actions/runs/43949674151",
+    "review": "https://github.com/novo34/jev-platform/pull/30#issuecomment-6920931740"
   },
   "next_task": {
-    "task": "PLT-051",
+    "task": "PLT-011",
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Integrar en Foundation el cierre de PLT-051 validado en staging y comprobar NEXT_TASK antes de iniciar la siguiente tarea."
+  "next_action": "Obtener la autorización del operador para iniciar PLT-011 y comprobar NEXT_TASK antes de empezar."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 está DONE en Foundation. NEXT_TASK seleccionó PLT-051 y el operador autorizó su inicio. PLT-051 está fusionado en `main` en `2d29785` ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026; queda el cierre canónico en Foundation. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. NEXT_TASK selecciona PLT-011, pendiente de autorización del operador. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -165,7 +165,7 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. La aceptación en staging está comprobada (17 de noviembre de 2026). Queda el cierre en Foundation y, como mejora opcional de UX, validar el enlace de recuperación al abrirlo.
+PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. La aceptación en staging está comprobada (17 de noviembre de 2026). El cierre en Foundation está completado. Queda la autorización de PLT-011 y, como mejora opcional de UX, validar el enlace de recuperación al abrirlo.
 
 Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
@@ -205,8 +205,8 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Integrar en Foundation el cierre de PLT-051 con la evidencia de staging y comprobar NEXT_TASK.
-2. Sincronizar la proyección de Foundation en PROGRESO.md y tramitar la siguiente tarea con autorización del operador.
+1. Cierre de PLT-051 completado en Foundation y sincronizado aquí.
+2. Obtener la autorización del operador para PLT-011 y comprobar NEXT_TASK antes de empezar.
 3. Valorar la mejora opcional de validar el enlace de recuperación al abrirlo.
 
 ## Instrucciones para continuar en otra sesión
@@ -238,7 +238,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
    queda fuera de ese control automático. CI valida el archivo sin escribirlo.
 
 [gate]: https://github.com/novo34/base-skills_klever/blob/main/docs/JEV_MASTER_BACKLOG.md
-[backlog]: https://github.com/novo34/base-skills_klever/blob/7bdc8444d5698a590356c61233f6e2a148b43787/backlog/jev-master-tasks.yaml
+[backlog]: https://github.com/novo34/base-skills_klever/blob/828af46aace249e9a3c83a835215be5fcb2bd446/backlog/jev-master-tasks.yaml
 [pr]: https://github.com/novo34/jev-platform/pull/23
 [ci]: https://github.com/novo34/jev-platform/actions/runs/40024024437
 [main-ci]: https://github.com/novo34/jev-platform/actions/runs/40024566808
