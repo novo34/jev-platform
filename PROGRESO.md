@@ -30,12 +30,12 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Aceptar PLT-051 en JEV Staging con entrega real por Resend, consumo único, revocación de sesiones y caducidad, y registrar el cierre en Foundation."
+  "next_action": "Integrar en Foundation el cierre de PLT-051 validado en staging y comprobar NEXT_TASK antes de iniciar la siguiente tarea."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 está DONE en Foundation. NEXT_TASK seleccionó PLT-051 y el operador autorizó su inicio. PLT-051 está fusionado en `main` en `2d29785` ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y pendiente de aceptación en staging. Staging aceptó la integración
+`DONE`. PLT-050 está DONE en Foundation. NEXT_TASK seleccionó PLT-051 y el operador autorizó su inicio. PLT-051 está fusionado en `main` en `2d29785` ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026; queda el cierre canónico en Foundation. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -70,6 +70,7 @@ Los cambios principales de PLT-010 están en
 
 ## Pruebas y evidencias
 
+- PLT-051, aceptación en JEV Staging (2026-11-17). El operador comprobó el despliegue de `f2f54c0` (main, que incluye `2d29785`) con Dokploy en Done. El correo de recuperación llegó desde `no-reply@notificaciones.nuvurent.com` (dominio verificado en Resend, sin seguimiento de enlaces, variables `JEV_STAGING_RESET_*` en Dokploy). El enlace permitió cambiar la contraseña y entrar con la nueva. Al reenviar el formulario con el mismo enlace, la web mostró «El enlace ya no es válido. Solicita otro desde el formulario de acceso.». Una sesión iniciada antes del cambio en otra pestaña pidió volver a entrar al recargar. Para la caducidad, con un enlace nuevo sin abrir, un UPDATE de `public.password_reset_tokens` en el contenedor postgres de staging adelantó `expires_at` solo de los tokens vigentes del usuario `00000000-0000-4000-8000-000000000002` (`UPDATE 1`), y al usar el enlace la web mostró el mismo mensaje de enlace no válido. No se copiaron enlaces ni credenciales a logs ni a la conversación. Observación de UX no bloqueante: la web no valida el enlace al abrirlo, muestra siempre el formulario y el rechazo llega al enviar (`apps/web/src/main.tsx:441-471`, `apps/api/src/password-recovery.ts:130-134`); no existe endpoint de comprobación sin consumo.
 - PLT-051, [PR #30](https://github.com/novo34/jev-platform/pull/30). El [CI de `df7810d`](https://github.com/novo34/jev-platform/actions/runs/43897717852) falló en `validate`: la prueba de migraciones no listaba `0027`. Al reproducirlo con PostgreSQL 16 local aparecieron tres fallos más del gate de producción: el rol de CI no recibía EXECUTE sobre `jev_issue_password_reset` y `jev_consume_password_reset`, el inventario de CHECK no incluía `password_reset_tokens_token_hash_check` y el smoke esperaba ocho writers controlados. La corrección concede ambos writers en `packages/db/security/provision-runtime-role.sql`, fija el predicado exacto de la CHECK, actualiza el recuento a diez y aplica `0027` en la prueba ACL. En local pasaron `npm run check`, `smoke:restricted-runtime` (10 writers, 27 migraciones) y el smoke de desarrollo. La PR se fusionó con squash en `2d29785` desde el head `162df9c`, con [CI del head](https://github.com/novo34/jev-platform/actions/runs/43948435717) y [CI de main](https://github.com/novo34/jev-platform/actions/runs/43949674151) aprobados. La última revisión de CodeRabbit, sobre `162df9c`, no dejó hallazgos. La revisión automática de Codex no se completó por falta de cupo.
 - PLT-051, CodeRabbit sobre `df7810d`. Se contrastaron cinco hallazgos con el código. Dos Major (permisos del rol de CI y recuento de writers) se corrigieron en `e5ccafc`; CodeRabbit marcó como resuelto el de la migración `0027`. Un Major confirmado: `limiter()` usaba un contador global, de modo que un cliente anónimo podía agotar la recuperación de todas las cuentas. Por decisión del operador, se sustituye por cubos por cuenta (organización y correo normalizado, 3 por minuto) y por token (5 por minuto). Los enlaces desconocidos o caducados se rechazan antes de scrypt, con un techo global secundario de 120 hashes por minuto que solo alcanza quien tiene un enlace vigente. No se limita por IP para no depender de la confianza en `X-Forwarded-For`. Los dos hallazgos Trivial se incorporaron como pruebas: límite de un minuto determinista y carrera entre `login` y restablecimiento. Las pruebas nuevas fallaron contra el limitador anterior y contra un `login` sin bloqueo, y pasaron con la corrección. En local pasaron `npm run check` y `smoke:restricted-runtime`.
 - PLT-051, CodeRabbit sobre `23e7087`. Un hallazgo Minor confirmado: la prueba de inundación podía fallar con una base de datos lenta, porque las entregas pendientes llenaban el límite de concurrencia y la solicitud de la cuenta objetivo se descartaba. La prueba espera ahora a que el pool quede inactivo, y el límite de entregas pendientes pasa de 8 a 32 como protección secundaria. No se reprodujo el fallo de temporización en local; la prueba pasó tres veces seguidas, igual que `npm run check` y `smoke:restricted-runtime`. Los hilos de revisión anteriores quedaron respondidos y resueltos.
@@ -164,7 +165,7 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. Falta la aceptación real en staging.
+PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. La aceptación en staging está comprobada (17 de noviembre de 2026). Queda el cierre en Foundation y, como mejora opcional de UX, validar el enlace de recuperación al abrirlo.
 
 Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
@@ -204,9 +205,9 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Desplegar `2d29785` en JEV Staging (Dokploy, rama `main`, On Push) con las variables `JEV_STAGING_RESET_*` y comprobar la entrega real del correo de recuperación.
-2. Verificar en staging el cambio de contraseña, el rechazo de la reutilización, la revocación de la sesión anterior y la caducidad del enlace; registrar la evidencia sin copiar enlaces ni credenciales.
-3. Registrar el cierre de PLT-051 en Foundation y comprobar NEXT_TASK.
+1. Integrar en Foundation el cierre de PLT-051 con la evidencia de staging y comprobar NEXT_TASK.
+2. Sincronizar la proyección de Foundation en PROGRESO.md y tramitar la siguiente tarea con autorización del operador.
+3. Valorar la mejora opcional de validar el enlace de recuperación al abrirlo.
 
 ## Instrucciones para continuar en otra sesión
 
