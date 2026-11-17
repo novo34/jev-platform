@@ -30,12 +30,12 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Analizar PLT-012 (Permanent Staging Engine) y presentar al operador un diseño con decisiones antes de implementar."
+  "next_action": "Implementar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md, empezando por la integración en staging_branch."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). El operador autorizó el 2026-11-17 iniciar PLT-012. Fase actual: análisis y diseño. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). El operador autorizó el 2026-11-17 iniciar PLT-012. Fase actual: diseño aprobado (decisiones del 2026-11-17 en [PLT-012](docs/architecture/PLT-012-PERMANENT-STAGING.md)); implementación pendiente. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -200,6 +200,8 @@ El 17 de noviembre de 2026 el operador autorizó fusionar la PR #34 y la PR #27 
 
 El 17 de noviembre de 2026 el operador decidió para PLT-011 (ver [diseño](docs/architecture/PLT-011-WORKSPACE-ENGINE.md)): (1) el ejecutor se prueba con Docker real en el CI de GitHub y no se activa en JEV Staging; su activación en un servidor o VM dedicado es posterior; (2) el ejecutor clona fuera del contenedor, que tiene red solo durante `npm ci` y después `--network none`; (3) límites por defecto de 1 CPU, 2 GB de RAM, 256 procesos, 15 min por comando y 60 min por tarea; (4) sin retención: el workspace se destruye siempre al terminar.
 
+El 17 de noviembre de 2026 el operador decidió para PLT-012 (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md)): (1) alcance por fases: primero el motor probado en CI con un Dokploy simulado y después, como paso aparte aprobado (R4), el staging real de Espacore, con cuya evidencia se cierra PLT-012; (2) proveedor: API de Dokploy detrás del contrato neutral de FND-026, con la API exacta verificada contra la instancia antes del paso real; (3) un contenedor PostgreSQL propio por proyecto con volumen propio y roles owner/runtime separados, sin credenciales ni datos de producción; (4) nueva operación GitHub controlada que integra la rama de la tarea en `staging_branch` con las guardas de PLT-010. Los valores por defecto (dominio, API key cifrada, migraciones con copia previa, seeds sintéticos, E2E mínimo) quedan pendientes de confirmar antes del paso real.
+
 ## Higiene del repositorio
 
 El alcance de continuidad abarca el validador, su única llamada desde el CI,
@@ -213,9 +215,14 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-1. Analizar PLT-012.
-2. Presentar diseño con opciones al operador.
-3. Implementar con pruebas tras la decisión.
+PLT-012 (diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/architecture/PLT-012-PERMANENT-STAGING.md)):
+
+1. HECHO: diseño y decisiones del operador del 2026-11-17.
+2. Operación GitHub de integración en `staging_branch` (mismas guardas que PLT-010).
+3. Adaptador Dokploy + plantilla de Compose.
+4. Orquestador + job `STAGING_DEPLOY` + deployments controlados.
+5. Pruebas de CI (Dokploy simulado, PostgreSQL efímero, GitHub simulado).
+6. Paso real con Espacore (R4, aprobación explícita del operador); con esa evidencia se cierra PLT-012.
 
 Historial de PLT-011 (cerrada):
 
