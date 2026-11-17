@@ -472,12 +472,45 @@ describe("deployed revision integrity (build from the exact SHA)", () => {
       expect(mock.calls.some((c) => c.path === "compose.one")).toBe(true);
     });
 
-    it("does not adopt a compose whose name matches but whose real appName differs", async () => {
-      mock.composes.set("cmp_y", { composeId: "cmp_y", name: "jev-stg-espacore", appName: "jev-stg-espacore-zzz", environmentId: "env_1", composeFile: "", env: "", composeStatus: "done" });
-      const result = await adapter().deploy(request());
-      expect(result.ok).toBe(true);
-      expect(mock.composes.get("cmp_y")!.env).toBe("");
-      expect(mock.composes.size).toBe(2);
+    it("does not adopt a compose whose name matches but whose real appName does not fit the pattern", async () => {
+      for (const [index, appName] of ["jev-stg-espacore2", "jev-stg-espacore-ABC", "jev-stg-espacore-abcdefghijklm", "jev-stg-other-abc123"].entries()) {
+        mock.composes.clear();
+        mock.composes.set("cmp_y", { composeId: "cmp_y", name: "jev-stg-espacore", appName, environmentId: "env_1", composeFile: "", env: "", composeStatus: "done" });
+        const result = await adapter().deploy(request());
+        expect(result, appName).toMatchObject({ ok: true, detail: "created_and_deployed" });
+        expect(mock.composes.get("cmp_y")!.env, String(index)).toBe("");
+        expect(mock.composes.size).toBe(2);
+      }
+    });
+
+    it("does not adopt a compose with a fitting suffixed appName but without owner marker", async () => {
+      mock.composes.set("cmp_y", { composeId: "cmp_y", name: "jev-stg-espacore", appName: "jev-stg-espacore-dotuoz", environmentId: "env_1", composeFile: "", env: "FOO=bar", composeStatus: "done" });
+      expect(await adapter().deploy(request())).toEqual({ ok: false, detail: "staging_resource_owned_by_other_project" });
+      expect(writes()).toEqual([]);
+    });
+
+    it("fails explicitly when more than one compose is a valid candidate", async () => {
+      await adapter().deploy(request());
+      const first = [...mock.composes.values()][0]!;
+      mock.composes.set("cmp_dup", { ...first, composeId: "cmp_dup", appName: "jev-stg-espacore-aaaaaa" });
+      mock.calls.length = 0;
+      expect(await adapter().deploy(request())).toEqual({ ok: false, detail: "staging_compose_ambiguous" });
+      expect(await adapter().verifyDatabase(request())).toEqual({ ok: false, detail: "staging_compose_ambiguous" });
+      expect(writes()).toEqual([]);
+    });
+
+    it("works with the random appName suffix Dokploy adds on create (verifyDatabase, probe, redeploy without duplicate)", async () => {
+      const first = await adapter().deploy(request());
+      expect(first.ok).toBe(true);
+      const compose = [...mock.composes.values()][0]!;
+      expect(compose.appName).toMatch(/^jev-stg-espacore-[a-z0-9]{6}$/);
+      expect(first.metadata?.appName).toBe(compose.appName);
+      expect(await adapter().verifyDatabase(request())).toMatchObject({ ok: true, detail: "database_isolated" });
+      expect(await adapter().healthCheck(request())).toMatchObject({ ok: true, detail: "health_ok" });
+      mock.calls.length = 0;
+      expect(await adapter().deploy(request())).toMatchObject({ ok: true, detail: "reused_and_redeployed", metadata: { created: false, composeId: compose.composeId } });
+      expect(mock.composes.size).toBe(1);
+      expect(posts()).not.toContain("compose.create");
     });
 
     it("does not let extra env or secret refs override JEV_STAGING_OWNER", async () => {

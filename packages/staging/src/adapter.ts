@@ -1,7 +1,7 @@
 import type { DokployClient, FetchLike } from "./client.js";
 import { REVISION_ENV, renderStagingCompose } from "./compose-template.js";
 import { assertStagingEnv, randomPassword, StagingEnvError } from "./env.js";
-import { DokployError, StagingOwnershipError } from "./errors.js";
+import { DokployError, StagingAmbiguousComposeError, StagingOwnershipError } from "./errors.js";
 import {
   composeCreateBody,
   composeUpdateBody,
@@ -155,7 +155,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       const redeploy = !created && existing?.composeStatus !== "idle";
       await this.cfg.client.post(redeploy ? ENDPOINTS.composeRedeploy : ENDPOINTS.composeDeploy, { composeId });
       const final = await this.waitForDeployment(composeId);
-      const metadata = { composeId, appName, host, created, domainCreated, redeployed: redeploy, branch: request.stagingBranch, revision, status: final.composeStatus };
+      const metadata = { composeId, appName: final.appName, host, created, domainCreated, redeployed: redeploy, branch: request.stagingBranch, revision, status: final.composeStatus };
       if (final.composeStatus === "error") return { ok: false, detail: "deployment_failed", metadata };
       if (final.composeStatus !== "done") return { ok: false, detail: "deployment_timeout", metadata };
       return { ok: true, detail: created ? "created_and_deployed" : "reused_and_redeployed", metadata };
@@ -238,6 +238,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       if (error instanceof DokployError) return { ok: false, detail: `dokploy_${error.code}`, metadata: { code: error.code, status: error.status } };
       if (error instanceof StagingEnvError) return { ok: false, detail: error.code };
       if (error instanceof StagingOwnershipError) return { ok: false, detail: error.code };
+      if (error instanceof StagingAmbiguousComposeError) return { ok: false, detail: error.code };
       throw error;
     }
   }
@@ -294,15 +295,16 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
    */
   private async findCompose(appName: string, request: StagingDeploymentRequest): Promise<ComposeDetails | null> {
     // environment.one does not expose appName: candidates are located by name (the adapter creates with name = appName)
-    // and confirmed with compose.one (real appName) before anything is adopted or used.
-    let compose: ComposeDetails | null = null;
+    // and confirmed with compose.one. Dokploy stores the real appName with a random suffix ("<appName>-<6 chars>"),
+    // so the confirmed appName must be the expected one or the expected one plus "-" and a short [a-z0-9] suffix.
+    const fits = new RegExp(`^${appName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(-[a-z0-9]{1,12})?$`);
+    const candidates: ComposeDetails[] = [];
     for (const entry of (await this.listComposes()).filter((candidate) => candidate.name === appName)) {
       const details = parseCompose(await this.cfg.client.get(ENDPOINTS.composeOne, { composeId: entry.composeId }));
-      if (details.appName === appName) {
-        compose = details;
-        break;
-      }
+      if (fits.test(details.appName)) candidates.push(details);
     }
+    if (candidates.length > 1) throw new StagingAmbiguousComposeError(candidates.length);
+    const compose = candidates[0] ?? null;
     if (!compose) return null;
     const owner = parseEnv(compose.env)[OWNER_ENV];
     if (owner === undefined ? compose.env.trim() !== "" : owner !== ownerOf(request)) throw new StagingOwnershipError();
