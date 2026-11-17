@@ -1,4 +1,9 @@
-import type { Pool } from "pg";
+import type { Pool, QueryResult, QueryResultRow } from "pg";
+
+/** Anything that can run a query: a `Pool` or a reserved `PoolClient`. */
+export interface Queryable {
+  query<R extends QueryResultRow = any>(text: string, values?: any[]): Promise<QueryResult<R>>;
+}
 
 export interface CreateDeploymentInput {
   projectId: string;
@@ -18,7 +23,7 @@ export interface CreateDeploymentInput {
  * Callers must authenticate and authorize the user/job before invoking it.
  */
 export async function createDeployment(
-  pool: Pool,
+  pool: Queryable,
   input: CreateDeploymentInput
 ): Promise<string> {
   const result = await pool.query<{ id: string }>(
@@ -27,6 +32,34 @@ export async function createDeployment(
       input.projectId, input.repositoryId, input.environmentId,
       input.taskId ?? null, input.revision, input.status, input.url ?? null,
       input.provider ?? null, JSON.stringify(input.metadata ?? {})
+    ]
+  );
+  return result.rows[0].id;
+}
+
+export interface CreateEnvironmentInput {
+  projectId: string;
+  repositoryId: string;
+  kind: "development" | "staging" | "production";
+  name: string;
+  url?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Restricted-runtime environment writer (`jev_create_environment`). The SQL
+ * function validates scope and lets the staging triggers decide. Callers must
+ * authenticate and authorize the user/job before invoking it.
+ */
+export async function createEnvironment(
+  pool: Queryable,
+  input: CreateEnvironmentInput
+): Promise<string> {
+  const result = await pool.query<{ id: string }>(
+    "SELECT jev_create_environment($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::jsonb) AS id",
+    [
+      input.projectId, input.repositoryId, input.kind, input.name,
+      input.url ?? null, JSON.stringify(input.metadata ?? {})
     ]
   );
   return result.rows[0].id;

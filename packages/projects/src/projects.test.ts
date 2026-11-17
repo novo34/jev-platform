@@ -225,4 +225,51 @@ describe("ProjectRegistryService", () => {
       code: "INVALID_PROJECT"
     });
   });
+
+  it("rejects a staging host already used by another repository or project, in any case or form", async () => {
+    const host = `shared-${randomUUID().slice(0, 8)}.staging.example.test`;
+    const project = (url: string, name = "Shared Staging") => registry.register({
+      organizationId, name, repositories: [{ fullName: `novo34/shared-${randomUUID()}`, role: "other", primary: true, stagingUrl: url }]
+    });
+    await project(`https://${host}`);
+    for (const url of [`https://${host}`, `https://${host.toUpperCase()}/`, `https://${host}:8443/x`]) {
+      await expect(project(url)).rejects.toMatchObject({ code: "STAGING_URL_IN_USE" });
+    }
+    await expect(registry.register({
+      organizationId, name: "Twice in one project", repositories: [
+        { fullName: `novo34/a-${randomUUID()}`, role: "frontend", primary: true, stagingUrl: `https://dup-${host}` },
+        { fullName: `novo34/b-${randomUUID()}`, role: "backend", stagingUrl: `https://DUP-${host}` }
+      ]
+    })).rejects.toMatchObject({ code: "STAGING_URL_IN_USE" });
+    const count = await pool.query("SELECT count(*)::int AS n FROM projects WHERE organization_id=$1 AND name IN ('Shared Staging','Twice in one project')", [organizationId]);
+    expect(count.rows[0].n).toBe(1);
+    await expect(project(`https://other-${host}`)).resolves.toBeDefined();
+  });
+
+  it("serializes concurrent registrations of the same staging host", async () => {
+    const host = `race-${randomUUID().slice(0, 8)}.staging.example.test`;
+    const attempt = () => registry.register({
+      organizationId, name: "Race Staging", repositories: [{ fullName: `novo34/race-${randomUUID()}`, role: "other", primary: true, stagingUrl: `https://${host}` }]
+    });
+    const results = await Promise.allSettled([attempt(), attempt(), attempt()]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    for (const r of results.filter((r) => r.status === "rejected")) expect((r as PromiseRejectedResult).reason).toMatchObject({ code: "STAGING_URL_IN_USE" });
+  });
+
+  it("orders host locks so concurrent registrations with hosts A/B and B/A never deadlock", async () => {
+    const a = `a-${randomUUID().slice(0, 8)}.staging.example.test`, b = `b-${randomUUID().slice(0, 8)}.staging.example.test`;
+    const attempt = (first: string, second: string) => registry.register({
+      organizationId, name: "Order Staging", repositories: [
+        { fullName: `novo34/o1-${randomUUID()}`, role: "frontend", primary: true, stagingUrl: `https://${first}` },
+        { fullName: `novo34/o2-${randomUUID()}`, role: "backend", stagingUrl: `https://${second}` }
+      ]
+    });
+    for (let round = 0; round < 5; round++) {
+      const [x, y] = [`${round}${a}`, `${round}${b}`];
+      const results = await Promise.allSettled([attempt(x, y), attempt(y, x)]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+      expect(rejected.reason).toMatchObject({ code: "STAGING_URL_IN_USE" });
+    }
+  });
 });

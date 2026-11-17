@@ -139,6 +139,11 @@ describe("restricted deployment writer", () => {
         [schema]
       );
       expect(removedSchemaCreate.rows[0].allowed).toBe(false);
+      // The staging registry reserves a staging with a session advisory lock (system functions, no grant needed).
+      const advisory = await owner.query(
+        "SELECT pg_try_advisory_lock(hashtextextended('runtime-role-test', 53)) AS locked, pg_advisory_unlock(hashtextextended('runtime-role-test', 53)) AS unlocked"
+      );
+      expect(advisory.rows[0]).toEqual({ locked: true, unlocked: true });
       await owner.query("ROLLBACK");
 
       await owner.query("BEGIN");
