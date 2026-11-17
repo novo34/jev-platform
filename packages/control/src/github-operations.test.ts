@@ -196,6 +196,38 @@ describe("GitHub operations (real PostgreSQL, simulated GitHub)", () => {
     expect(calls).toHaveLength(count);
   });
 
+  it("issues a read-only single-repository clone token only for a repository of the project, never leaking it", async () => {
+    const secret = "ghs_CLONE_SECRET_TOKEN_123456";
+    const sent: Array<{ url: string; body: any }> = [];
+    let respondPermissions: Record<string, string> | undefined;
+    const app = new GitHubAppClient({ appId: "123", privateKey: key }, { fetch: async (url, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      sent.push({ url: String(url), body });
+      return Response.json({ token: secret, expires_at: new Date(Date.now() + 3_600_000).toISOString(), repositories: [{ id: 42 }],
+        permissions: respondPermissions ?? body.permissions });
+    } });
+    const operations = new GitHubOperations(pool, app);
+    const issued = await operations.cloneToken(projectId, "OWNER/op-repo");
+    expect(issued.token).toBe(secret);
+    expect(Date.parse(issued.expiresAt)).toBeGreaterThan(Date.now());
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.url).toBe(`https://api.github.com/app/installations/${installationId}/access_tokens`);
+    expect(sent[0]!.body).toEqual({ repository_ids: [42], permissions: { contents: "read" } });
+    // Repository of another project/tenant, unknown repository and malformed names are rejected before any GitHub call.
+    for (const [project, repo] of [[projectId, "foreign/repo"], [foreignProjectId, "owner/op-repo"], [projectId, "owner/other"], [projectId, "../x"]] as const) {
+      const error = await operations.cloneToken(project, repo).catch((e) => e);
+      expect(error).toMatchObject({ name: "GitHubError" });
+      expect(String(error.message) + JSON.stringify(error)).not.toContain(secret);
+    }
+    await expect(operations.cloneToken("not-a-uuid", "owner/op-repo")).rejects.toMatchObject({ code: "GITHUB_INVALID_REQUEST" });
+    expect(sent).toHaveLength(1);
+    // GitHub granting more than requested is refused and the token does not appear in the error.
+    respondPermissions = { contents: "write" };
+    const widened = await operations.cloneToken(projectId, "owner/op-repo").catch((e) => e);
+    expect(widened).toMatchObject({ code: "GITHUB_FORBIDDEN" });
+    expect(JSON.stringify(widened) + widened.message + String(widened.stack)).not.toContain(secret);
+  });
+
   it("derives the task branch and base from canonical state; never accepts caller branch or verifier booleans", async () => {
     await execute("GITHUB_CREATE_BRANCH", { taskId });
     expect(calls.find((call) => call.url.endsWith("/git/refs"))?.body).toEqual({ ref: `refs/heads/feat/jev-${taskId}`, sha: baseSha });

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { authorizeProject, lockActorAuthorization, type AuthenticatedUser, type ProjectPermission } from "@jev/auth";
 import { z } from "zod";
-import { GitHubAppClient, GitHubError, assertTaskBranch, type GitHubRepositoryScope } from "./github-app.js";
+import { GitHubAppClient, GitHubError, assertGitHubRepositoryName, assertTaskBranch, type GitHubRepositoryScope } from "./github-app.js";
 import type { ControlCommand, ControlContext } from "./types.js";
 import { recordAudit } from "./audit.js";
 import { GitHubTechnicalVerification } from "./github-verification.js";
@@ -61,6 +61,29 @@ export class GitHubOperations {
     return { installationId: parse(number, Number(row.installation_id)),
       repositoryId: parse(number, Number(row.external_repository_id)), fullName: row.full_name,
       organizationId: context.actor.organizationId, repositoryKey, defaultBranch: row.default_branch, stagingBranch: row.staging_branch };
+  }
+
+  /**
+   * Read-only clone token for a repository registered to the project (system call for the
+   * workspace job; no actor). The repository must belong to the project, be linked to an
+   * installation of the project's organization and the project must be ACTIVE.
+   * The token is returned to the caller only; it is never logged, audited or stored.
+   */
+  async cloneToken(projectId: string, repoFullName: string): Promise<{ token: string; expiresAt: string }> {
+    const project = parse(z.uuid(), projectId);
+    assertGitHubRepositoryName(repoFullName);
+    const result = await this.pool.query(
+      `SELECT r.id,r.full_name,r.external_repository_id,g.installation_id
+        FROM repositories r JOIN projects p ON p.id=r.project_id
+        JOIN github_repository_installations l ON l.repository_id=r.id
+        JOIN github_installations g ON g.installation_id=l.installation_id AND g.organization_id=p.organization_id
+        WHERE r.project_id=$1 AND lower(r.full_name)=lower($2) AND p.status='ACTIVE'`,
+      [project, repoFullName]
+    );
+    if (result.rows.length !== 1) throw new GitHubError("GITHUB_FORBIDDEN");
+    const row = result.rows[0];
+    return this.app.cloneToken({ installationId: parse(number, Number(row.installation_id)),
+      repositoryId: parse(number, Number(row.external_repository_id)), fullName: row.full_name });
   }
 
   private async task(db: Pool | PoolClient, command: ControlCommand, scope: Scope, taskId: string, merging = false): Promise<string> {

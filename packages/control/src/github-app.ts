@@ -189,6 +189,18 @@ export class GitHubAppClient {
   }
 
   private async token(scope: GitHubRepositoryScope, permissions: GitHubPermissions): Promise<string> {
+    return (await this.issueToken(scope, permissions)).token;
+  }
+
+  /**
+   * Read-only clone credential for exactly one repository (`contents: read`). The caller
+   * must hand it only to the workspace clone helper and must never log or persist it.
+   */
+  async cloneToken(scope: GitHubRepositoryScope): Promise<{ token: string; expiresAt: string }> {
+    return this.issueToken(scope, { contents: "read" });
+  }
+
+  private async issueToken(scope: GitHubRepositoryScope, permissions: GitHubPermissions): Promise<{ token: string; expiresAt: string }> {
     repositoryPath(scope);
     const result = await this.request<{
       token: string;
@@ -213,7 +225,7 @@ export class GitHubAppClient {
       throw new GitHubError("GITHUB_FORBIDDEN");
     }
     // No persistent cache. Each operation obtains a fresh repository-scoped token.
-    return result.token;
+    return { token: result.token, expiresAt: new Date(expiry).toISOString() };
   }
 
   async repository(scope: GitHubRepositoryScope): Promise<{ id: number; full_name: string; default_branch: string }> {

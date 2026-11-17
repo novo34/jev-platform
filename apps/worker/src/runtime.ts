@@ -1,13 +1,26 @@
 import type { QueueJob } from "@jev/queue";
 import { QueueService } from "@jev/queue";
 
-export type JobHandler = (job: QueueJob) => Promise<unknown>;
+export interface JobContext {
+  /** Aborted when the job times out or the worker stops waiting for it. */
+  signal: AbortSignal;
+}
+
+export type JobHandler = (job: QueueJob, context: JobContext) => Promise<unknown>;
 
 export interface WorkerRuntimeOptions {
   workerId: string;
   queue?: string;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
+  /** Maximum duration of one job handler. Default: 60 minutes. */
+  jobTimeoutMs?: number;
+  /** Maximum time `stop()` waits for the in-flight job. Default: 30 seconds. */
+  stopTimeoutMs?: number;
+  /** A RUNNING job whose worker has no heartbeat for this long is recovered. Default: 60 seconds. */
+  staleWorkerAfterMs?: number;
+  /** How often orphaned jobs are recovered. Default: 30 seconds. */
+  recoveryIntervalMs?: number;
   handlers?: Record<string, JobHandler>;
 }
 
@@ -15,6 +28,13 @@ export class WorkerRuntime {
   private running = false;
   private pollTimer?: NodeJS.Timeout;
   private heartbeatTimer?: NodeJS.Timeout;
+  private recoveryTimer?: NodeJS.Timeout;
+  private inFlight?: Promise<boolean>;
+  private inFlightAbort?: AbortController;
+  private readonly jobTimeoutMs: number;
+  private readonly stopTimeoutMs: number;
+  private readonly staleWorkerAfterMs: number;
+  private readonly recoveryIntervalMs: number;
   private readonly queueName: string;
   private readonly pollIntervalMs: number;
   private readonly heartbeatIntervalMs: number;
@@ -27,6 +47,10 @@ export class WorkerRuntime {
     this.queueName = options.queue ?? "default";
     this.pollIntervalMs = options.pollIntervalMs ?? 500;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 5000;
+    this.jobTimeoutMs = options.jobTimeoutMs ?? 60 * 60 * 1000;
+    this.stopTimeoutMs = options.stopTimeoutMs ?? 30_000;
+    this.staleWorkerAfterMs = options.staleWorkerAfterMs ?? 60_000;
+    this.recoveryIntervalMs = options.recoveryIntervalMs ?? 30_000;
     this.handlers = options.handlers ?? {
       NOOP: async (job) => ({ processedJobId: job.id })
     };
@@ -39,27 +63,88 @@ export class WorkerRuntime {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    // A new process has nothing in flight: jobs still locked by this id belong to a previous
+    // process. Release them before registerWorker renews the heartbeat and makes them look alive.
+    await this.queue.releaseWorkerJobs(this.options.workerId);
     await this.queue.registerWorker(this.options.workerId);
 
     this.pollTimer = setInterval(() => {
-      void this.pollOnce();
+      // A late failure (e.g. the pool closed after a stop timeout) must not become an unhandled rejection.
+      this.pollOnce().catch(() => undefined);
     }, this.pollIntervalMs);
 
     this.heartbeatTimer = setInterval(() => {
-      void this.queue.heartbeat(this.options.workerId);
+      this.queue.heartbeat(this.options.workerId).catch(() => undefined);
     }, this.heartbeatIntervalMs);
+
+    this.recoveryTimer = setInterval(() => {
+      void this.recoverOnce();
+    }, this.recoveryIntervalMs);
+    void this.recoverOnce();
+  }
+
+  async recoverOnce(): Promise<number> {
+    try {
+      return await this.queue.recoverStaleJobs(this.staleWorkerAfterMs);
+    } catch {
+      return 0;
+    }
   }
 
   async stop(): Promise<void> {
     this.running = false;
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+
+    const inFlight = this.inFlight;
+    if (inFlight) {
+      let waitTimer: NodeJS.Timeout | undefined;
+      const finished = await Promise.race([
+        inFlight.then(
+          () => true,
+          () => true
+        ),
+        new Promise<boolean>((resolve) => {
+          waitTimer = setTimeout(() => resolve(false), this.stopTimeoutMs);
+        })
+      ]);
+      if (waitTimer) clearTimeout(waitTimer);
+      if (!finished) {
+        this.inFlightAbort?.abort(new Error("worker_stopping"));
+        // Give the handler (workspace cleanup) and runOnce (final queue.fail/complete) a second,
+        // bounded window so the caller does not close the pool underneath them. If even that
+        // expires, the job stays RUNNING and orphan recovery requeues it once the heartbeat lapses.
+        let graceTimer: NodeJS.Timeout | undefined;
+        await Promise.race([
+          inFlight.then(
+            () => undefined,
+            () => undefined
+          ),
+          new Promise<void>((resolve) => {
+            graceTimer = setTimeout(resolve, this.stopTimeoutMs);
+          })
+        ]);
+        if (graceTimer) clearTimeout(graceTimer);
+      }
+    }
+
     await this.queue.stopWorker(this.options.workerId);
   }
 
   async pollOnce(): Promise<boolean> {
-    if (!this.running) return false;
+    if (!this.running || this.inFlight) return false;
 
+    const run = this.runOnce();
+    this.inFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.inFlight === run) this.inFlight = undefined;
+    }
+  }
+
+  private async runOnce(): Promise<boolean> {
     const job = await this.queue.claimNext(
       this.options.workerId,
       this.queueName
@@ -78,11 +163,29 @@ export class WorkerRuntime {
       return true;
     }
 
+    const abort = new AbortController();
+    this.inFlightAbort = abort;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), this.jobTimeoutMs);
+    });
+
     try {
-      const result = await handler(job);
-      await this.queue.complete(this.options.workerId, job.id, result);
+      const outcome = await Promise.race([
+        handler(job, { signal: abort.signal }).then((result) => ({ result })),
+        timeout
+      ]);
+      if (outcome === "timeout") {
+        abort.abort(new Error("job_timeout"));
+        await this.queue.fail(this.options.workerId, job, new Error("job_timeout"));
+      } else {
+        await this.queue.complete(this.options.workerId, job.id, outcome.result);
+      }
     } catch (error) {
       await this.queue.fail(this.options.workerId, job, error);
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.inFlightAbort = undefined;
     }
 
     return true;
