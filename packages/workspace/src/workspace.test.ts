@@ -104,6 +104,17 @@ describe("create", () => {
     expect(clone).toContain("/tmp/src:/src:ro");
     expect(fake.callsMatching(["create"])[0]!.args.join(" ")).not.toContain("/tmp/src");
   });
+
+  it("allows safe.directory only for the test-only local clone, not the HTTPS clone", async () => {
+    const local = fakeDocker();
+    await executor(local, { unsafeLocalCloneSourceForTests: { hostDir: "/tmp/src" } }).create(spec());
+    const localArgs = local.callsMatching(["run"])[0]!.args;
+    expect(localArgs).toContain("file:///src");
+    expect(localArgs.join("\n")).toContain("safe.directory");
+    const https = fakeDocker();
+    await executor(https).create(spec());
+    expect(https.callsMatching(["run"])[0]!.args.join("\n")).not.toContain("safe.directory");
+  });
 });
 
 describe("install and run", () => {

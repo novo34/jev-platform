@@ -79,6 +79,12 @@ export const CLONE_SCRIPT = [
   `chown -R ${CONTAINER_USER} ${WORKSPACE_DIR}`
 ].join("\n");
 
+/**
+ * Test-only: the local file:// clone spawns upload-pack, and git strips `-c`/GIT_CONFIG_PARAMETERS from
+ * that child (local_repo_env), so safe.directory must be in the global config (HOME=/tmp tmpfs).
+ */
+export const LOCAL_CLONE_SCRIPT = ["set -eu", "git config --global --add safe.directory '*'", CLONE_SCRIPT].join("\n");
+
 export class WorkspaceExecutor {
   private readonly docker: DockerCli;
   private readonly image: string;
@@ -174,8 +180,7 @@ export class WorkspaceExecutor {
       ...limitFlags, "-e", "HOME=/tmp",
       "-v", `${ws.volumeName}:${WORKSPACE_DIR}`,
       ...(local ? ["-v", `${local.hostDir}:/src:ro`] : []),
-      "--entrypoint", "sh", this.gitImage, "-c", CLONE_SCRIPT, "sh",
-      ...(local ? ["-c", "safe.directory=*"] : []),
+      "--entrypoint", "sh", this.gitImage, "-c", local ? LOCAL_CLONE_SCRIPT : CLONE_SCRIPT, "sh",
       "clone", "--depth", "1", "--branch", spec.branch, "--", cloneUrl, WORKSPACE_DIR
     ];
     // The token travels only on stdin (first line), never in argv, env or files.
