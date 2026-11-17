@@ -164,6 +164,9 @@ export class ProjectRegistryService {
         if (!host) continue;
         if (hosts.has(host)) throw new ProjectRegistryError("STAGING_URL_IN_USE", "staging URL is already in use");
         hosts.add(host);
+      }
+      // Locks are taken in sorted order so concurrent registrations (A/B and B/A) cannot deadlock (40P01).
+      for (const host of [...hosts].sort()) {
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 52))", [host]);
         const taken = await client.query(
           `SELECT 1 FROM repositories WHERE staging_url IS NOT NULL AND ${STORED_HOST_SQL} = $1 LIMIT 1`, [host]);

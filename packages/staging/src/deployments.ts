@@ -1,4 +1,4 @@
-import { createDeployment, createEnvironment, setDeploymentStatuses } from "@jev/db";
+import { createDeployment, createEnvironment, setDeploymentStatuses, type Queryable } from "@jev/db";
 import type { Pool, PoolClient } from "pg";
 import type { DeploymentRegistry } from "./orchestrator.js";
 
@@ -11,7 +11,7 @@ export const STAGING_DEPLOYMENT_PROVIDER = "dokploy";
  * write goes through the controlled SQL function.
  */
 export async function ensureStagingEnvironment(
-  pool: Pool,
+  pool: Queryable,
   input: { projectId: string; repositoryId: string; stagingUrl: string }
 ): Promise<string> {
   const find = async (): Promise<string | null> => {
@@ -58,11 +58,14 @@ export class PgDeploymentRegistry implements DeploymentRegistry {
 
   async begin({ request, revision }: Parameters<DeploymentRegistry["begin"]>[0]): Promise<{ deploymentId: string; environmentId: string; busy?: boolean }> {
     const lock = await this.reserve(request.projectId, request.repositoryId);
+    // The reserved connection serves every query of the pipeline (a pool with `max: 1` would otherwise
+    // wait forever for a second connection). When busy there is no reservation and the pool is used.
+    const db: Queryable = lock ?? this.pool;
     try {
-      const environmentId = await ensureStagingEnvironment(this.pool, {
+      const environmentId = await ensureStagingEnvironment(db, {
         projectId: request.projectId, repositoryId: request.repositoryId, stagingUrl: request.stagingUrl
       });
-      const deploymentId = await createDeployment(this.pool, {
+      const deploymentId = await createDeployment(db, {
         projectId: request.projectId, repositoryId: request.repositoryId, environmentId, taskId: request.taskId,
         revision, status: "RUNNING", url: request.stagingUrl, provider: STAGING_DEPLOYMENT_PROVIDER,
         metadata: { pipeline: "STAGING_DEPLOY", stagingBranch: request.stagingBranch, sourceBranch: request.sourceBranch }
@@ -79,7 +82,7 @@ export class PgDeploymentRegistry implements DeploymentRegistry {
     const lock = this.held.get(input.deploymentId);
     this.held.delete(input.deploymentId);
     try {
-      const updated = await setDeploymentStatuses(this.pool, input.projectId, [input.deploymentId], input.status);
+      const updated = await setDeploymentStatuses(lock ?? this.pool, input.projectId, [input.deploymentId], input.status);
       if (updated !== 1) throw new Error("deployment status update did not apply");
     } finally {
       if (lock) await release(lock);

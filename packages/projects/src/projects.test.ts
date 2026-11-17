@@ -255,4 +255,21 @@ describe("ProjectRegistryService", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     for (const r of results.filter((r) => r.status === "rejected")) expect((r as PromiseRejectedResult).reason).toMatchObject({ code: "STAGING_URL_IN_USE" });
   });
+
+  it("orders host locks so concurrent registrations with hosts A/B and B/A never deadlock", async () => {
+    const a = `a-${randomUUID().slice(0, 8)}.staging.example.test`, b = `b-${randomUUID().slice(0, 8)}.staging.example.test`;
+    const attempt = (first: string, second: string) => registry.register({
+      organizationId, name: "Order Staging", repositories: [
+        { fullName: `novo34/o1-${randomUUID()}`, role: "frontend", primary: true, stagingUrl: `https://${first}` },
+        { fullName: `novo34/o2-${randomUUID()}`, role: "backend", stagingUrl: `https://${second}` }
+      ]
+    });
+    for (let round = 0; round < 5; round++) {
+      const [x, y] = [`${round}${a}`, `${round}${b}`];
+      const results = await Promise.allSettled([attempt(x, y), attempt(y, x)]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+      expect(rejected.reason).toMatchObject({ code: "STAGING_URL_IN_USE" });
+    }
+  });
 });

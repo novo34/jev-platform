@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import type { Queryable } from "./review-write.js";
 
 /**
  * Transaction boundary for deployment mutations. Scope locks are acquired
@@ -48,7 +49,7 @@ export async function withDeploymentWriteScopes<T>(
  * this entry point requires no direct UPDATE privilege on deployments.
  */
 export async function setDeploymentStatuses(
-  pool: Pool,
+  pool: Queryable,
   projectId: string,
   deploymentIds: readonly string[],
   status: "READY" | "RUNNING" | "VERIFYING" | "VERIFIED" | "BLOCKED" | "FAILED" | "REJECTED"

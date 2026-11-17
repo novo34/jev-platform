@@ -158,3 +158,4 @@ export { migrate, DEFAULT_MIGRATIONS_DIR } from "./migrations.js";
 export { withDeploymentWriteScopes, setDeploymentStatuses } from "./deployment-write.js";
 export { createApproval, createDeployment, createEnvironment } from "./review-write.js";
 export type { CreateApprovalInput, CreateDeploymentInput, CreateEnvironmentInput } from "./review-write.js";
+export type { Queryable } from "./review-write.js";

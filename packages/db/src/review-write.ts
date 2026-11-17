@@ -1,4 +1,9 @@
-import type { Pool } from "pg";
+import type { Pool, QueryResult, QueryResultRow } from "pg";
+
+/** Anything that can run a query: a `Pool` or a reserved `PoolClient`. */
+export interface Queryable {
+  query<R extends QueryResultRow = any>(text: string, values?: any[]): Promise<QueryResult<R>>;
+}
 
 export interface CreateDeploymentInput {
   projectId: string;
@@ -18,7 +23,7 @@ export interface CreateDeploymentInput {
  * Callers must authenticate and authorize the user/job before invoking it.
  */
 export async function createDeployment(
-  pool: Pool,
+  pool: Queryable,
   input: CreateDeploymentInput
 ): Promise<string> {
   const result = await pool.query<{ id: string }>(
@@ -47,7 +52,7 @@ export interface CreateEnvironmentInput {
  * authenticate and authorize the user/job before invoking it.
  */
 export async function createEnvironment(
-  pool: Pool,
+  pool: Queryable,
   input: CreateEnvironmentInput
 ): Promise<string> {
   const result = await pool.query<{ id: string }>(

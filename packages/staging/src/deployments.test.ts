@@ -206,4 +206,17 @@ describe("loadIntegratedRevision (github_operations ledger, SELECT only)", () =>
     expect(await loadIntegratedRevision(pool, { ...ids(taskId), projectId: foreignProjectId })).toBeNull();
     expect(await loadIntegratedRevision(pool, ids(await stagingTask()))).toBeNull();
   });
+
+  it("completes a full deployment with a single-connection pool (max: 1) and frees the connection", async () => {
+    const single = createDatabasePool({ max: 1, connectionTimeoutMillis: 3000, application_name: "jev-staging-single-" + randomUUID() });
+    try {
+      const taskId = await stagingTask();
+      const result = await new StagingOrchestrator(adapterOf(), new PgDeploymentRegistry(single)).run({ request: requestFor(taskId), revision: REVISION });
+      expect(result.outcome).toBe("READY");
+      expect((await latest(taskId)).status).toBe("READY");
+      expect(single.idleCount).toBe(1);
+      expect(single.waitingCount).toBe(0);
+      await expect(single.query("SELECT 1")).resolves.toBeDefined();
+    } finally { await single.end(); }
+  });
 });
