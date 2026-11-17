@@ -308,11 +308,11 @@ export class GitHubAppClient {
 
   /**
    * Merges an exact commit SHA into `base` (the repository staging branch) via the Merges API.
-   * 201 = new merge commit, 204 = already contained. A 409 conflict is never retried.
+   * 201 = new merge commit, 204 = already contained (`sha` is then the current tip of `base`). A 409 conflict is never retried.
    * Only `sha` is returned; the upstream response and the token never leave this method.
    */
   async mergeIntoBranch(scope: GitHubRepositoryScope, base: string, headSha: string, beforeSend?: () => Promise<void>):
-    Promise<{ merged: true; sha: string; alreadyIntegrated: boolean }> {
+    Promise<{ merged: true; sha: string; headSha: string; alreadyIntegrated: boolean }> {
     assertSha(headSha);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,199}$/.test(base) || base.includes("..")) throw new GitHubError("GITHUB_INVALID_REQUEST");
     const path = `${repositoryPath(scope)}/merges`;
@@ -327,7 +327,14 @@ export class GitHubAppClient {
         body: JSON.stringify({ base, head: headSha, commit_message: `chore: integrate ${headSha.slice(0, 12)} into ${base}` })
       });
     } catch { throw new GitHubError("GITHUB_UNAVAILABLE"); }
-    if (response.status === 204) return { merged: true, sha: headSha, alreadyIntegrated: true };
+    if (response.status === 204) {
+      // headSha is already contained, but it may not be the tip: `sha` is the revision staging must build, so
+      // record the current tip of `base` (same token), never the older contained head.
+      const tip = await this.request<{ commit?: { sha?: unknown } }>(`${repositoryPath(scope)}/branches/${encodeURIComponent(base)}`, token);
+      const tipSha = tip?.commit?.sha;
+      if (typeof tipSha !== "string" || !/^[a-f0-9]{40}$/.test(tipSha)) throw new GitHubError("GITHUB_UNAVAILABLE");
+      return { merged: true, sha: tipSha, headSha, alreadyIntegrated: true };
+    }
     if (response.status === 409 || response.status === 422) throw new GitHubError("GITHUB_CONFLICT");
     if (response.status === 429 || (response.status === 403 && (response.headers.has("retry-after") ||
         response.headers.get("x-ratelimit-remaining") === "0"))) {
@@ -340,7 +347,7 @@ export class GitHubAppClient {
     try { body = await response.json(); } catch { throw new GitHubError("GITHUB_UNAVAILABLE"); }
     const parsed = z.object({ sha: z.string().regex(/^[a-f0-9]{40}$/) }).safeParse(body);
     if (!parsed.success) throw new GitHubError("GITHUB_UNAVAILABLE");
-    return { merged: true, sha: parsed.data.sha, alreadyIntegrated: false };
+    return { merged: true, sha: parsed.data.sha, headSha, alreadyIntegrated: false };
   }
 
   async checks(scope: GitHubRepositoryScope, sha: string): Promise<{

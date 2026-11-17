@@ -112,6 +112,42 @@ describe("controlled staging deployments (PostgreSQL)", () => {
     }
   });
 
+  it("reserves the staging for the whole pipeline: an interleaved run is BLOCKED staging_busy without calling the provider", async () => {
+    const taskA = await stagingTask(), taskB = await stagingTask(), taskC = await stagingTask();
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    const first = run(taskA, adapterOf({ deploy: async () => { started(); await gate; return { ok: true }; } }));
+    await running;
+
+    const calls: string[] = [];
+    const spy = adapterOf(Object.fromEntries(STAGING_STAGES.map((stage) => [stage, async () => { calls.push(stage); return { ok: true }; }])));
+    const second = await run(taskB, spy);
+    expect(second).toMatchObject({ outcome: "BLOCKED", blockedReason: "staging_busy" });
+    expect(second.stages.every((stage) => stage.status === "not_run")).toBe(true);
+    expect(calls).toEqual([]);
+    expect(await latest(taskB)).toMatchObject({ id: second.deploymentId, status: "BLOCKED" });
+    // The loser must not have released the winner's reservation.
+    const third = await run(taskB, spy);
+    expect(third.blockedReason).toBe("staging_busy");
+    expect(calls).toEqual([]);
+
+    open();
+    expect((await first).outcome).toBe("READY");
+    // Released at finish (READY), and also after a failure or a thrown stage.
+    expect((await run(taskC, adapterOf({ healthCheck: async () => ({ ok: false }) }))).outcome).toBe("FAILED");
+    expect((await run(taskC, adapterOf({ healthCheck: async () => { throw new Error("boom"); } }))).outcome).toBe("BLOCKED");
+    expect((await run(taskC, adapterOf())).outcome).toBe("READY");
+  });
+
+  it("does not hold the lock after the pipeline (no leaked pooled connection)", async () => {
+    const locks = async (): Promise<number> => Number((await pool.query("SELECT count(*) AS n FROM pg_locks WHERE locktype='advisory' AND granted")).rows[0].n);
+    const before = await locks();
+    await run(await stagingTask(), adapterOf());
+    expect(await locks()).toBe(before);
+  });
+
   it("rejects a deployment whose repository is outside the project (controlled writer scope)", async () => {
     const taskId = await stagingTask();
     const request = { ...requestFor(taskId), repositoryId: foreignRepositoryId };

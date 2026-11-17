@@ -119,6 +119,15 @@ function toEnvironment(row: any): RegisteredEnvironment {
   };
 }
 
+/** Lower-case host of a staging URL; `null` when it is not an absolute URL (left to the other validations). */
+function stagingHost(url: string): string | null {
+  try { return new URL(url).hostname.toLowerCase() || null; } catch { return null; }
+}
+
+// SQL twin of stagingHost for already stored values (scheme://[userinfo@]host[:port]/...).
+const STORED_HOST_SQL =
+  "lower(substring(staging_url from '^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^/@?#]*@)?([^/:?#]+)'))";
+
 export class ProjectRegistryService {
   constructor(private readonly pool: Pool) {}
 
@@ -145,6 +154,21 @@ export class ProjectRegistryService {
 
       const projectId = projectResult.rows[0].id as string;
       const repoIds = new Map<string, string>();
+
+      // One staging host per repository: the staging Compose, database passwords and volume are derived from it,
+      // so two repositories sharing it would share the resource. Service-level check (no unique index exists);
+      // the transaction advisory lock serializes concurrent registrations of the same host.
+      const hosts = new Set<string>();
+      for (const repo of input.repositories) {
+        const host = repo.stagingUrl ? stagingHost(repo.stagingUrl) : null;
+        if (!host) continue;
+        if (hosts.has(host)) throw new ProjectRegistryError("STAGING_URL_IN_USE", "staging URL is already in use");
+        hosts.add(host);
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 52))", [host]);
+        const taken = await client.query(
+          `SELECT 1 FROM repositories WHERE staging_url IS NOT NULL AND ${STORED_HOST_SQL} = $1 LIMIT 1`, [host]);
+        if (taken.rowCount) throw new ProjectRegistryError("STAGING_URL_IN_USE", "staging URL is already in use");
+      }
 
       for (const repo of input.repositories) {
         const repoResult = await client.query(

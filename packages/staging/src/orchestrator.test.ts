@@ -124,6 +124,16 @@ describe("StagingOrchestrator (scripted adapter)", () => {
     expect(registry.statuses).toEqual(["BLOCKED", "BLOCKED"]);
   });
 
+  it("a busy registry blocks the run as staging_busy without any stage call", async () => {
+    const registry = new FakeRegistry();
+    registry.begin = async () => ({ deploymentId: "dep-busy", environmentId: "env-1", busy: true });
+    const { adapter, calls } = scripted();
+    const result = await new StagingOrchestrator(adapter, registry).run({ request: request(), revision: REVISION });
+    expect(result).toMatchObject({ outcome: "BLOCKED", blockedReason: "staging_busy", deploymentId: "dep-busy" });
+    expect(calls).toEqual([]);
+    expect(registry.finished).toEqual([{ deploymentId: "dep-busy", status: "BLOCKED" }]);
+  });
+
   it("propagates a registry failure at the end and, if the pipeline itself breaks, still tries BLOCKED", async () => {
     const registry = new FakeRegistry();
     registry.finish = async () => { throw new Error("db down"); };
@@ -188,6 +198,16 @@ describe("StagingOrchestrator with the simulated Dokploy", () => {
     expect(result.stages[2].metadata).toMatchObject({ skipped: false });
     expect(JSON.stringify(result)).not.toContain(API_KEY);
     expect(registry.statuses).toEqual(["READY"]);
+  });
+
+  it("health reports the revision but an E2E route does not: BLOCKED (degraded), never READY", async () => {
+    let n = 0;
+    const fetchImpl: FetchLike = async () => new Response(n++ < 1 ? JSON.stringify({ revision: REVISION }) : "ok", { status: 200 });
+    const registry = new FakeRegistry();
+    const result = await run(adapter({ appImage: `ghcr.io/novo34/espacore@sha256:${"a".repeat(64)}`, fetchImpl }), registry);
+    expect(result).toMatchObject({ outcome: "BLOCKED", failedStage: "runOnlineE2E", blockedReason: "degraded" });
+    expect(result.stages.find((s) => s.stage === "healthCheck")!.status).toBe("passed");
+    expect(registry.statuses).toEqual(["BLOCKED"]);
   });
 
   it("is idempotent on the second run: one compose, redeploy, two READY deployments", async () => {

@@ -416,6 +416,78 @@ describe("deployed revision integrity (build from the exact SHA)", () => {
     expect(pinned.ok).toBe(true);
   });
 
+  describe("resource ownership", () => {
+    const writes = (): string[] => mock.calls.filter((c) => c.method === "POST").map((c) => c.path);
+    const marker = (): string => parseEnv([...mock.composes.values()][0]!.env).JEV_STAGING_OWNER!;
+
+    it("stores the owner at creation, keeps it out of the app environment and reuses for the same owner", async () => {
+      expect((await adapter().deploy(request())).ok).toBe(true);
+      expect(marker()).toBe("proj-1:repo-1");
+      expect([...mock.composes.values()][0]!.composeFile).not.toContain("JEV_STAGING_OWNER");
+      expect(await adapter().deploy(request())).toMatchObject({ ok: true, detail: "reused_and_redeployed" });
+    });
+
+    it.each([
+      ["another project", { projectId: "proj-2" }],
+      ["another repository", { repositoryId: "repo-2" }]
+    ])("rejects a compose owned by %s before any write", async (_name, other) => {
+      await adapter().deploy(request());
+      const before = [...mock.composes.values()][0]!;
+      const snapshot = JSON.stringify(before);
+      mock.calls.length = 0;
+      for (const step of ["deploy", "verifyDatabase", "applyMigrations", "seedTestData"] as const) {
+        const result = await adapter({ migrationCommand: "m", seedCommand: "s" })[step](request(other));
+        expect(result).toEqual({ ok: false, detail: "staging_resource_owned_by_other_project" });
+      }
+      expect(writes()).toEqual([]);
+      expect(JSON.stringify([...mock.composes.values()][0])).toBe(snapshot);
+    });
+
+    it("rejects a compose without owner marker (legacy/foreign) and adopts only a completely empty one", async () => {
+      await adapter().deploy(request());
+      const compose = [...mock.composes.values()][0]!;
+      compose.env = "STAGING_PROJECT_SLUG=espacore";
+      mock.calls.length = 0;
+      expect(await adapter().deploy(request())).toEqual({ ok: false, detail: "staging_resource_owned_by_other_project" });
+      expect(writes()).toEqual([]);
+      compose.env = "";
+      expect((await adapter().deploy(request())).ok).toBe(true);
+      expect(marker()).toBe("proj-1:repo-1");
+    });
+
+    it("rejects a host already served by another compose before any write", async () => {
+      mock.composes.set("cmp_x", { composeId: "cmp_x", name: "other", appName: "jev-stg-other", environmentId: "env_1", composeFile: "", env: "JEV_STAGING_OWNER=proj-9:repo-9", composeStatus: "done" });
+      mock.domains.set("cmp_x", [{ domainId: "d1", host: "Espacore.staging.example.test", serviceName: "app", port: 3000, https: true, certificateType: "letsencrypt" }]);
+      expect(await adapter().deploy(request())).toEqual({ ok: false, detail: "staging_resource_owned_by_other_project" });
+      expect(writes()).toEqual([]);
+    });
+
+    it("does not let extra env or secret refs override JEV_STAGING_OWNER", async () => {
+      await expect(adapter({ extraEnv: { JEV_STAGING_OWNER: "x:y" } }).deploy(request())).resolves.toMatchObject({ ok: false, detail: "env_reserved_name_rejected:JEV_STAGING_OWNER" });
+    });
+  });
+
+  describe("online E2E degraded evidence", () => {
+    const image = { appImage: `ghcr.io/novo34/espacore@sha256:${"a".repeat(64)}` };
+    /** The route reports no revision. */
+    const silent = (): FetchLike => async () => new Response("ok", { status: 200 });
+
+    it("keeps per-route evidence and flags a degraded route", async () => {
+      const result = await adapter({ ...image, fetchImpl: silent(), e2eRoutes: [{ path: "/login" }] }).runOnlineE2E(request());
+      expect(result.ok).toBe(true);
+      expect(result.metadata).toMatchObject({ degraded: true, checked: ["/", "/login"] });
+      expect(result.metadata?.routes).toHaveLength(2);
+    });
+
+    it("stays e2e_passed with per-route evidence when nothing is degraded", async () => {
+      mock.publicResponses.set("/", { status: 200, body: JSON.stringify({ revision: REV }) });
+      const result = await adapter().runOnlineE2E(request());
+      expect(result).toMatchObject({ ok: true, detail: "e2e_passed" });
+      expect(result.metadata?.degraded).toBeUndefined();
+      expect(result.metadata?.routes).toEqual([{ path: "/", status: 200, revisionCheck: "verified", degraded: false }]);
+    });
+  });
+
   describe("health route revision check (VERIFY-R4)", () => {
     it("verified when the health body reports the same revision", async () => {
       mock.publicResponses.set("/", { status: 200, body: JSON.stringify({ status: "ok", revision: REV }) });

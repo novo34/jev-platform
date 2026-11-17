@@ -1,7 +1,7 @@
 import type { DokployClient, FetchLike } from "./client.js";
 import { REVISION_ENV, renderStagingCompose } from "./compose-template.js";
 import { assertStagingEnv, randomPassword, StagingEnvError } from "./env.js";
-import { DokployError } from "./errors.js";
+import { DokployError, StagingOwnershipError } from "./errors.js";
 import {
   composeCreateBody,
   composeUpdateBody,
@@ -13,7 +13,8 @@ import {
   parseEnv,
   parseEnvironmentComposes,
   saveEnvironmentBody,
-  type ComposeDetails
+  type ComposeDetails,
+  type ComposeRef
 } from "./mapping.js";
 import {
   requireRevision,
@@ -78,6 +79,8 @@ const DB_SECRET_KEYS = [
   "STAGING_DB_RUNTIME_PASSWORD",
   "DATABASE_OWNER_URL"
 ];
+/** Reserved non-secret variable stored in the compose at creation: `<projectId>:<repositoryId>`. */
+export const OWNER_ENV = "JEV_STAGING_OWNER";
 const IMAGE_DIGEST = /@sha256:[0-9a-f]{64}$/;
 const SECRET_REF = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -114,12 +117,14 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       const revision = requireRevision(request.revision);
       if (this.cfg.appImage && !IMAGE_DIGEST.test(this.cfg.appImage)) return { ok: false, detail: "app_image_digest_required" };
       const appName = stagingAppName(slug);
-      const existing = await this.findCompose(appName);
+      // Ownership and host checks run before any write: a resource of another project is never touched.
+      const existing = await this.findCompose(appName, request);
+      await this.assertHostNotOwnedByOtherCompose(new URL(request.stagingUrl).hostname.toLowerCase(), existing?.composeId);
       const existingEnv = existing ? parseEnv(existing.env) : {};
       const env = this.buildEnv(request, slug, existingEnv, revision);
       const composeFile = renderStagingCompose({
         appName,
-        appEnvKeys: Object.keys(env).filter((key) => !DB_SECRET_KEYS.includes(key)).sort(),
+        appEnvKeys: Object.keys(env).filter((key) => !DB_SECRET_KEYS.includes(key) && key !== OWNER_ENV).sort(),
         app: this.cfg.appImage ? { image: this.cfg.appImage } : { buildContext: `https://github.com/${request.repository}.git#${revision}` },
         revision,
         appPort: this.cfg.appPort,
@@ -165,7 +170,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
    */
   verifyDatabase(request: StagingDeploymentRequest): Promise<StagingStepResult> {
     return this.step(request, async (slug) => {
-      const compose = await this.findCompose(stagingAppName(slug));
+      const compose = await this.findCompose(stagingAppName(slug), request);
       if (!compose) return { ok: false, detail: "compose_missing" };
       const env = parseEnv(compose.env);
       const file = compose.composeFile;
@@ -199,17 +204,27 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
     return this.probe(request.stagingUrl, { path: this.cfg.healthPath }, "health", request.revision);
   }
 
-  /** Minimal E2E: health plus the configured routes, all must answer 2xx. */
+  /**
+   * Minimal E2E: health plus the configured routes, all must answer 2xx. Per-route evidence is kept and a
+   * degraded route (`metadata.degraded`) degrades the whole result, so the orchestrator never reports READY.
+   */
   async runOnlineE2E(request: StagingDeploymentRequest): Promise<StagingStepResult> {
     validateStagingRequest(request, this.cfg.policy);
     const routes: E2ERoute[] = [{ path: this.cfg.healthPath }, ...(this.cfg.e2eRoutes ?? [])];
     const checked: string[] = [];
+    const evidence: Array<Record<string, unknown>> = [];
+    let degraded = false;
     for (const [index, route] of routes.entries()) {
       const result = await this.probe(request.stagingUrl, route, "e2e", index === 0 ? request.revision : undefined);
-      if (!result.ok) return { ...result, metadata: { ...result.metadata, checked } };
+      if (!result.ok) return { ...result, metadata: { ...result.metadata, checked, routes: evidence } };
       checked.push(route.path);
+      const routeDegraded = result.metadata?.degraded === true;
+      degraded = degraded || routeDegraded;
+      evidence.push({ path: route.path, status: result.metadata?.status, ...(result.metadata?.revisionCheck ? { revisionCheck: result.metadata.revisionCheck } : {}), degraded: routeDegraded });
     }
-    return { ok: true, detail: "e2e_passed", metadata: { checked } };
+    return degraded
+      ? { ok: true, detail: "e2e_degraded", metadata: { checked, routes: evidence, degraded: true } }
+      : { ok: true, detail: "e2e_passed", metadata: { checked, routes: evidence } };
   }
 
   // --- Internals ------------------------------------------------------------
@@ -222,6 +237,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
     } catch (error) {
       if (error instanceof DokployError) return { ok: false, detail: `dokploy_${error.code}`, metadata: { code: error.code, status: error.status } };
       if (error instanceof StagingEnvError) return { ok: false, detail: error.code };
+      if (error instanceof StagingOwnershipError) return { ok: false, detail: error.code };
       throw error;
     }
   }
@@ -229,7 +245,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
   private async oneShotStep(request: StagingDeploymentRequest, service: "migrate" | "seed", command?: string): Promise<StagingStepResult> {
     return this.step(request, async (slug) => {
       if (!command) return { ok: true, detail: `no_${service}_command_configured`, metadata: { skipped: true } };
-      const compose = await this.findCompose(stagingAppName(slug));
+      const compose = await this.findCompose(stagingAppName(slug), request);
       if (!compose) return { ok: false, detail: "compose_missing" };
       if (!new RegExp(`^ {2}${service}:`, "m").test(compose.composeFile)) return { ok: false, detail: `${service}_service_missing` };
       if (compose.composeStatus !== "done") return { ok: false, detail: `deployment_${compose.composeStatus}` };
@@ -270,11 +286,32 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
     }
   }
 
-  private async findCompose(appName: string): Promise<ComposeDetails | null> {
-    const raw = await this.cfg.client.get(ENDPOINTS.environmentOne, { environmentId: this.cfg.environmentId });
-    const found = parseEnvironmentComposes(raw).find((entry) => entry.appName === appName);
+  /**
+   * Finds the compose for `appName` and proves it belongs to the request's project/repository. A compose owned by
+   * another project (or without the owner marker) is rejected with `StagingOwnershipError` before any write. The only
+   * exception is a compose with a completely empty environment: a creation of this adapter interrupted before the
+   * owner was saved (a foreign compose always carries its own marker and database values).
+   */
+  private async findCompose(appName: string, request: StagingDeploymentRequest): Promise<ComposeDetails | null> {
+    const found = (await this.listComposes()).find((entry) => entry.appName === appName);
     if (!found) return null;
-    return parseCompose(await this.cfg.client.get(ENDPOINTS.composeOne, { composeId: found.composeId }));
+    const compose = parseCompose(await this.cfg.client.get(ENDPOINTS.composeOne, { composeId: found.composeId }));
+    const owner = parseEnv(compose.env)[OWNER_ENV];
+    if (owner === undefined ? compose.env.trim() !== "" : owner !== ownerOf(request)) throw new StagingOwnershipError();
+    return compose;
+  }
+
+  private async listComposes(): Promise<ComposeRef[]> {
+    return parseEnvironmentComposes(await this.cfg.client.get(ENDPOINTS.environmentOne, { environmentId: this.cfg.environmentId }));
+  }
+
+  /** Rejects when another compose of the environment already serves the host (read-only, before any write). */
+  private async assertHostNotOwnedByOtherCompose(host: string, ownComposeId: string | undefined): Promise<void> {
+    for (const other of await this.listComposes()) {
+      if (other.composeId === ownComposeId) continue;
+      const domains = parseDomains(await this.cfg.client.get(ENDPOINTS.domainByComposeId, { composeId: other.composeId }));
+      if (domains.some((domain) => domain.host.toLowerCase() === host)) throw new StagingOwnershipError();
+    }
   }
 
   private async ensureDomain(composeId: string, host: string): Promise<boolean> {
@@ -316,6 +353,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       STAGING_BRANCH: request.stagingBranch,
       STAGING_PUBLIC_URL: request.stagingUrl,
       [REVISION_ENV]: revision,
+      [OWNER_ENV]: ownerOf(request),
       ...(this.cfg.seedCommand ? { STAGING_SEED_SYNTHETIC_ONLY: "1" } : {}),
       ...this.cfg.extraEnv
     };
@@ -325,9 +363,10 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       if (value === undefined) throw new StagingEnvError(`secret_value_missing:${ref}`);
       env[ref] = value;
     }
-    // The revision comes only from the verified request; neither extraEnv nor a secret ref may override it.
-    if (this.cfg.extraEnv && REVISION_ENV in this.cfg.extraEnv) throw new StagingEnvError(`env_reserved_name_rejected:${REVISION_ENV}`);
-    if (request.secretRefs.includes(REVISION_ENV)) throw new StagingEnvError(`env_reserved_name_rejected:${REVISION_ENV}`);
+    // The revision and the owner come only from the verified request; neither extraEnv nor a secret ref may override them.
+    for (const reserved of [REVISION_ENV, OWNER_ENV]) {
+      if ((this.cfg.extraEnv && reserved in this.cfg.extraEnv) || request.secretRefs.includes(reserved)) throw new StagingEnvError(`env_reserved_name_rejected:${reserved}`);
+    }
     // Guard the caller-controlled part before adding the generated database values.
     assertStagingEnv(env, { stagingDbHost: "db", productionMarkers: this.cfg.productionMarkers });
     for (const key of DB_SECRET_KEYS) if (key in env) throw new StagingEnvError(`env_reserved_name_rejected:${key}`);
@@ -343,6 +382,10 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
     });
     return env;
   }
+}
+
+function ownerOf(request: StagingDeploymentRequest): string {
+  return `${request.projectId}:${request.repositoryId}`;
 }
 
 function sameEnv(a: Record<string, string>, b: Record<string, string>): boolean {

@@ -23,7 +23,7 @@ let calls: Array<{ url: string; method?: string; body?: any }>;
 let reviewerId = 900, reviewSha = headSha, checkConclusion = "success", checkApp = 15368, prSha = headSha;
 let serverPolicy = "valid", unrecordedCommit = false;
 let writeTimeout = false;
-let mergesStatus = 201, taskBranchHead = headSha;
+let mergesStatus = 201, taskBranchHead = headSha, stagingTip = baseSha;
 let writeRateLimited = false;
 let reviewsEmpty = false, reviewState = "APPROVED";
 let checkStatus = "completed";
@@ -65,6 +65,7 @@ function service(database = pool, mergeEnabled = true, singleOperator = false, t
       return Response.json({ message: "Merge conflict test-install-token" }, { status: mergesStatus });
     }
     if (path.includes("/branches/feat%2Fjev-")) return Response.json({ commit: { sha: taskBranchHead } });
+    if (path.endsWith("/branches/staging")) return Response.json({ commit: { sha: stagingTip } });
     if (path.includes("/branches/")) return Response.json({ commit: { sha: baseSha } });
     if (path.endsWith("/git/refs")) return Response.json({ ref: body.ref, object: { sha: body.sha } });
     if (path.includes("/contents/")) {
@@ -155,7 +156,7 @@ beforeEach(async () => {
   calls = []; reviewerId = 900; reviewSha = headSha; checkConclusion = "success"; checkApp = 15368; prSha = headSha; writeTimeout = false;
   serverPolicy = "valid"; unrecordedCommit = false;
   onWriteToken = undefined;
-  writeRateLimited = false; mergesStatus = 201; taskBranchHead = headSha;
+  writeRateLimited = false; mergesStatus = 201; taskBranchHead = headSha; stagingTip = baseSha;
   await pool.query("UPDATE repositories SET staging_branch='staging' WHERE id=$1", [repositoryId]);
   reviewsEmpty = false; reviewState = "APPROVED";
   checkStatus = "completed";
@@ -182,7 +183,21 @@ describe("GITHUB_INTEGRATE_STAGING", () => {
   });
   it("reports an already integrated head (204) without a merge commit", async () => {
     await verifyTask(); mergesStatus = 204;
-    await expect(integrate()).resolves.toMatchObject({ data: { merged: true, sha: headSha, alreadyIntegrated: true } });
+    stagingTip = mergeSha;
+    await expect(integrate()).resolves.toMatchObject({ data: { merged: true, sha: mergeSha, headSha, alreadyIntegrated: true } });
+  });
+  it("records the current staging tip, not the older head, when re-integrating (204)", async () => {
+    await verifyTask();
+    await expect(integrate()).resolves.toMatchObject({ data: { sha: mergeSha, alreadyIntegrated: false } });
+    mergesStatus = 204; stagingTip = mergeSha;
+    const again = await integrate({ taskId, headSha }, randomUUID());
+    expect(again).toMatchObject({ data: { sha: mergeSha, headSha, alreadyIntegrated: true } });
+    const rows = await pool.query("SELECT result->>'sha' AS sha FROM github_operations WHERE task_id=$1 AND action='GITHUB_INTEGRATE_STAGING' AND status='SUCCESS' ORDER BY created_at DESC, command_id DESC", [taskId]);
+    expect(rows.rows.map(r => r.sha)).toEqual([mergeSha, mergeSha]);
+  });
+  it("fails closed when the staging tip cannot be read after a 204", async () => {
+    await verifyTask(); mergesStatus = 204; stagingTip = "not-a-sha";
+    await expect(integrate()).rejects.toMatchObject({ code: "GITHUB_UNAVAILABLE" });
   });
   it.each(["main", "master", "production", "prod"])("never targets %s", async target => {
     await verifyTask(); await pool.query("UPDATE repositories SET staging_branch=$2 WHERE id=$1", [repositoryId, target]);

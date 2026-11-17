@@ -18,7 +18,7 @@ export interface StageEvidence {
 
 /** Platform deployment statuses the orchestrator uses (see the mapping table of PLT-012). */
 export type OrchestratorOutcome = "READY" | "FAILED" | "BLOCKED";
-export type BlockedReason = "aborted" | "stage_error" | "unknown_result" | "degraded";
+export type BlockedReason = "aborted" | "stage_error" | "unknown_result" | "degraded" | "staging_busy";
 
 export interface StagingRunResult {
   outcome: OrchestratorOutcome;
@@ -33,7 +33,12 @@ export interface StagingRunResult {
 
 /** Controlled deployment writer (implemented over `createDeployment`/`setDeploymentStatuses`). */
 export interface DeploymentRegistry {
-  begin(input: { request: StagingDeploymentRequest; revision: string }): Promise<{ deploymentId: string; environmentId: string }>;
+  /**
+   * Records RUNNING and reserves the staging environment for the whole pipeline. `busy: true` means another run
+   * holds the reservation: the deployment is recorded but the orchestrator must finish it BLOCKED without
+   * calling the provider. `finish` releases the reservation.
+   */
+  begin(input: { request: StagingDeploymentRequest; revision: string }): Promise<{ deploymentId: string; environmentId: string; busy?: boolean }>;
   finish(input: { projectId: string; deploymentId: string; status: OrchestratorOutcome }): Promise<void>;
 }
 
@@ -123,8 +128,13 @@ export class StagingOrchestrator {
     // Before RUNNING is recorded: a deployment without an exact SHA must never exist.
     const revision = requireRevision(input.revision);
     const request: StagingDeploymentRequest = { ...input.request, revision };
-    const { deploymentId, environmentId } = await this.registry.begin({ request, revision });
+    const { deploymentId, environmentId, busy } = await this.registry.begin({ request, revision });
     const stages: StageEvidence[] = STAGING_STAGES.map((stage) => ({ stage, status: "not_run", detail: "not_run", metadata: {}, durationMs: 0 }));
+    if (busy) {
+      // Another pipeline owns this staging: never touch the provider (it would race the other deploy).
+      await this.registry.finish({ projectId: request.projectId, deploymentId, status: "BLOCKED" });
+      return { outcome: "BLOCKED", blockedReason: "staging_busy", deploymentId, environmentId, revision, url: request.stagingUrl, stages };
+    }
     let aborted = false;
     try {
       for (let index = 0; index < STAGING_STAGES.length; index += 1) {

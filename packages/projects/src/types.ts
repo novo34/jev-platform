@@ -76,7 +76,8 @@ export class ProjectRegistryError extends Error {
       | "INVALID_PROJECT"
       | "PROJECT_NOT_FOUND"
       | "REPOSITORY_NOT_FOUND"
-      | "AMBIGUOUS_REPOSITORY_TARGET",
+      | "AMBIGUOUS_REPOSITORY_TARGET"
+      | "STAGING_URL_IN_USE",
     message: string = code
   ) {
     super(message);

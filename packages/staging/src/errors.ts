@@ -35,3 +35,12 @@ export function codeForStatus(status: number): DokployErrorCode {
   if (status === 429) return "rate_limited";
   return "upstream";
 }
+
+/** The Dokploy compose (or one of its hosts) belongs to another project/repository. Nothing has been modified. */
+export class StagingOwnershipError extends Error {
+  readonly code = "staging_resource_owned_by_other_project";
+  constructor() {
+    super("staging_resource_owned_by_other_project");
+    this.name = "StagingOwnershipError";
+  }
+}
