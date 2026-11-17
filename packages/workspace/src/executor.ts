@@ -432,6 +432,11 @@ export class Workspace {
     if (this.deadlineTimer) { clearTimeout(this.deadlineTimer); this.deadlineTimer = undefined; }
     // `again` (internal) re-runs cleanup after a deadline/abort raced an in-flight create call.
     if (this.cleaned && !again) return true;
+    if (again && this.destroying) {
+      // A sweep already in flight may have listed resources before the racing create call made them:
+      // wait for it (never rejects) and run another full sweep afterwards.
+      await this.destroying.catch(() => undefined);
+    }
     this.destroying ??= this.doDestroy().finally(() => { this.destroying = undefined; });
     return this.destroying;
   }

@@ -363,6 +363,33 @@ describe("task deadline owned by the executor", () => {
     expect(fake.callsMatching(["volume", "rm"]).length).toBeGreaterThanOrEqual(1);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("repeats the full sweep after the pending one when create() was still running at the deadline", async () => {
+    vi.useFakeTimers();
+    const fake = fakeDocker();
+    let releaseCreate!: () => void;
+    let releaseRm!: () => void;
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    const rmGate = new Promise<void>((resolve) => { releaseRm = resolve; });
+    let rmCalls = 0;
+    // The deadline timer fires while `docker create` is still pending; its sweep is slow to finish.
+    fake.when(["create"], async () => { await createGate; return {}; });
+    fake.when(["rm", "-f"], async () => { if (rmCalls++ === 0) await rmGate; return {}; });
+    const created = executor(fake, { limits }).create(spec());
+    const outcome = created.then(() => undefined, (error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(fake.callsMatching(["rm", "-f"])).toHaveLength(1);
+    releaseCreate(); // the container now exists; create() catches the abort and calls destroy(true)
+    await vi.advanceTimersByTimeAsync(0);
+    releaseRm();
+    expect(await outcome).toMatchObject({ code: "task_deadline_exceeded" });
+    const createIndex = fake.calls.findIndex((c) => c.args[0] === "create");
+    const after = fake.calls.slice(createIndex + 1);
+    expect(after.filter((c) => c.args[0] === "rm" && c.args[1] === "-f")).toHaveLength(2);
+    expect(fake.callsMatching(["rm", "-f"])).toHaveLength(2);
+    expect(fake.callsMatching(["volume", "rm"])).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
 
 describe("withWorkspace cleanup", () => {
