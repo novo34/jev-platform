@@ -89,6 +89,16 @@ Se incluye PostgreSQL en la plantilla de Compose (`compose-template.ts`) y no co
 
 El adaptador no ejecuta SQL. Las migraciones y seeds son comandos del proyecto (`migrationCommand`, `seedCommand`) que la plantilla ejecuta como servicios de una sola vez (`migrate`, `seed`, con el rol owner y `STAGING_SEED_SYNTHETIC_ONLY=1`) y de los que depende la app (`service_completed_successfully`). Por eso un despliegue `done` demuestra que terminaron bien; `applyMigrations`/`seedTestData` lo comprueban y, si no hay comando configurado, devuelven `ok` con `metadata.skipped: true` (no se ha ejecutado nada). La copia previa del volumen y el estado de migraciones (`CURRENT`/`PENDING`) no están implementados. `healthCheck` es un GET a la URL pública (2xx, timeout, sin redirecciones) y `runOnlineE2E` es health más rutas configurables (estado 2xx y texto opcional).
 
+### Integridad de la revisión desplegada
+
+El deployment `READY` (que habilita `AWAITING_HUMAN` y la aprobación ligada a la revisión) debe describir el código realmente desplegado. Construir desde la rama permitiría que, al avanzar `staging_branch`, el registro y lo desplegado divergieran. Reglas:
+
+1. **Build desde el SHA exacto.** `revision` (40 hex; el orquestador la normaliza a minúsculas y la inyecta en la petición, `requireRevision` en `policy.ts`) fija `build.context` de `app`, `migrate` y `seed` a `https://github.com/<repo>.git#<sha40>`. Ausente o inválida: el orquestador lanza `StagingPolicyError` antes de registrar ningún deployment, y `deploy` y la plantilla la rechazan igualmente (la plantilla rechaza también un contexto que no termine en `#<revision>`).
+2. **`appImage` solo con digest.** Una imagen sin `@sha256:<64 hex>` se rechaza (`app_image_digest_required`, sin llamadas a Dokploy). Aun con digest, una imagen no prueba de qué commit procede: si la ruta de salud no informa la revisión, la etapa queda `degraded` y la ejecución en `BLOCKED` (nunca `READY`).
+3. **Comprobación contra la integración (responsabilidad del job, vía elegida).** No se añade una llamada a GitHub al paquete. El job `STAGING_DEPLOY` exige que `payload.revision` sea igual al `sha` que `GITHUB_INTEGRATE_STAGING` devolvió y dejó en el ledger `github_operations` para esa tarea (último `SUCCESS`, `loadIntegratedRevision`, solo SELECT, sin migraciones ni permisos nuevos). Si no hay integración o no coincide, el job falla con `revision_not_integrated` antes de cargar configuración o registrar nada. Que `staging_branch` siga apuntando a ese SHA lo garantiza la integración; como el build está fijado al SHA, el código desplegado coincide con lo registrado aunque la rama avance después.
+4. **`JEV_STAGING_REVISION=<sha>`** (no secreto) se añade a las variables de Dokploy y se escribe literal en el entorno de `app`, `migrate` y `seed`. No puede sobrescribirse con `extraEnv` ni `secretRefs`.
+5. **Health/E2E.** Si la ruta de salud devuelve la revisión (cabecera `x-jev-staging-revision` o campo JSON `revision`/`JEV_STAGING_REVISION`), debe coincidir: una revisión distinta da `*_revision_mismatch` y la etapa `failed`, es decir deployment `FAILED` (definitivo: el código en ejecución no es el registrado). Si no la devuelve se registra `revisionCheck: "unverifiable"` en la evidencia sin bloquear (con `appImage`, `degraded` y por tanto `BLOCKED`). VERIFY-R4: confirmar con Espacore que su ruta de salud expone la revisión.
+
 ### Pendiente de verificar contra la instancia real (antes del paso R4)
 
 Todo lo marcado `VERIFY-R4` en `mapping.ts` y `compose-template.ts`:
@@ -97,7 +107,7 @@ Todo lo marcado `VERIFY-R4` en `mapping.ts` y `compose-template.ts`:
 2. Cuerpo exacto de `compose.create` (`sourceType: 'raw'`, `composeFile`), `compose.update` y `compose.saveEnvironment` (se asume `{composeId, env}` con líneas `KEY=VALUE`).
 3. `domain.create`: si exige `domainType: 'compose'`; forma de la respuesta de `domain.byComposeId` y de `compose.one` (`composeStatus` con `idle|running|done|error`).
 4. Si `compose.deploy` deja `composeStatus` en `running` de forma síncrona (si no, la lectura inmediata puede ver el estado anterior) y qué devuelve un despliegue fallido.
-5. Origen del código: el Compose usa `build.context` con URL Git y rama (`https://github.com/<repo>.git#<staging_branch>`); los repositorios privados necesitan credenciales (alternativa: `appImage` o origen GitHub de Dokploy con `composePath`).
+5. Origen del código: el Compose usa `build.context` con URL Git fijada al SHA exacto de la revisión (`https://github.com/<repo>.git#<sha40>`, Docker admite un commit como ref; nunca la rama); los repositorios privados necesitan credenciales (alternativa: `appImage` o origen GitHub de Dokploy con `composePath`). Ver «Integridad de la revisión desplegada».
 6. Compatibilidad del Compose del host con `configs.content` (script de roles) y con `deploy.resources.limits`; nombre real del volumen y de la red tras el prefijo de Dokploy.
 7. Alcance de la API key y códigos de error reales (401/403 y `retry-after`).
 8. La conexión real a la BD y el estado de migraciones solo se prueban con la ruta de salud del proyecto; falta el comprobador de conexión.

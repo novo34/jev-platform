@@ -1,4 +1,4 @@
-import { StagingPolicyError, type StagingDeploymentRequest, type StagingProviderAdapter, type StagingStepResult } from "./policy.js";
+import { StagingPolicyError, requireRevision, type StagingDeploymentRequest, type StagingProviderAdapter, type StagingStepResult } from "./policy.js";
 import { sanitizeText } from "./sanitize.js";
 
 /** FND-026 order: deploy, database, migrations, seed, health, e2e. */
@@ -118,8 +118,11 @@ export class StagingOrchestrator {
   ) {}
 
   async run(input: StagingRunInput): Promise<StagingRunResult> {
-    const { request, revision, signal } = input;
+    const { signal } = input;
     const secrets = input.secrets ?? [];
+    // Before RUNNING is recorded: a deployment without an exact SHA must never exist.
+    const revision = requireRevision(input.revision);
+    const request: StagingDeploymentRequest = { ...input.request, revision };
     const { deploymentId, environmentId } = await this.registry.begin({ request, revision });
     const stages: StageEvidence[] = STAGING_STAGES.map((stage) => ({ stage, status: "not_run", detail: "not_run", metadata: {}, durationMs: 0 }));
     let aborted = false;

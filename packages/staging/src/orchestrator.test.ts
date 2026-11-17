@@ -278,3 +278,28 @@ describe("StagingOrchestrator with the simulated Dokploy", () => {
     expect(registry.statuses).toEqual(["BLOCKED"]);
   });
 });
+
+describe("orchestrator revision integrity", () => {
+  it("rejects a missing or malformed revision before recording any deployment", async () => {
+    for (const revision of ["", "staging", "abc", "z".repeat(40)]) {
+      const registry = new FakeRegistry();
+      await expect(new StagingOrchestrator(scripted().adapter, registry).run({ request: request(), revision })).rejects.toMatchObject({ name: "StagingPolicyError" });
+      expect(registry.begun).toHaveLength(0);
+    }
+  });
+
+  it("hands the exact revision to every adapter stage", async () => {
+    const seen: Array<string | undefined> = [];
+    const overrides: StageFns = {};
+    for (const stage of STAGING_STAGES) overrides[stage] = async (r) => { seen.push(r.revision); return { ok: true, detail: stage }; };
+    await new StagingOrchestrator(scripted(overrides).adapter, new FakeRegistry()).run({ request: request(), revision: REVISION.toUpperCase() });
+    expect(seen).toEqual(Array(6).fill(REVISION));
+  });
+
+  it("a health stage that reports a different revision records FAILED, never READY", async () => {
+    const registry = new FakeRegistry();
+    const result = await new StagingOrchestrator(scripted({ healthCheck: async () => ({ ok: false, detail: "health_revision_mismatch" }) }).adapter, registry).run({ request: request(), revision: REVISION });
+    expect(result).toMatchObject({ outcome: "FAILED", failedStage: "healthCheck" });
+    expect(registry.statuses).toEqual(["FAILED"]);
+  });
+});

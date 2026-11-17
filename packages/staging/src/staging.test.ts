@@ -9,6 +9,8 @@ import { slugFromStagingUrl, StagingPolicyError, validateStagingRequest, type St
 import { sanitizeText } from "./sanitize.js";
 
 const API_KEY = "dk_live_SuperSecretKey1234567890abcdef";
+const REV = "d".repeat(40);
+const OTHER_REV = "e".repeat(40);
 
 const policy: StagingReferencePolicy = {
   databaseRefs: new Set(["espacore_staging"]),
@@ -27,6 +29,7 @@ const request = (overrides: Partial<StagingDeploymentRequest> = {}): StagingDepl
   databaseRef: "espacore_staging",
   environmentKind: "PERMANENT_STAGING",
   secretRefs: [],
+  revision: REV,
   ...overrides
 });
 
@@ -174,7 +177,7 @@ describe("DokployStagingAdapter.deploy", () => {
     const create = mock.calls.find((c) => c.path === "compose.create")!.body!;
     expect(create).toMatchObject({ name: "jev-stg-espacore", appName: "jev-stg-espacore", environmentId: "env_1", composeType: "docker-compose" });
     const file = String(create.composeFile);
-    expect(file).toContain("https://github.com/novo34/espacore.git#staging");
+    expect(file).toContain(`https://github.com/novo34/espacore.git#${REV}`);
     expect(file).toMatch(/^ {2}db:/m);
     expect(file).toContain("db-data:/var/lib/postgresql/data");
     expect(file).not.toMatch(/^\s+ports:/m);
@@ -348,7 +351,8 @@ describe("compose template", () => {
     const file = renderStagingCompose({
       appName: "jev-stg-x",
       appEnvKeys: ["DATABASE_URL"],
-      app: { image: "ghcr.io/novo34/x:staging" },
+      app: { image: `ghcr.io/novo34/x@sha256:${"a".repeat(64)}` },
+      revision: REV,
       appPort: 3000,
       postgresImage: "postgres:16-alpine",
       limits: { appMemory: "512m", appCpus: "1.0", dbMemory: "512m", dbCpus: "0.5" }
@@ -359,5 +363,84 @@ describe("compose template", () => {
     expect(file).toMatch(/internal:\n {4}internal: true/);
     expect(file).toContain("networks: [internal, dokploy-network]");
     expect(file).not.toMatch(/^\s+ports:/m);
+  });
+});
+
+describe("deployed revision integrity (build from the exact SHA)", () => {
+  const composeFile = (): string => String(mock.calls.find((c) => c.path === "compose.create")!.body!.composeFile);
+
+  it("builds the app, migrate and seed from `#<sha40>`, never from the branch, and exposes JEV_STAGING_REVISION", async () => {
+    await adapter({ migrationCommand: "npm run migrate", seedCommand: "npm run seed" }).deploy(request());
+    const file = composeFile();
+    const contexts = file.match(/context: "[^"]+"/g)!;
+    expect(contexts).toHaveLength(3);
+    for (const context of contexts) expect(context).toBe(`context: "https://github.com/novo34/espacore.git#${REV}"`);
+    expect(file).not.toContain("#staging");
+    expect(file.match(new RegExp(`JEV_STAGING_REVISION: "${REV}"`, "g"))).toHaveLength(3);
+    expect(parseEnv([...mock.composes.values()][0]!.env).JEV_STAGING_REVISION).toBe(REV);
+  });
+
+  it("redeploying a new revision rewrites the build context to the new SHA", async () => {
+    await adapter().deploy(request());
+    await adapter().deploy(request({ revision: OTHER_REV }));
+    const file = [...mock.composes.values()][0]!.composeFile;
+    expect(file).toContain(`.git#${OTHER_REV}"`);
+    expect(file).not.toContain(REV);
+  });
+
+  it.each([undefined, "", "staging", "abc123", "g".repeat(40), "d".repeat(39), "d".repeat(41)])("rejects a missing or invalid revision (%s) before any Dokploy call", async (revision) => {
+    await expect(adapter().deploy(request({ revision }))).rejects.toBeInstanceOf(StagingPolicyError);
+    expect(mock.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("normalizes an upper-case SHA", async () => {
+    await adapter().deploy(request({ revision: REV.toUpperCase() }));
+    expect(composeFile()).toContain(`.git#${REV}"`);
+  });
+
+  it("the template refuses a branch build context and an invalid revision", () => {
+    const base = { appName: "x", appEnvKeys: [], appPort: 3000, postgresImage: "postgres:16-alpine", limits: { appMemory: "1m", appCpus: "1", dbMemory: "1m", dbCpus: "1" } };
+    expect(() => renderStagingCompose({ ...base, revision: REV, app: { buildContext: "https://github.com/o/r.git#staging" } })).toThrow("build_context_not_pinned_to_revision");
+    expect(() => renderStagingCompose({ ...base, revision: "staging", app: { buildContext: "https://github.com/o/r.git#staging" } })).toThrow("revision_invalid");
+  });
+
+  it("does not let extra env or secret refs override JEV_STAGING_REVISION", async () => {
+    await expect(adapter({ extraEnv: { JEV_STAGING_REVISION: OTHER_REV } }).deploy(request())).resolves.toMatchObject({ ok: false, detail: "env_reserved_name_rejected:JEV_STAGING_REVISION" });
+  });
+
+  it("with appImage requires a digest; a tag-only image is rejected before any Dokploy call", async () => {
+    const result = await adapter({ appImage: "ghcr.io/novo34/espacore:staging" }).deploy(request());
+    expect(result).toEqual({ ok: false, detail: "app_image_digest_required" });
+    expect(mock.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    const pinned = await adapter({ appImage: `ghcr.io/novo34/espacore@sha256:${"a".repeat(64)}` }).deploy(request());
+    expect(pinned.ok).toBe(true);
+  });
+
+  describe("health route revision check (VERIFY-R4)", () => {
+    it("verified when the health body reports the same revision", async () => {
+      mock.publicResponses.set("/", { status: 200, body: JSON.stringify({ status: "ok", revision: REV }) });
+      expect(await adapter().healthCheck(request())).toMatchObject({ ok: true, metadata: { revisionCheck: "verified" } });
+      expect(await adapter().runOnlineE2E(request())).toMatchObject({ ok: true });
+    });
+
+    it("a different revision fails the step (FAILED), in health and in E2E", async () => {
+      mock.publicResponses.set("/", { status: 200, body: JSON.stringify({ revision: OTHER_REV }) });
+      expect(await adapter().healthCheck(request())).toMatchObject({ ok: false, detail: "health_revision_mismatch", metadata: { revisionCheck: "mismatch", reported: OTHER_REV } });
+      expect(await adapter().runOnlineE2E(request())).toMatchObject({ ok: false, detail: "e2e_revision_mismatch" });
+      mock.publicResponses.set("/", { status: 200, body: JSON.stringify({ revision: "main" }) });
+      expect(await adapter().healthCheck(request())).toMatchObject({ ok: false, detail: "health_revision_mismatch", metadata: { reported: "invalid" } });
+    });
+
+    it("not reported: recorded as unverifiable without blocking when built from the SHA", async () => {
+      mock.publicResponses.set("/", { status: 200, body: "ok" });
+      expect(await adapter().healthCheck(request())).toMatchObject({ ok: true, metadata: { revisionCheck: "unverifiable" } });
+      expect((await adapter().healthCheck(request())).metadata?.degraded).toBeUndefined();
+    });
+
+    it("not reported with a prebuilt image: degraded, so the run can never be READY", async () => {
+      mock.publicResponses.set("/", { status: 200, body: "ok" });
+      const image = { appImage: `ghcr.io/novo34/espacore@sha256:${"a".repeat(64)}` };
+      expect(await adapter(image).healthCheck(request())).toMatchObject({ ok: true, metadata: { revisionCheck: "unverifiable", degraded: true } });
+    });
   });
 });

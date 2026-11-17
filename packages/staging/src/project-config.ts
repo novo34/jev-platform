@@ -121,3 +121,23 @@ export function createDokployAdapterFactory(client: DokployClient): (config: Pro
     return new DokployStagingAdapter(options);
   };
 }
+
+/**
+ * SHA integrated into `staging_branch` for the task, from the `github_operations` ledger
+ * (`GITHUB_INTEGRATE_STAGING`, `status='SUCCESS'`, `result.sha`). Latest successful operation wins.
+ * Read-only SELECT (`jev_runtime` has SELECT). `null` when the task was never integrated.
+ */
+export async function loadIntegratedRevision(
+  pool: Pool,
+  ids: { projectId: string; repositoryId: string; taskId: string }
+): Promise<string | null> {
+  const result = await pool.query<{ sha: string | null }>(
+    `SELECT result->>'sha' AS sha FROM github_operations
+      WHERE project_id=$1::uuid AND repository_id=$2::uuid AND task_id=$3::uuid
+        AND action='GITHUB_INTEGRATE_STAGING' AND status='SUCCESS'
+      ORDER BY created_at DESC, command_id DESC LIMIT 1`,
+    [ids.projectId, ids.repositoryId, ids.taskId]
+  );
+  const sha = result.rows[0]?.sha;
+  return typeof sha === "string" && /^[0-9a-f]{40}$/i.test(sha) ? sha.toLowerCase() : null;
+}

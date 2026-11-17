@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabasePool, migrate } from "@jev/db";
 import { ensureStagingEnvironment, PgDeploymentRegistry } from "./deployments.js";
-import { StagingConfigError, loadProjectStagingConfig, type StagingDeploymentSettings } from "./project-config.js";
+import { StagingConfigError, loadIntegratedRevision, loadProjectStagingConfig, type StagingDeploymentSettings } from "./project-config.js";
 import { STAGING_STAGES, StagingOrchestrator, type StagingStage } from "./orchestrator.js";
 import type { StagingDeploymentRequest, StagingProviderAdapter, StagingStepResult } from "./policy.js";
 
@@ -141,5 +141,33 @@ describe("loadProjectStagingConfig", () => {
     await pool.query("UPDATE repositories SET staging_database_enabled=true, staging_url=NULL WHERE id=$1", [repositoryId]);
     await expect(loadProjectStagingConfig(pool, { projectId, repositoryId, taskId }, settings)).rejects.toBeInstanceOf(StagingConfigError);
     await pool.query("UPDATE repositories SET staging_url=$2 WHERE id=$1", [repositoryId, STAGING_URL]);
+  });
+});
+
+describe("loadIntegratedRevision (github_operations ledger, SELECT only)", () => {
+  const userId = randomUUID();
+  const record = async (taskId: string, status: "SUCCESS" | "FAILED", sha: string | null, action = "GITHUB_INTEGRATE_STAGING"): Promise<void> => {
+    const commandId = randomUUID();
+    await pool.query(
+      "INSERT INTO github_operations(organization_id,project_id,repository_id,task_id,actor_id,command_id,action,request_hash,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'PENDING')",
+      [organizationId, projectId, repositoryId, taskId, userId, commandId, action, "a".repeat(64)]);
+    if (status === "SUCCESS") await pool.query("UPDATE github_operations SET status='SUCCESS', result=$3::jsonb WHERE organization_id=$1 AND command_id=$2", [organizationId, commandId, JSON.stringify({ merged: true, sha })]);
+    else await pool.query("UPDATE github_operations SET status='FAILED' WHERE organization_id=$1 AND command_id=$2", [organizationId, commandId]);
+  };
+  const ids = (taskId: string) => ({ projectId, repositoryId, taskId });
+
+  it("returns the latest successful integration sha for the task, and null otherwise", async () => {
+    await pool.query("INSERT INTO users(id,organization_id,email,display_name,role,password_hash) VALUES($1,$2,'integrator@staging.test','Admin','ADMIN','x')", [userId, organizationId]);
+    const taskId = await stagingTask();
+    expect(await loadIntegratedRevision(pool, ids(taskId))).toBeNull();
+    await record(taskId, "FAILED", null);
+    await record(taskId, "SUCCESS", null, "GITHUB_CREATE_PR");
+    expect(await loadIntegratedRevision(pool, ids(taskId))).toBeNull();
+    await record(taskId, "SUCCESS", "1".repeat(40));
+    expect(await loadIntegratedRevision(pool, ids(taskId))).toBe("1".repeat(40));
+    await record(taskId, "SUCCESS", "2".repeat(40).toUpperCase());
+    expect(await loadIntegratedRevision(pool, ids(taskId))).toBe("2".repeat(40));
+    expect(await loadIntegratedRevision(pool, { ...ids(taskId), projectId: foreignProjectId })).toBeNull();
+    expect(await loadIntegratedRevision(pool, ids(await stagingTask()))).toBeNull();
   });
 });

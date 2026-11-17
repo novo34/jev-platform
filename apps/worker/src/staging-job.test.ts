@@ -32,6 +32,7 @@ const config: ProjectStagingConfig = {
 function setup(stages: Partial<Record<StagingStage, () => Promise<StagingStepResult>>> = {}, over: Partial<StagingJobDeps> = {}) {
   const statuses: OrchestratorOutcome[] = [];
   const configCalls: unknown[] = [];
+  const ledgerCalls: unknown[] = [];
   const registry: DeploymentRegistry = {
     begin: async () => ({ deploymentId: "dep-1", environmentId: "env-1" }),
     finish: async ({ status }) => { statuses.push(status); }
@@ -39,11 +40,12 @@ function setup(stages: Partial<Record<StagingStage, () => Promise<StagingStepRes
   const adapter = {} as Record<StagingStage, (r: unknown) => Promise<StagingStepResult>>;
   for (const stage of STAGING_STAGES) adapter[stage] = async () => (stages[stage] ? stages[stage]!() : { ok: true, detail: `${stage}_ok` });
   const deps: StagingJobDeps = {
+    integratedRevision: async (ids) => { ledgerCalls.push(ids); return SHA; },
     configProvider: async (ids) => { configCalls.push(ids); return config; },
     adapterFactory: () => adapter as unknown as StagingProviderAdapter,
     registry, redact: [API_KEY], ...over
   };
-  return { handler: createStagingJobHandler(deps), statuses, configCalls };
+  return { handler: createStagingJobHandler(deps), statuses, configCalls, ledgerCalls };
 }
 
 describe("parseStagingPayload", () => {
@@ -76,10 +78,30 @@ describe("staging job handler", () => {
     expect(statuses).toHaveLength(0);
   });
 
+  it("rejects a revision that is not the integration recorded for the task, before touching config or the registry", async () => {
+    for (const recorded of [null, "f".repeat(40)]) {
+      const { handler, configCalls, statuses } = setup({}, { integratedRevision: async () => recorded });
+      await expect(handler(job(payload()), ctx())).rejects.toMatchObject({ code: "revision_not_integrated" });
+      expect(configCalls).toHaveLength(0);
+      expect(statuses).toHaveLength(0);
+    }
+    const down = setup({}, { integratedRevision: async () => { throw new Error(`db ${SECRET}`); } });
+    const error: any = await down.handler(job(payload()), ctx()).catch((e: any) => e);
+    expect(error).toMatchObject({ code: "config_unavailable" });
+    expect(error.message).not.toContain(SECRET);
+    expect(down.statuses).toHaveLength(0);
+  });
+
+  it("accepts the revision when it equals the recorded integration (case-insensitive)", async () => {
+    const { handler } = setup({}, { integratedRevision: async () => SHA.toUpperCase() });
+    await expect(handler(job(payload()), ctx())).resolves.toMatchObject({ outcome: "READY", revision: SHA });
+  });
+
   it("completes with per-stage evidence on success and records READY", async () => {
-    const { handler, statuses, configCalls } = setup();
+    const { handler, statuses, configCalls, ledgerCalls } = setup();
     const result = await handler(job(payload(), { taskId: TASK, projectId: PROJECT }), ctx()) as any;
     expect(configCalls).toEqual([{ projectId: PROJECT, repositoryId: REPO, taskId: TASK }]);
+    expect(ledgerCalls).toEqual([{ projectId: PROJECT, repositoryId: REPO, taskId: TASK }]);
     expect(result).toMatchObject({ outcome: "READY", deploymentId: "dep-1", revision: SHA, url: "https://espacore.staging.example.test" });
     expect(result.stages.map((s: any) => s.status)).toEqual(Array(6).fill("passed"));
     expect(statuses).toEqual(["READY"]);
@@ -142,7 +164,7 @@ describe("staging job handler", () => {
   });
 
   it("exposes the handler under STAGING_DEPLOY and is not registered by server.ts", async () => {
-    const handlers = stagingHandlers({ configProvider: async () => config, adapterFactory: () => ({}) as StagingProviderAdapter, registry: { begin: async () => ({ deploymentId: "d", environmentId: "e" }), finish: async () => undefined } });
+    const handlers = stagingHandlers({ integratedRevision: async () => SHA, configProvider: async () => config, adapterFactory: () => ({}) as StagingProviderAdapter, registry: { begin: async () => ({ deploymentId: "d", environmentId: "e" }), finish: async () => undefined } });
     expect(Object.keys(handlers)).toEqual(["STAGING_DEPLOY"]);
     const { readFile } = await import("node:fs/promises");
     expect(await readFile(new URL("./server.ts", import.meta.url), "utf8")).not.toMatch(/staging/i);

@@ -13,6 +13,11 @@ export interface StagingJobDeps {
   configProvider: StagingConfigProvider;
   /** Builds the provider adapter (Dokploy) for one project; the API key lives in the injected client, never in the database. */
   adapterFactory: (config: ProjectStagingConfig) => StagingProviderAdapter;
+  /**
+   * Integrated SHA recorded for the task by `GITHUB_INTEGRATE_STAGING` (default: `loadIntegratedRevision`
+   * over the `github_operations` ledger, SELECT only). The job refuses any other `revision`.
+   */
+  integratedRevision: (ids: { projectId: string; repositoryId: string; taskId: string }) => Promise<string | null>;
   /** Controlled deployment writer (`PgDeploymentRegistry`). */
   registry: DeploymentRegistry;
   /** Extra strings to redact from every result and error (for example the Dokploy API key). */
@@ -31,7 +36,7 @@ export interface StagingJobPayload {
 export type StagingJobResult = Pick<StagingRunResult, "outcome" | "deploymentId" | "environmentId" | "revision" | "url" | "stages" | "failedStage">;
 
 export class StagingJobError extends Error {
-  constructor(readonly code: "invalid_payload" | "config_unavailable" | "staging_blocked" | "staging_failed", message: string) {
+  constructor(readonly code: "invalid_payload" | "revision_not_integrated" | "config_unavailable" | "staging_blocked" | "staging_failed", message: string) {
     super(message);
     this.name = "StagingJobError";
   }
@@ -81,6 +86,19 @@ export function createStagingJobHandler(deps: StagingJobDeps): JobHandler {
       throw new StagingJobError("invalid_payload", "invalid staging job payload: ids do not match the job");
     }
     if (context.signal.aborted) throw new StagingJobError("staging_blocked", "staging job aborted before start");
+
+    // The revision is what the approval will be bound to: it must be the SHA the controlled integration
+    // returned for this task, not just any well-formed SHA. (That staging_branch still points at it is the
+    // integration's responsibility; the build below is pinned to the SHA, so the code matches the record.)
+    let integrated: string | null;
+    try {
+      integrated = await deps.integratedRevision({ projectId: payload.projectId, repositoryId: payload.repositoryId, taskId: payload.taskId });
+    } catch {
+      throw new StagingJobError("config_unavailable", "staging integration ledger unavailable");
+    }
+    if (integrated === null || integrated.toLowerCase() !== payload.revision) {
+      throw new StagingJobError("revision_not_integrated", "staging revision does not match the integration recorded for the task");
+    }
 
     let config: ProjectStagingConfig;
     try {

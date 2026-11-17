@@ -1,5 +1,5 @@
 import type { DokployClient, FetchLike } from "./client.js";
-import { renderStagingCompose } from "./compose-template.js";
+import { REVISION_ENV, renderStagingCompose } from "./compose-template.js";
 import { assertStagingEnv, randomPassword, StagingEnvError } from "./env.js";
 import { DokployError } from "./errors.js";
 import {
@@ -16,6 +16,7 @@ import {
   type ComposeDetails
 } from "./mapping.js";
 import {
+  requireRevision,
   slugFromStagingUrl,
   validateStagingRequest,
   type StagingDeploymentRequest,
@@ -44,7 +45,11 @@ export interface DokployStagingConfig {
   /** Strings that identify production (hosts, DB names). Values containing them are rejected. */
   productionMarkers?: readonly string[];
   appPort?: number;
-  /** Prebuilt image; when absent the app is built from `https://github.com/<repo>.git#<stagingBranch>`. */
+  /**
+   * Prebuilt image; when absent the app is built from `https://github.com/<repo>.git#<revision>` (exact SHA,
+   * never the branch). An image must be pinned by digest (`name@sha256:<64 hex>`) and the health route must
+   * report the revision (otherwise the run is DEGRADED, hence BLOCKED): an image cannot prove its source.
+   */
   appImage?: string;
   postgresImage?: string;
   /**
@@ -73,6 +78,7 @@ const DB_SECRET_KEYS = [
   "STAGING_DB_RUNTIME_PASSWORD",
   "DATABASE_OWNER_URL"
 ];
+const IMAGE_DIGEST = /@sha256:[0-9a-f]{64}$/;
 const SECRET_REF = /^[A-Z_][A-Z0-9_]*$/;
 
 export function stagingAppName(slug: string): string {
@@ -105,14 +111,17 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
    */
   deploy(request: StagingDeploymentRequest): Promise<StagingStepResult> {
     return this.step(request, async (slug) => {
+      const revision = requireRevision(request.revision);
+      if (this.cfg.appImage && !IMAGE_DIGEST.test(this.cfg.appImage)) return { ok: false, detail: "app_image_digest_required" };
       const appName = stagingAppName(slug);
       const existing = await this.findCompose(appName);
       const existingEnv = existing ? parseEnv(existing.env) : {};
-      const env = this.buildEnv(request, slug, existingEnv);
+      const env = this.buildEnv(request, slug, existingEnv, revision);
       const composeFile = renderStagingCompose({
         appName,
         appEnvKeys: Object.keys(env).filter((key) => !DB_SECRET_KEYS.includes(key)).sort(),
-        app: this.cfg.appImage ? { image: this.cfg.appImage } : { buildContext: `https://github.com/${request.repository}.git#${request.stagingBranch}` },
+        app: this.cfg.appImage ? { image: this.cfg.appImage } : { buildContext: `https://github.com/${request.repository}.git#${revision}` },
+        revision,
         appPort: this.cfg.appPort,
         postgresImage: this.cfg.postgresImage,
         migrationCommand: this.cfg.migrationCommand,
@@ -141,7 +150,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       const redeploy = !created && existing?.composeStatus !== "idle";
       await this.cfg.client.post(redeploy ? ENDPOINTS.composeRedeploy : ENDPOINTS.composeDeploy, { composeId });
       const final = await this.waitForDeployment(composeId);
-      const metadata = { composeId, appName, host, created, domainCreated, redeployed: redeploy, branch: request.stagingBranch, status: final.composeStatus };
+      const metadata = { composeId, appName, host, created, domainCreated, redeployed: redeploy, branch: request.stagingBranch, revision, status: final.composeStatus };
       if (final.composeStatus === "error") return { ok: false, detail: "deployment_failed", metadata };
       if (final.composeStatus !== "done") return { ok: false, detail: "deployment_timeout", metadata };
       return { ok: true, detail: created ? "created_and_deployed" : "reused_and_redeployed", metadata };
@@ -187,7 +196,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
 
   async healthCheck(request: StagingDeploymentRequest): Promise<StagingStepResult> {
     validateStagingRequest(request, this.cfg.policy);
-    return this.probe(request.stagingUrl, { path: this.cfg.healthPath }, "health");
+    return this.probe(request.stagingUrl, { path: this.cfg.healthPath }, "health", request.revision);
   }
 
   /** Minimal E2E: health plus the configured routes, all must answer 2xx. */
@@ -195,8 +204,8 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
     validateStagingRequest(request, this.cfg.policy);
     const routes: E2ERoute[] = [{ path: this.cfg.healthPath }, ...(this.cfg.e2eRoutes ?? [])];
     const checked: string[] = [];
-    for (const route of routes) {
-      const result = await this.probe(request.stagingUrl, route, "e2e");
+    for (const [index, route] of routes.entries()) {
+      const result = await this.probe(request.stagingUrl, route, "e2e", index === 0 ? request.revision : undefined);
       if (!result.ok) return { ...result, metadata: { ...result.metadata, checked } };
       checked.push(route.path);
     }
@@ -228,15 +237,32 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
     });
   }
 
-  private async probe(baseUrl: string, route: E2ERoute, kind: "health" | "e2e"): Promise<StagingStepResult> {
+  /**
+   * GET one route; 2xx required. With `expectedRevision` (health route) the body is also read: a JSON
+   * `revision` (or `JEV_STAGING_REVISION`) field or the `x-jev-staging-revision` header is compared with the
+   * deployed revision. A different value fails the step (definitive: the running code is not the recorded one).
+   * If the route reports nothing the revision is "unverifiable" (VERIFY-R4): recorded in the evidence without
+   * blocking, except with a prebuilt `appImage`, where it is DEGRADED (a digest cannot prove the source commit).
+   */
+  private async probe(baseUrl: string, route: E2ERoute, kind: "health" | "e2e", expectedRevision?: string): Promise<StagingStepResult> {
     const url = new URL(route.path, baseUrl).toString();
     const fetcher: FetchLike = this.cfg.fetchImpl ?? ((input, init) => fetch(input, init));
     try {
       const response = await fetcher(url, { method: "GET", redirect: "error", signal: AbortSignal.timeout(this.cfg.httpTimeoutMs) });
-      const body = route.bodyIncludes ? await response.text() : "";
+      const body = route.bodyIncludes || expectedRevision ? await response.text() : "";
       if (response.status < 200 || response.status > 299) return { ok: false, detail: `${kind}_status_${response.status}`, metadata: { path: route.path, status: response.status } };
       if (route.bodyIncludes && !body.includes(route.bodyIncludes)) return { ok: false, detail: `${kind}_body_mismatch`, metadata: { path: route.path } };
-      return { ok: true, detail: `${kind}_ok`, metadata: { path: route.path, status: response.status } };
+      const metadata: Record<string, unknown> = { path: route.path, status: response.status };
+      if (expectedRevision) {
+        const reported = reportedRevision(body, response.headers?.get?.("x-jev-staging-revision") ?? null);
+        if (reported === null) {
+          metadata.revisionCheck = "unverifiable";
+          if (this.cfg.appImage) return { ok: true, detail: `${kind}_ok`, metadata: { ...metadata, degraded: true } };
+        } else if (reported !== expectedRevision.toLowerCase()) {
+          return { ok: false, detail: `${kind}_revision_mismatch`, metadata: { ...metadata, revisionCheck: "mismatch", expected: expectedRevision, reported: /^[0-9a-f]{40}$/.test(reported) ? reported : "invalid" } };
+        } else metadata.revisionCheck = "verified";
+      }
+      return { ok: true, detail: `${kind}_ok`, metadata };
     } catch (error) {
       const name = (error as { name?: string }).name;
       const reason = name === "TimeoutError" || name === "AbortError" ? "timeout" : sanitizeText(String((error as Error).message)).slice(0, 120);
@@ -275,7 +301,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
   }
 
   /** Builds the full env. DB passwords already stored in Dokploy are kept so a re-run never rotates them. */
-  private buildEnv(request: StagingDeploymentRequest, slug: string, existing: Record<string, string>): Record<string, string> {
+  private buildEnv(request: StagingDeploymentRequest, slug: string, existing: Record<string, string>, revision: string): Record<string, string> {
     const generate = this.cfg.generatePassword ?? randomPassword;
     const dbName = request.databaseRef.replace(/[^A-Za-z0-9_]/g, "_").toLowerCase();
     const owner = `${dbName}_owner`.slice(0, 60);
@@ -289,6 +315,7 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       STAGING_PROJECT_SLUG: slug,
       STAGING_BRANCH: request.stagingBranch,
       STAGING_PUBLIC_URL: request.stagingUrl,
+      [REVISION_ENV]: revision,
       ...(this.cfg.seedCommand ? { STAGING_SEED_SYNTHETIC_ONLY: "1" } : {}),
       ...this.cfg.extraEnv
     };
@@ -298,6 +325,9 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
       if (value === undefined) throw new StagingEnvError(`secret_value_missing:${ref}`);
       env[ref] = value;
     }
+    // The revision comes only from the verified request; neither extraEnv nor a secret ref may override it.
+    if (this.cfg.extraEnv && REVISION_ENV in this.cfg.extraEnv) throw new StagingEnvError(`env_reserved_name_rejected:${REVISION_ENV}`);
+    if (request.secretRefs.includes(REVISION_ENV)) throw new StagingEnvError(`env_reserved_name_rejected:${REVISION_ENV}`);
     // Guard the caller-controlled part before adding the generated database values.
     assertStagingEnv(env, { stagingDbHost: "db", productionMarkers: this.cfg.productionMarkers });
     for (const key of DB_SECRET_KEYS) if (key in env) throw new StagingEnvError(`env_reserved_name_rejected:${key}`);
@@ -318,4 +348,18 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
 function sameEnv(a: Record<string, string>, b: Record<string, string>): boolean {
   const keys = Object.keys(b);
   return keys.length === Object.keys(a).length && keys.every((key) => a[key] === b[key]);
+}
+
+/** Revision reported by the app: header first, then a JSON body field. `null` when it reports none. */
+function reportedRevision(body: string, header: string | null): string | null {
+  if (header && header.trim()) return header.trim().toLowerCase();
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed !== null && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      const value = record.revision ?? record[REVISION_ENV];
+      if (typeof value === "string" && value.trim()) return value.trim().toLowerCase();
+    }
+  } catch { /* not JSON: nothing reported */ }
+  return null;
 }

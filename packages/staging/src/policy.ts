@@ -15,7 +15,22 @@ export interface StagingDeploymentRequest {
   databaseRef: string;
   environmentKind: string;
   secretRefs: readonly string[];
+  /**
+   * Exact commit (40 hex) to deploy. The orchestrator injects it from the
+   * integration SHA; `deploy` rejects a missing or malformed value.
+   */
+  revision?: string;
   metadata?: Record<string, unknown>;
+}
+
+export const STAGING_REVISION_RE = /^[0-9a-f]{40}$/;
+
+/** Returns the normalized (lower case) revision or throws `revision_missing`/`revision_invalid`. */
+export function requireRevision(revision: string | undefined): string {
+  if (revision === undefined || revision === "") throw new StagingPolicyError("revision_missing");
+  const normalized = typeof revision === "string" ? revision.toLowerCase() : "";
+  if (!STAGING_REVISION_RE.test(normalized)) throw new StagingPolicyError("revision_invalid");
+  return normalized;
 }
 
 export interface StagingStepResult {
