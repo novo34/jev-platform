@@ -2,7 +2,9 @@
 
 **Canonical baseline:** check the current `jev-platform/main` HEAD and the latest Foundation `main` before recording acceptance; do not treat an older SHA in this document as canonical.
 
-**State:** OpenAI and DeepSeek **health checks** were observed as `ok: true` in the operator's local UI on 2026-10-12. They are not proof of a charged generation or persisted cost. PR #15 added the executable, explicitly authorized *development-only* paid-call harness and was merged as `88151347d7d7846efdeed74fa72be32869aba075`. **LIVE_PAID_CALL_ACCEPTANCE=PENDING.** No production/deployment approval follows from this checklist.
+**State:** OpenAI and DeepSeek **health checks** were observed as `ok: true` in the operator's local UI on 2026-10-12. They are not proof of a charged generation or persisted cost. PR #15 added the executable, explicitly authorized *development-only* paid-call harness and was merged as `88151347d7d7846efdeed74fa72be32869aba075`. **LIVE_PAID_CALL_ACCEPTANCE=PENDING** (as of 2026-10-12; see the update below). No production/deployment approval follows from this checklist.
+
+**Status update (2026-11-17):** Aceptación con llamadas de pago reales confirmada por el operador el 2026-11-17. El enlace a la evidencia (fecha de ejecución, proveedores y resultado) está pendiente de adjuntar. No execution date, providers, SHAs or amounts are recorded here until that evidence is attached.
 
 ## Preconditions and secret-safe setup
 

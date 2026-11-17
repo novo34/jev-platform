@@ -6,14 +6,14 @@
 
 Cada mejora indica problema, propuesta, fase o REQ afectado y prioridad. Los IDs REQ citados están en la [SPEC](../product-specs/SPEC.md) y el orden de ejecución en el [ROADMAP](../product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17).
 
-**Pendiente de Foundation.** Ninguna prioridad de este documento es ejecutable hasta que se refleje en `backlog/jev-master-tasks.yaml` y en NEXT_TASK (ver la mejora 12). PLT-011, en curso y autorizada, no se interrumpe.
+**Pendiente de Foundation.** Ninguna prioridad de este documento es ejecutable hasta que se refleje en `backlog/jev-master-tasks.yaml` y en NEXT_TASK (ver la mejora 12). La tarea en curso según PROGRESO.md/NEXT_TASK (hoy PLT-012) no se interrumpe.
 
 ## 1. Caché de prompts y Fase 10 (Context Runtime)
 
 - **Problema:** el coste de tokens amenaza la viabilidad económica. Hoy el gateway (solo OpenAI y DeepSeek) no usa caché ni mide su efecto, y no hay ContextPack acotado.
 - **Propuesta:** caché de prompts con prefijo estable (sistema, reglas, skills y especificación al inicio; contenido variable al final), adaptador Anthropic con `cache_control` desde su primera versión, y Fase 10 con Context Packs acotados con presupuesto de tokens por tipo de tarea.
 - **Afecta a:** Fase 17, Fase 10; REQ-CACHE-001..007, REQ-CTX-009 y REQ-CTX-010. Detalle en [MODEL_GATEWAY.md](../MODEL_GATEWAY.md#prompt-caching-not_implemented-planificado-prioridad-adelantada).
-- **Prioridad:** alta, adelantada tras PLT-011.
+- **Prioridad:** alta, adelantada tras la tarea en curso (hoy PLT-012).
 
 ## 2. Decisión: no integrar rsc-harness ni rsc-brain
 
@@ -99,6 +99,6 @@ Sin añadir al roadmap. Se plantea una capa comercial (clientes potenciales, pro
 
 Reflejar la nueva prioridad en `backlog/jev-master-tasks.yaml` y en NEXT_TASK de `novo34/base-skills_klever`. Esta sesión de Platform no tuvo acceso a Foundation, por lo que no se han creado ni modificado IDs allí. Mientras tanto, NEXT_TASK manda sobre el orden propuesto.
 
-## Discrepancia abierta
+## Estado de la aceptación de PLT-009
 
-`PROGRESO.md` figura PLT-009 como `DONE`, pero [MODEL_GATEWAY.md](../MODEL_GATEWAY.md) y [PLT-009-LIVE-ACCEPTANCE.md](../PLT-009-LIVE-ACCEPTANCE.md) mantienen la aceptación en vivo pendiente. El operador debe confirmar qué cubre ese `DONE`.
+Aceptación con llamadas de pago reales confirmada por el operador el 2026-11-17. El enlace a la evidencia (fecha de ejecución, proveedores y resultado) está pendiente de adjuntar. Los documentos [MODEL_GATEWAY.md](../MODEL_GATEWAY.md) y [PLT-009-LIVE-ACCEPTANCE.md](../PLT-009-LIVE-ACCEPTANCE.md) conservan su historial del 2026-10-12.

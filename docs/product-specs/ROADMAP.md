@@ -32,7 +32,7 @@ El operador decidió el 17 de noviembre de 2026, en la fase de investigación pr
 
 Orden de ejecución propuesto:
 
-1. PLT-011 (Real Docker Workspace Worker), en curso y autorizada. No se interrumpe.
+1. La tarea en curso según PROGRESO.md/NEXT_TASK (hoy PLT-012) no se interrumpe.
 2. Caché de prompts en el gateway y adaptador Anthropic con caché (Fase 17, REQ-CACHE-001..007).
 3. Fase 10, Context Runtime con Context Packs acotados (REQ-CTX-009 y REQ-CTX-010).
 4. Guard de presupuesto mínimo (PLT-017): al menos el hard stop previo a llamadas pagadas.
