@@ -18,6 +18,11 @@
   },
   "devDependencies": {
     "@types/node": "^24.7.0",
+    "@types/pg": "^8.15.5",
     "vitest": "4.1.12"
+  },
+  "dependencies": {
+    "@jev/db": "0.1.0",
+    "pg": "^8.16.3"
   }
 }

@@ -45,6 +45,14 @@ A worker crash cannot mark a job `SUCCEEDED`; completion only occurs after the h
 - State is stored in `jobs.result` (written by `queue.complete`), not in `task_runs`: `jev_runtime` has no DML on `task_runs` and PLT-008 limits its writers. Result: `{ workspaceId, branch, status: "PASSED" | "FAILED", commands: [{ command, exitCode, durationMs, timedOut, output }] }`, sanitized and without the token.
 - A command that exits non-zero or times out is a task outcome, not an infrastructure error: execution stops there, the job is `COMPLETED` with `status: "FAILED"` and the detail (`queue.fail` stores only a message and would retry a deterministic failure). Infrastructure errors (invalid payload, token, clone, Docker, abort, timeout) throw and the runtime calls `queue.fail` with a sanitized message.
 
+## Staging job (PLT-012, not active)
+
+`apps/worker/src/staging-job.ts` implements `jobType` `STAGING_DEPLOY`. `server.ts` does **not** register it: activation needs the Dokploy API key and the staging base domain (R4, PLT-012 step 6). To activate, merge `stagingHandlers({ configProvider, adapterFactory, registry, redact })` into `WorkerRuntimeOptions.handlers`, with a `DokployClient` built from the worker environment, `createDokployAdapterFactory(client)`, `new PgDeploymentRegistry(pool)` and a `configProvider` based on `loadProjectStagingConfig` (all from `@jev/staging`).
+
+- Payload (strict): `{ projectId, repositoryId, taskId, revision }` (UUIDs and a 40-hex SHA); if the job row carries `task_id`/`project_id` they must match.
+- The orchestrator runs deploy, verifyDatabase, applyMigrations, seedTestData, healthCheck and runOnlineE2E, stops at the first failure and records the deployment through the controlled writers (RUNNING, then READY, FAILED or BLOCKED). The Dokploy API key is injected, never read from the database.
+- `READY` and `FAILED` complete the job; `jobs.result` holds `{ outcome, deploymentId, environmentId, revision, url, stages, failedStage? }` with sanitized per-stage evidence. `BLOCKED` (abort, exception, unknown or degraded result) and infrastructure errors throw, so the runtime calls `queue.fail` with a sanitized message. The `AbortSignal` is honored before and during each stage.
+
 ## Runtime boundary
 
 `apps/worker` owns the polling/runtime loop. The API process does not execute queued handlers. PLT-006 intentionally does not implement Docker workspaces or GitHub execution; those remain later tasks.

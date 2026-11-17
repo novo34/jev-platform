@@ -6,3 +6,6 @@ export * from "./env.js";
 export * from "./mapping.js";
 export * from "./compose-template.js";
 export * from "./adapter.js";
+export * from "./orchestrator.js";
+export * from "./deployments.js";
+export * from "./project-config.js";
