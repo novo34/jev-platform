@@ -16,3 +16,15 @@
 - Do not change database role passwords on a running persistent volume without an explicit rotation procedure; Postgres bootstrap env variables do not reset existing database passwords.
 - Never regenerate `JEV_STAGING_ENCRYPTION_KEY` when preserving database data.
 - Before production promotion: independent review, image/build CI, restricted role and schema topology gate, real backup/restore evidence, TLS checks, runtime browser acceptance, separate production gates.
+
+## Password recovery in staging
+
+Set all three variables on the staging API to enable email delivery:
+
+- `JEV_STAGING_RESET_ORIGIN`: the public HTTPS origin, `https://jev.nuvurent.com` for JEV Staging.
+- `JEV_STAGING_RESET_FROM`: a sender on a verified Resend domain.
+- `JEV_STAGING_RESET_RESEND_API_KEY`: a sending key scoped to that domain, stored in the staging secret configuration.
+
+Keep link tracking disabled for the sending domain. The reset token is carried in the URL fragment and submitted in a POST body. All three values must be configured together. With no settings, existing sign-in remains available and recovery requests report temporary unavailability.
+
+After the authorized deployment, request a recovery link for a staging account and check actual email delivery. Confirm the link can change the password once, rejects reuse, and revokes a previously active session. Cover expired links using a dedicated acceptance account and report the result without copying the link or credentials into logs or issue trackers.

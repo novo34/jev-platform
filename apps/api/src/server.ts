@@ -1,6 +1,7 @@
 import { checkDatabase, createDatabasePool } from "@jev/db";
 import { parseKey } from "@jev/model-gateway";
 import { buildApi } from "./app.js";
+import { resendPasswordRecovery } from "./password-recovery.js";
 import { readFile } from "node:fs/promises";
 import { GitHubAppClient, GitHubInstallationFlow, GitHubOperations, type GitHubMergePolicy } from "@jev/control";
 
@@ -37,7 +38,7 @@ if (githubVariables.some((name) => process.env[name] !== undefined)) {
   }
   githubOperations = new GitHubOperations(pool, github, mergePolicy, verificationKeys);
 }
-const app = buildApi({ pool, githubInstallation, githubOperations });
+const app = buildApi({ pool, githubInstallation, githubOperations, passwordRecovery: resendPasswordRecovery(process.env) });
 
 app.addHook("onClose", async () => {
   await pool.end();
