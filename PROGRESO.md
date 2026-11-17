@@ -16,26 +16,26 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 
 ```json
 {
-  "foundation_sha": "828af46aace249e9a3c83a835215be5fcb2bd446",
-  "platform_sha": "e7302aeaba761c033104c7692ed510746476ef89",
+  "foundation_sha": "f145a850171fdd3e47638253bd0063e0b93068a8",
+  "platform_sha": "fc29ab37d65c8757f4ee7af9a61d52643e50ef6b",
   "last_completed": {
-    "task": "PLT-051",
+    "task": "PLT-011",
     "status": "DONE",
-    "pr": "https://github.com/novo34/jev-platform/pull/30",
-    "ci": "https://github.com/novo34/jev-platform/actions/runs/43949674151",
-    "review": "https://github.com/novo34/jev-platform/pull/30#issuecomment-6920931740"
+    "pr": "https://github.com/novo34/jev-platform/pull/34",
+    "ci": "https://github.com/novo34/jev-platform/actions/runs/44094656821",
+    "review": "https://github.com/novo34/jev-platform/pull/34#issuecomment-6945577631"
   },
   "next_task": {
-    "task": "PLT-011",
+    "task": "PLT-012",
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Implementar PLT-011 según docs/architecture/PLT-011-WORKSPACE-ENGINE.md, empezando por la robustez del worker."
+  "next_action": "Analizar PLT-012 (Permanent Staging Engine) y presentar al operador un diseño con decisiones antes de implementar."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. El operador autorizó el 2026-11-17 iniciar PLT-011 (Real Docker Workspace Worker); NEXT_TASK la seleccionó en Foundation `828af46`. Fase actual: diseño aprobado por el operador; implementación en curso. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). El operador autorizó el 2026-11-17 iniciar PLT-012. Fase actual: análisis y diseño. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -165,7 +165,9 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. La aceptación en staging está comprobada (17 de noviembre de 2026). El cierre en Foundation está completado. Queda la autorización de PLT-011 y, como mejora opcional de UX, validar el enlace de recuperación al abrirlo.
+PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. La aceptación en staging está comprobada (17 de noviembre de 2026). El cierre en Foundation está completado. Como mejora opcional de UX, validar el enlace de recuperación al abrirlo.
+
+PLT-011 está cerrada. Quedan como tareas posteriores la activación de `WORKSPACE_RUN` en un servidor dedicado y, como mejora, fijar por digest las imágenes base de `deploy/staging/Dockerfile.*`.
 
 Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
@@ -194,6 +196,8 @@ El 17 de noviembre de 2026 el operador decidió dejar CodeRabbit y usar Greptile
 
 El 17 de noviembre de 2026 el operador autorizó iniciar PLT-011 y fusionar la PR #33.
 
+El 17 de noviembre de 2026 el operador autorizó fusionar la PR #34 y la PR #27 de Foundation, e iniciar PLT-012.
+
 El 17 de noviembre de 2026 el operador decidió para PLT-011 (ver [diseño](docs/architecture/PLT-011-WORKSPACE-ENGINE.md)): (1) el ejecutor se prueba con Docker real en el CI de GitHub y no se activa en JEV Staging; su activación en un servidor o VM dedicado es posterior; (2) el ejecutor clona fuera del contenedor, que tiene red solo durante `npm ci` y después `--network none`; (3) límites por defecto de 1 CPU, 2 GB de RAM, 256 procesos, 15 min por comando y 60 min por tarea; (4) sin retención: el workspace se destruye siempre al terminar.
 
 ## Higiene del repositorio
@@ -208,6 +212,12 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 `.claude/agents/` define dos agentes de Claude Code: `lector-proyecto` (solo lectura) y `escritor-codigo`; no forman parte del producto.
 
 ## Siguiente paso exacto
+
+1. Analizar PLT-012.
+2. Presentar diseño con opciones al operador.
+3. Implementar con pruebas tras la decisión.
+
+Historial de PLT-011 (cerrada):
 
 1. HECHO (`e3ebb6b`): robustez del worker (una tarea en vuelo, timeout y recuperación de jobs `RUNNING` sin latido).
 2. HECHO (`2595b3b`): ejecutor `packages/workspace` (contenedor aislado, allowlist, límites y limpieza).
@@ -246,7 +256,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
    queda fuera de ese control automático. CI valida el archivo sin escribirlo.
 
 [gate]: https://github.com/novo34/base-skills_klever/blob/main/docs/JEV_MASTER_BACKLOG.md
-[backlog]: https://github.com/novo34/base-skills_klever/blob/828af46aace249e9a3c83a835215be5fcb2bd446/backlog/jev-master-tasks.yaml
+[backlog]: https://github.com/novo34/base-skills_klever/blob/f145a850171fdd3e47638253bd0063e0b93068a8/backlog/jev-master-tasks.yaml
 [pr]: https://github.com/novo34/jev-platform/pull/23
 [ci]: https://github.com/novo34/jev-platform/actions/runs/40024024437
 [main-ci]: https://github.com/novo34/jev-platform/actions/runs/40024566808
