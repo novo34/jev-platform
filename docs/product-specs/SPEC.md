@@ -362,6 +362,27 @@ Las credenciales de provider no deberán almacenarse en el repositorio ni devolv
 ### REQ-MDL-016
 La metadata visible de una credencial podrá incluir provider, estado configurado, fecha de actualización y últimos cuatro caracteres, pero nunca el secreto completo.
 
+### REQ-CACHE-001
+El Model Gateway deberá soportar caché de prompts con un prefijo estable al inicio de cada petición (instrucciones del sistema, reglas, skills y especificación) y el contenido variable (tarea, ContextPack específico, historial) al final.
+
+### REQ-CACHE-002
+El prefijo cacheable deberá ser determinista: el mismo contenido deberá producir el mismo prefijo byte a byte; ningún dato variable (fechas, identificadores, orden no estable) deberá insertarse dentro del prefijo.
+
+### REQ-CACHE-003
+Cada adaptador de provider deberá declarar si soporta caché de prompts y cómo se marca (p. ej. `cache_control` en Anthropic). El futuro adaptador Anthropic deberá implementarse con caché desde su primera versión.
+
+### REQ-CACHE-004
+Cada llamada deberá registrar tokens de entrada, tokens de salida, tokens de escritura de caché y tokens de lectura de caché, y agregarlos por llamada, tarea y proyecto.
+
+### REQ-CACHE-005
+JEV deberá exponer la tasa de acierto de caché (lecturas de caché sobre entrada cacheable) por provider/modelo, tarea y proyecto, para medir el ahorro real antes y después de activarla.
+
+### REQ-CACHE-006
+Un fallo, expiración o ausencia de caché no deberá bloquear la llamada: deberá ejecutarse sin caché y registrarse el motivo.
+
+### REQ-CACHE-007
+La estimación de coste deberá aplicar el precio configurado de escritura y lectura de caché por separado, sin asumir nunca el precio de entrada. Antes de una llamada pagada, el gateway deberá comprobar que están configuradas todas las tarifas aplicables (entrada, salida, escritura de caché y lectura de caché, si el proveedor cobra la caché); si falta alguna, deberá bloquear la llamada, igual que con cualquier precio ausente. El estado «no estimable» queda solo para respuestas inesperadas ya recibidas, por ejemplo un campo de uso de caché que el proveedor devuelve sin precio previsto; en ese caso se registra con motivo y se alerta.
+
 ---
 
 ## 12. Budgets y costes
@@ -1111,6 +1132,12 @@ ContextRetrievalPlan deberá declarar budget, max_iterations, required_queries, 
 
 ### REQ-CTX-008
 Exceder budget/max_iterations o terminar con required context ausente deberá producir BLOCKED, no ejecución parcial silenciosa.
+
+### REQ-CTX-009
+Cada tipo de tarea deberá declarar un presupuesto de tokens para su ContextPack; superarlo deberá producir una decisión de truncado registrada o BLOCKED según REQ-CTX-008.
+
+### REQ-CTX-010
+JEV deberá medir y registrar el tamaño real (tokens) del ContextPack enviado en cada handoff, por separado, con el tokenizador o contador del modelo elegido, o con una estimación declarada si el proveedor no ofrece contador, y compararlo con el presupuesto declarado (REQ-CTX-009), para detectar deriva y calcular el ahorro. El uso del proveedor se conserva como dato de la llamada completa.
 
 ---
 

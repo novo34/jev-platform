@@ -33,6 +33,7 @@ Control-plane boundaries and contracts live in `docs/CONTROL_PLANE.md`.
 GitHub App installation, guarded operations and real acceptance evidence are documented in `docs/GITHUB_APP.md`.
 Queue and worker runtime behavior lives in `docs/QUEUE_WORKER.md`.
 Project Registry and multi-repository rules live in `docs/PROJECT_REGISTRY.md`.
+Pre-development improvements and the adjusted execution priority (prompt caching, Context Runtime) live in `docs/architecture/MEJORAS-PRE-DESARROLLO-2026-11.md`.
 
 Resume development with [PROGRESO.md](PROGRESO.md) and the Development Control Gate in Foundation.
 

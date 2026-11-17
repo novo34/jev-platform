@@ -2,7 +2,19 @@
 
 **Canonical baseline:** check the current `jev-platform/main` HEAD and the latest Foundation `main` before recording acceptance; do not treat an older SHA in this document as canonical.
 
-**State:** OpenAI and DeepSeek **health checks** were observed as `ok: true` in the operator's local UI on 2026-10-12. They are not proof of a charged generation or persisted cost. PR #15 added the executable, explicitly authorized *development-only* paid-call harness and was merged as `88151347d7d7846efdeed74fa72be32869aba075`. **LIVE_PAID_CALL_ACCEPTANCE=PENDING.** No production/deployment approval follows from this checklist.
+**State:** OpenAI and DeepSeek **health checks** were observed as `ok: true` in the operator's local UI on 2026-10-12. They are not proof of a charged generation or persisted cost. PR #15 added the executable, explicitly authorized *development-only* paid-call harness and was merged as `88151347d7d7846efdeed74fa72be32869aba075`. On 2026-10-12 only health checks were recorded, so `LIVE_PAID_CALL_ACCEPTANCE` was `PENDING` at that date. **Current: LIVE_PAID_CALL_ACCEPTANCE=ACCEPTED** (paid-call evidence of 2026-10-13; see the update below). No production/deployment approval follows from this checklist.
+
+**Status update (2026-11-17):** Live paid-call acceptance is **ACCEPTED** (DONE), confirmed by the operator on 2026-11-17 on the evidence below, which the operator supplied; it was not re-executed in this review. The estimated CHF amounts use configured prices and are not invoices.
+
+| Item | Evidence |
+| --- | --- |
+| Execution | 2026-10-13, development harness `npm run accept:gateway -w @jev/api` on local `main` at `4da1e99`, `maxOutputTokens=16`, `maxRetries=0`, no fallback, local development organization |
+| DeepSeek | model `deepseek-flash`, request `3d714fb4-3801-4dfe-be7c-305245c1a8e2`, 1 attempt, tokens 34/16/50, estimated cost CHF 0.0000245, call and cost persisted in PostgreSQL: true/true. SUCCESS |
+| OpenAI | model `gpt-4.1-nano`, request `f76632ed-cbc6-4bd0-876b-19c97ef95b46`, 1 attempt, tokens 11/2/13, estimated cost CHF 0.0000019, persisted: true/true. SUCCESS |
+| Evidence | [Issue #12](https://github.com/novo34/jev-platform/issues/12), [comment of 2026-10-13](https://github.com/novo34/jev-platform/issues/12#issuecomment-6152023926); issue closed as completed by the operator on 2026-10-22 |
+| Gateway integration CI | [Run 38158880609](https://github.com/novo34/jev-platform/actions/runs/38158880609) (2026-10-11, merge of PR #9 at `6f4b822`, SUCCESS) |
+| Later CI | [Run 39810983854](https://github.com/novo34/jev-platform/actions/runs/39810983854) (2026-10-22, PR #22 head `805c57b`; validate, staging-runtime-smoke, staging-compose and staging-image-build SUCCESS) |
+| Status | DONE, confirmed by the operator on 2026-11-17 |
 
 ## Preconditions and secret-safe setup
 
