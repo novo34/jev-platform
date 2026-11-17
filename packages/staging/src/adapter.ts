@@ -14,7 +14,7 @@ import {
   parseEnvironmentComposes,
   saveEnvironmentBody,
   type ComposeDetails,
-  type ComposeRef
+  type ComposeListEntry
 } from "./mapping.js";
 import {
   requireRevision,
@@ -293,15 +293,23 @@ export class DokployStagingAdapter implements StagingProviderAdapter {
    * owner was saved (a foreign compose always carries its own marker and database values).
    */
   private async findCompose(appName: string, request: StagingDeploymentRequest): Promise<ComposeDetails | null> {
-    const found = (await this.listComposes()).find((entry) => entry.appName === appName);
-    if (!found) return null;
-    const compose = parseCompose(await this.cfg.client.get(ENDPOINTS.composeOne, { composeId: found.composeId }));
+    // environment.one does not expose appName: candidates are located by name (the adapter creates with name = appName)
+    // and confirmed with compose.one (real appName) before anything is adopted or used.
+    let compose: ComposeDetails | null = null;
+    for (const entry of (await this.listComposes()).filter((candidate) => candidate.name === appName)) {
+      const details = parseCompose(await this.cfg.client.get(ENDPOINTS.composeOne, { composeId: entry.composeId }));
+      if (details.appName === appName) {
+        compose = details;
+        break;
+      }
+    }
+    if (!compose) return null;
     const owner = parseEnv(compose.env)[OWNER_ENV];
     if (owner === undefined ? compose.env.trim() !== "" : owner !== ownerOf(request)) throw new StagingOwnershipError();
     return compose;
   }
 
-  private async listComposes(): Promise<ComposeRef[]> {
+  private async listComposes(): Promise<ComposeListEntry[]> {
     return parseEnvironmentComposes(await this.cfg.client.get(ENDPOINTS.environmentOne, { environmentId: this.cfg.environmentId }));
   }
 

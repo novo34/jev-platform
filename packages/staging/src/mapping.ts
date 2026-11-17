@@ -1,16 +1,16 @@
 /**
  * Isolated mapping layer between the adapter and the Dokploy HTTP API.
  *
- * VERIFY-R4: every endpoint name, request body and response field in this file
- * comes from the public documentation and was NOT checked against a real
- * instance. Before step R4 (real staging) each item tagged VERIFY-R4 must be
- * confirmed (see docs/architecture/PLT-012-PERMANENT-STAGING.md). Nothing
- * outside this file knows the wire format.
+ * Verified against the OpenAPI document of Dokploy v0.31.2 (inputs): environment.one, compose.one, compose.create,
+ * compose.update, compose.saveEnvironment, compose.deploy/redeploy, domain.byComposeId and domain.create.
+ * VERIFY-R4 stays only on what is NOT verified: the responses of the POST calls (e.g. that compose.create returns
+ * `composeId`) and the deployment behaviour. See docs/architecture/PLT-012-PERMANENT-STAGING.md. Nothing outside
+ * this file knows the wire format.
  */
 import { DokployError } from "./errors.js";
 
 export const ENDPOINTS = {
-  // VERIFY-R4: lookup of existing composes by environment (`environment.one`, field `compose`/`composes`).
+  // Verified (v0.31.2): lookup of existing composes by environment (`environment.one`, field `compose`).
   environmentOne: "environment.one",
   composeCreate: "compose.create",
   composeUpdate: "compose.update",
@@ -29,6 +29,13 @@ export interface ComposeRef {
   composeId: string;
   name: string;
   appName: string;
+}
+
+/** Element of `environment.one.compose[]`: the real API does NOT include `appName` there (only `compose.one` does). */
+export interface ComposeListEntry {
+  composeId: string;
+  name: string;
+  composeStatus?: string;
 }
 
 export interface ComposeDetails extends ComposeRef {
@@ -67,7 +74,7 @@ export function composeCreateBody(input: { name: string; appName: string; enviro
     appName: input.appName,
     environmentId: input.environmentId,
     composeType: "docker-compose",
-    // VERIFY-R4: raw source with the generated file (no Git source configured by this step).
+    // Verified (v0.31.2 input): raw source with the generated file (no Git source configured by this step).
     sourceType: "raw",
     composeFile: input.composeFile,
     ...(input.serverId ? { serverId: input.serverId } : {})
@@ -78,7 +85,7 @@ export function composeUpdateBody(input: { composeId: string; composeFile: strin
   return { composeId: input.composeId, sourceType: "raw", composeFile: input.composeFile };
 }
 
-/** VERIFY-R4: exact body of compose.saveEnvironment (assumed `{composeId, env}` with `KEY=VALUE` lines). */
+/** Verified (v0.31.2 input): body of compose.saveEnvironment is `{composeId, env}` with `KEY=VALUE` lines. */
 export function saveEnvironmentBody(composeId: string, env: Record<string, string>): Record<string, unknown> {
   return { composeId, env: serializeEnv(env) };
 }
@@ -91,13 +98,22 @@ export function domainCreateBody(input: { composeId: string; host: string; servi
     port: input.port,
     https: true,
     certificateType: "letsencrypt",
-    // VERIFY-R4: domainType "compose" may be required to bind the domain to a compose service.
+    // Verified (v0.31.2 input): domainType "compose" binds the domain to a compose service.
     domainType: "compose"
   };
 }
 
 export function parseComposeCreated(raw: unknown): { composeId: string } {
   return { composeId: asString(asObject(raw, "compose.create").composeId, "compose.create.composeId") };
+}
+
+function toComposeListEntry(raw: unknown, what: string): ComposeListEntry {
+  const object = asObject(raw, what);
+  return {
+    composeId: asString(object.composeId, `${what}.composeId`),
+    name: asString(object.name, `${what}.name`),
+    ...(typeof object.composeStatus === "string" ? { composeStatus: object.composeStatus } : {})
+  };
 }
 
 function toComposeRef(raw: unknown, what: string): ComposeRef {
@@ -109,11 +125,11 @@ function toComposeRef(raw: unknown, what: string): ComposeRef {
   };
 }
 
-export function parseEnvironmentComposes(raw: unknown): ComposeRef[] {
+export function parseEnvironmentComposes(raw: unknown): ComposeListEntry[] {
   const object = asObject(raw, "environment.one");
   const list = object.compose ?? object.composes;
   if (!Array.isArray(list)) return invalid("environment.one.compose");
-  return list.map((entry, index) => toComposeRef(entry, `environment.one.compose[${index}]`));
+  return list.map((entry, index) => toComposeListEntry(entry, `environment.one.compose[${index}]`));
 }
 
 export function parseCompose(raw: unknown): ComposeDetails {

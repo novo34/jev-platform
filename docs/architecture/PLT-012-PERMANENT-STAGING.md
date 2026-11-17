@@ -16,7 +16,7 @@ Referencias: SPEC §16 REQ-STG-001..012 (`docs/product-specs/SPEC.md`), ROADMAP 
 
 ## Decisiones del operador (2026-11-17)
 
-1. **Alcance por fases:** primero el motor, probado en CI con un Dokploy simulado. Después, como paso aparte y aprobado por el operador (R4), el staging real del primer proyecto (Espacore) en el servidor. PLT-012 se cierra con esa evidencia real.
+1. **Alcance por fases:** primero el motor, probado en CI con un Dokploy simulado. Después, como paso aparte y aprobado por el operador (R4), el staging real del primer caso en el servidor: un proyecto de prueba mínimo `novo34/jev-staging-demo` (decisión del operador, ver «Verificación de la API y primer caso real»); Espacore queda para después. PLT-012 se cierra con esa evidencia real.
 2. **Proveedor:** API de Dokploy (`POST /api/compose.create`, `compose.saveEnvironment`, `domain.create` con `certificateType` letsencrypt, `compose.deploy`/`redeploy`, lectura de estado; autenticación `x-api-key`), detrás del contrato neutral de FND-026. La API exacta (cuerpos y respuestas) se verifica contra la instancia antes del paso real.
 3. **Base de datos:** un contenedor PostgreSQL propio por proyecto, con volumen propio, dentro del Compose del staging del proyecto. Roles owner/runtime separados al estilo PLT-008. Nunca credenciales ni datos de producción.
 4. **Ramas:** nueva operación de GitHub controlada que integra la rama de la tarea en `staging_branch` del repositorio, con las mismas guardas que PLT-010 (aprobaciones/estado de la tarea, SHA exacto, idempotencia, nunca a `main`/`master`/producción). El staging se redespliega desde `staging_branch` y permanece.
@@ -97,7 +97,7 @@ El deployment `READY` (que habilita `AWAITING_HUMAN` y la aprobación ligada a l
 2. **`appImage` solo con digest.** Una imagen sin `@sha256:<64 hex>` se rechaza (`app_image_digest_required`, sin llamadas a Dokploy). Aun con digest, una imagen no prueba de qué commit procede: si la ruta de salud no informa la revisión, la etapa queda `degraded` y la ejecución en `BLOCKED` (nunca `READY`).
 3. **Comprobación contra la integración (responsabilidad del job, vía elegida).** No se añade una llamada a GitHub al paquete. El job `STAGING_DEPLOY` exige que `payload.revision` sea igual al `sha` que `GITHUB_INTEGRATE_STAGING` devolvió y dejó en el ledger `github_operations` para esa tarea (último `SUCCESS`, `loadIntegratedRevision`, solo SELECT, sin migraciones ni permisos nuevos). Si no hay integración o no coincide, el job falla con `revision_not_integrated` antes de cargar configuración o registrar nada. Que `staging_branch` siga apuntando a ese SHA lo garantiza la integración; como el build está fijado al SHA, el código desplegado coincide con lo registrado aunque la rama avance después.
 4. **`JEV_STAGING_REVISION=<sha>`** (no secreto) se añade a las variables de Dokploy y se escribe literal en el entorno de `app`, `migrate` y `seed`. No puede sobrescribirse con `extraEnv` ni `secretRefs`.
-5. **Health/E2E.** Si la ruta de salud devuelve la revisión (cabecera `x-jev-staging-revision` o campo JSON `revision`/`JEV_STAGING_REVISION`), debe coincidir: una revisión distinta da `*_revision_mismatch` y la etapa `failed`, es decir deployment `FAILED` (definitivo: el código en ejecución no es el registrado). Si no la devuelve se registra `revisionCheck: "unverifiable"` en la evidencia sin bloquear (con `appImage`, `degraded` y por tanto `BLOCKED`). VERIFY-R4: confirmar con Espacore que su ruta de salud expone la revisión.
+5. **Health/E2E.** Si la ruta de salud devuelve la revisión (cabecera `x-jev-staging-revision` o campo JSON `revision`/`JEV_STAGING_REVISION`), debe coincidir: una revisión distinta da `*_revision_mismatch` y la etapa `failed`, es decir deployment `FAILED` (definitivo: el código en ejecución no es el registrado). Si no la devuelve se registra `revisionCheck: "unverifiable"` en la evidencia sin bloquear (con `appImage`, `degraded` y por tanto `BLOCKED`). VERIFY-R4: confirmar con `novo34/jev-staging-demo` que su ruta `/health` expone la revisión (y más adelante con Espacore).
 
 ### Revisión de Greptile de la PR #35 (sobre `2150435`)
 
@@ -106,13 +106,18 @@ El deployment `READY` (que habilita `AWAITING_HUMAN` y la aprobación ligada a l
 3. **E2E degradado.** `runOnlineE2E` conserva `degraded` y la evidencia por ruta (`metadata.routes`); si alguna ruta está degradada devuelve `ok: true`, `detail: "e2e_degraded"` y `metadata.degraded: true`, que `decideOutcome` convierte en `BLOCKED`.
 4. **Reserva por staging.** `PgDeploymentRegistry.begin` toma `pg_try_advisory_lock` de sesión (clave `staging:<projectId>:<repositoryId>`) en una conexión dedicada del pool que se mantiene hasta `finish` (también en fallo, excepción y cancelación). Si otra ejecución la tiene, no espera: registra el deployment y lo cierra `BLOCKED` con `blockedReason: "staging_busy"`, sin llamar al adaptador; el job lanza `staging_blocked` y el runtime reintenta. El lock se libera al cerrar la conexión, de modo que un proceso caído no deja el staging reservado. `jev_runtime` puede usar las funciones de sistema `pg_try_advisory_lock`/`pg_advisory_unlock` sin GRANT (comprobado en `packages/db/src/runtime-role.test.ts`). Coste: una conexión del pool por pipeline en curso. Limitación: tras cancelar, una llamada ya enviada a Dokploy puede terminar en segundo plano mientras otra ejecución obtiene el lock.
 
+### Verificación de la API y primer caso real
+
+**(a) API verificada contra Dokploy v0.31.2** (`dokploy.nuvurent.com`, HTTPS), solo lectura: documento OpenAPI de `settings.getOpenApiDocument` y GETs, sin POST. Quedan verificados (entradas) `environment.one`, `compose.one`, `compose.create`, `compose.update`, `compose.saveEnvironment`, `compose.deploy`/`redeploy`, `domain.byComposeId` y `domain.create`, y coinciden con `mapping.ts`/`adapter.ts` salvo una diferencia: los elementos de `environment.one.compose[]` traen `composeId`, `name`, `composeStatus`, `createdAt`, `description`, `icon`, `server`, `serverId`, **sin `appName`**. Corrección: el elemento de la lista es un tipo propio (`ComposeListEntry`); `findCompose` localiza candidatos por `name === appName` (el adaptador crea con `name = appName`) y confirma con `compose.one` que su `appName` real coincide y que lleva la marca de propietario antes de adoptarlo o usarlo; `parseCompose` (`compose.one`) sigue exigiendo `appName`. Se mantienen todas las garantías de propiedad. Prueba que falla con el código anterior en `staging.test.ts` (forma real de `environment.one` en el simulado).
+
+**(b) Decisión del operador:** el primer caso real del paso R4 NO es Espacore sino un proyecto de prueba mínimo `novo34/jev-staging-demo` (app pequeña con `/health`, migración, seed y Dockerfile), para no arriesgar Espacore mientras el motor está en desarrollo. Espacore queda para después.
+
 ### Pendiente de verificar contra la instancia real (antes del paso R4)
 
-Todo lo marcado `VERIFY-R4` en `mapping.ts` y `compose-template.ts`:
+Verificado lo anterior, siguen marcados `VERIFY-R4` (en `mapping.ts`, `compose-template.ts` y `adapter.ts`):
 
-1. Búsqueda de composes existentes: `GET environment.one?environmentId=` y su campo `compose`/`composes` (si no existe, usar `project.all`).
-2. Cuerpo exacto de `compose.create` (`sourceType: 'raw'`, `composeFile`), `compose.update` y `compose.saveEnvironment` (se asume `{composeId, env}` con líneas `KEY=VALUE`).
-3. `domain.create`: si exige `domainType: 'compose'`; forma de la respuesta de `domain.byComposeId` y de `compose.one` (`composeStatus` con `idle|running|done|error`).
+1. Respuestas de los POST (p. ej. que `compose.create` devuelve `composeId`, respuesta de `domain.create`).
+2. Valores reales de `composeStatus` (`idle|running|done|error`) y forma de la respuesta de `domain.byComposeId` en un despliegue real.
 4. Si `compose.deploy` deja `composeStatus` en `running` de forma síncrona (si no, la lectura inmediata puede ver el estado anterior) y qué devuelve un despliegue fallido.
 5. Origen del código: el Compose usa `build.context` con URL Git fijada al SHA exacto de la revisión (`https://github.com/<repo>.git#<sha40>`, Docker admite un commit como ref; nunca la rama); los repositorios privados necesitan credenciales (alternativa: `appImage` o origen GitHub de Dokploy con `composePath`). Ver «Integridad de la revisión desplegada».
 6. Compatibilidad del Compose del host con `configs.content` (script de roles) y con `deploy.resources.limits`; nombre real del volumen y de la red tras el prefijo de Dokploy.
@@ -133,7 +138,7 @@ Todo lo marcado `VERIFY-R4` en `mapping.ts` y `compose-template.ts`:
 * CI con Dokploy simulado (servidor HTTP falso).
 * PostgreSQL efímero para el escritor de deployments y los triggers (`packages/staging/src/deployments.test.ts`: READY con `url` y revisión exactas, FAILED/BLOCKED sin acceso a `AWAITING_HUMAN`, un fallo posterior supera a un READY anterior).
 * Operación GitHub con transporte simulado.
-* Prueba real (R4) en el paso de Espacore.
+* Prueba real (R4) con el proyecto de prueba `novo34/jev-staging-demo`.
 
 ## Plan de entrega
 
@@ -142,4 +147,4 @@ Todo lo marcado `VERIFY-R4` en `mapping.ts` y `compose-template.ts`:
 3. HECHO: adaptador Dokploy + plantilla de Compose (`packages/staging`).
 4. HECHO: orquestador + job `STAGING_DEPLOY` + deployments controlados (ver «Implementación del orquestador»).
 5. Pruebas de CI.
-6. Paso real con Espacore (aprobación del operador, R4).
+6. Paso real con `novo34/jev-staging-demo` (aprobación del operador, R4); Espacore después.

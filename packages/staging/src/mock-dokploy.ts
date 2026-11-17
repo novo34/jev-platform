@@ -119,7 +119,7 @@ export class MockDokploy {
     switch (`${call.method} ${call.path}`) {
       case "GET environment.one": {
         if (call.query.environmentId !== this.environmentId) return send(404, { message: "Environment not found" });
-        return send(200, { environmentId: this.environmentId, compose: [...this.composes.values()].map(({ composeId, name, appName }) => ({ composeId, name, appName })) });
+        return send(200, { environmentId: this.environmentId, compose: [...this.composes.values()].map(({ composeId, name, composeStatus }) => ({ composeId, name, composeStatus, description: null, icon: null, server: null, serverId: null, createdAt: "2026-01-01T00:00:00.000Z" })) });
       }
       case "POST compose.create": {
         if (!need("name", "environmentId", "composeType", "sourceType")) return send(400, { message: "invalid body" });

@@ -462,6 +462,24 @@ describe("deployed revision integrity (build from the exact SHA)", () => {
       expect(writes()).toEqual([]);
     });
 
+    it("lists composes with the real environment.one shape (no appName) and confirms appName via compose.one", async () => {
+      await adapter().deploy(request());
+      mock.calls.length = 0;
+      const listed = (await client().get("environment.one", { environmentId: "env_1" })) as { compose: Array<Record<string, unknown>> };
+      expect(listed.compose[0]).not.toHaveProperty("appName");
+      expect(listed.compose[0]).toHaveProperty("composeStatus");
+      expect(await adapter().deploy(request())).toMatchObject({ ok: true, detail: "reused_and_redeployed" });
+      expect(mock.calls.some((c) => c.path === "compose.one")).toBe(true);
+    });
+
+    it("does not adopt a compose whose name matches but whose real appName differs", async () => {
+      mock.composes.set("cmp_y", { composeId: "cmp_y", name: "jev-stg-espacore", appName: "jev-stg-espacore-zzz", environmentId: "env_1", composeFile: "", env: "", composeStatus: "done" });
+      const result = await adapter().deploy(request());
+      expect(result.ok).toBe(true);
+      expect(mock.composes.get("cmp_y")!.env).toBe("");
+      expect(mock.composes.size).toBe(2);
+    });
+
     it("does not let extra env or secret refs override JEV_STAGING_OWNER", async () => {
       await expect(adapter({ extraEnv: { JEV_STAGING_OWNER: "x:y" } }).deploy(request())).resolves.toMatchObject({ ok: false, detail: "env_reserved_name_rejected:JEV_STAGING_OWNER" });
     });
