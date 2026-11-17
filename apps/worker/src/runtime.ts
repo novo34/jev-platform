@@ -63,14 +63,18 @@ export class WorkerRuntime {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    // A new process has nothing in flight: jobs still locked by this id belong to a previous
+    // process. Release them before registerWorker renews the heartbeat and makes them look alive.
+    await this.queue.releaseWorkerJobs(this.options.workerId);
     await this.queue.registerWorker(this.options.workerId);
 
     this.pollTimer = setInterval(() => {
-      void this.pollOnce();
+      // A late failure (e.g. the pool closed after a stop timeout) must not become an unhandled rejection.
+      this.pollOnce().catch(() => undefined);
     }, this.pollIntervalMs);
 
     this.heartbeatTimer = setInterval(() => {
-      void this.queue.heartbeat(this.options.workerId);
+      this.queue.heartbeat(this.options.workerId).catch(() => undefined);
     }, this.heartbeatIntervalMs);
 
     this.recoveryTimer = setInterval(() => {
@@ -106,8 +110,23 @@ export class WorkerRuntime {
         })
       ]);
       if (waitTimer) clearTimeout(waitTimer);
-      // The job stays RUNNING; stale-job recovery requeues it later.
-      if (!finished) this.inFlightAbort?.abort(new Error("worker_stopping"));
+      if (!finished) {
+        this.inFlightAbort?.abort(new Error("worker_stopping"));
+        // Give the handler (workspace cleanup) and runOnce (final queue.fail/complete) a second,
+        // bounded window so the caller does not close the pool underneath them. If even that
+        // expires, the job stays RUNNING and orphan recovery requeues it once the heartbeat lapses.
+        let graceTimer: NodeJS.Timeout | undefined;
+        await Promise.race([
+          inFlight.then(
+            () => undefined,
+            () => undefined
+          ),
+          new Promise<void>((resolve) => {
+            graceTimer = setTimeout(resolve, this.stopTimeoutMs);
+          })
+        ]);
+        if (graceTimer) clearTimeout(graceTimer);
+      }
     }
 
     await this.queue.stopWorker(this.options.workerId);

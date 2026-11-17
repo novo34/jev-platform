@@ -10,7 +10,7 @@ import { sanitizeOutput } from "./sanitize.js";
 export type WorkspaceErrorCode =
   | "invalid_spec" | "invalid_branch" | "command_not_allowed" | "use_install" | "install_required"
   | "already_installed" | "clone_failed" | "docker_failed" | "network_disconnect_failed"
-  | "task_timeout" | "aborted" | "workspace_destroyed";
+  | "task_deadline_exceeded" | "aborted" | "workspace_destroyed" | "cleanup_failed";
 
 export class WorkspaceError extends Error {
   constructor(readonly code: WorkspaceErrorCode, message: string) {
@@ -102,7 +102,10 @@ export class WorkspaceExecutor {
     this.limits = resolveLimits(options.limits);
     this.now = options.now ?? Date.now;
     this.newId = options.idGenerator ?? (() => randomUUID().replace(/-/g, "").slice(0, 16));
-    this.log = options.logger ?? (() => {});
+    // Default: warnings (e.g. failed cleanup) reach stderr, sanitized; info stays silent.
+    this.log = options.logger ?? ((event) => {
+      if (event.level === "warn") console.warn(sanitizeOutput(`[workspace${event.workspaceId ? ` ${event.workspaceId}` : ""}] ${event.message}`));
+    });
     this.baseUrl = options.cloneBaseUrl ?? "https://github.com";
     if (!/^https:\/\/[A-Za-z0-9.-]+$/.test(this.baseUrl)) throw new WorkspaceError("invalid_spec", "invalid clone base URL");
   }
@@ -117,28 +120,47 @@ export class WorkspaceExecutor {
     }
     const id = this.newId();
     if (!SAFE_NAME.test(id)) throw new WorkspaceError("invalid_spec", "invalid workspace id");
+    // The task deadline starts here: it covers clone, container creation and every later command.
     const ws = new Workspace({
       id, taskId: spec.taskId, token: spec.token, signal: spec.signal, docker: this.docker, limits: this.limits, gitImage: this.gitImage,
       now: this.now, log: this.log, deadline: this.now() + this.limits.taskTimeoutMs
     });
+    ws.armDeadlineTimer();
     try {
       await this.provision(ws, spec);
     } catch (error) {
-      await ws.destroy();
+      await ws.destroy(true);
       throw ws.wrap(error);
     }
     this.log({ level: "info", message: "workspace created", workspaceId: id });
     return ws;
   }
 
-  /** Creates, runs `fn` and always destroys (success, error, timeout or abort). */
+  /**
+   * Creates, runs `fn` and always destroys (success, error, timeout or abort). If the destruction
+   * fails (container or volume not removed) it throws `cleanup_failed`; when `fn` also threw, the
+   * original error is kept and the cleanup error is attached as `cleanupError`.
+   */
   async withWorkspace<T>(spec: WorkspaceSpec, fn: (workspace: Workspace) => Promise<T>): Promise<T> {
     const ws = await this.create(spec);
+    let result: T;
     try {
-      return await fn(ws);
-    } finally {
-      await ws.destroy();
+      result = await fn(ws);
+    } catch (error) {
+      if (!(await ws.destroy())) {
+        const cleanup = new WorkspaceError("cleanup_failed", "workspace cleanup failed; container or volume may remain");
+        if (error instanceof Error) {
+          Object.defineProperty(error, "cleanupError", { value: cleanup, enumerable: false, configurable: true, writable: true });
+          throw error;
+        }
+        throw new AggregateError([error, cleanup], "workspace failed and cleanup failed");
+      }
+      throw error;
     }
+    if (!(await ws.destroy())) {
+      throw new WorkspaceError("cleanup_failed", "workspace cleanup failed; container or volume may remain");
+    }
+    return result;
   }
 
   /** Removes every container and volume labelled jev.workspace. Call at startup, not while tasks run. */
@@ -217,8 +239,13 @@ export class Workspace {
   private state: State = "created";
   private cleaned = false;
   private destroying: Promise<boolean> | undefined;
+  private expired = false;
+  private deadlineTimer: NodeJS.Timeout | undefined;
+  private readonly deadlineAbort = new AbortController();
+  private readonly signal: AbortSignal;
 
   constructor(private readonly init: WorkspaceInit) {
+    this.signal = init.signal ? AbortSignal.any([init.signal, this.deadlineAbort.signal]) : this.deadlineAbort.signal;
     this.id = init.id;
     this.taskId = init.taskId;
     this.volumeName = `jev-ws-${init.id}`;
@@ -236,11 +263,46 @@ export class Workspace {
     return new WorkspaceError("docker_failed", this.clean(error instanceof Error ? error.message : String(error)));
   }
 
+  /**
+   * @internal Own timer for the total task deadline: destroys the workspace even if no exec() is
+   * running (idle workspace). Cancelled by destroy(); unref'd so it never keeps the process alive.
+   */
+  armDeadlineTimer(): void {
+    const remaining = Math.max(0, this.init.deadline - this.init.now());
+    this.deadlineTimer = setTimeout(() => {
+      this.deadlineTimer = undefined;
+      this.expired = true;
+      this.deadlineAbort.abort(new Error("task_deadline_exceeded"));
+      this.init.log({ level: "warn", workspaceId: this.id, message: "task deadline exceeded; destroying workspace" });
+      void this.destroy(true);
+    }, remaining);
+    this.deadlineTimer.unref?.();
+  }
+
+  private remainingMs(): number { return this.init.deadline - this.init.now(); }
+
+  private checkDeadline(): void {
+    if (this.expired || this.remainingMs() <= 0) {
+      this.expired = true;
+      throw new WorkspaceError("task_deadline_exceeded", "task time limit exceeded");
+    }
+  }
+
+  /** Entry guard of install()/run(): past the deadline, make sure the workspace is destroyed, then fail. */
+  private async ensureWithinDeadline(): Promise<void> {
+    if (this.expired || this.remainingMs() <= 0) {
+      this.expired = true;
+      await this.destroy();
+      this.checkDeadline();
+    }
+  }
+
   /** @internal Low-level call with abort/deadline checks; throws on failure unless allowFailure. */
   async docker(args: string[], opts: { stdin?: string; allowFailure?: boolean; timeoutMs?: number } = {}): Promise<DockerRunResult> {
     this.checkAbort();
-    const timeoutMs = opts.timeoutMs ?? this.init.limits.commandTimeoutMs;
-    const result = await this.init.docker.run(args, { stdin: opts.stdin, timeoutMs, signal: this.init.signal });
+    // Never outlive the task deadline: the call gets the smaller of its own timeout and the time left.
+    const timeoutMs = Math.min(opts.timeoutMs ?? this.init.limits.commandTimeoutMs, this.remainingMs());
+    const result = await this.init.docker.run(args, { stdin: opts.stdin, timeoutMs, signal: this.signal });
     this.checkAbort();
     if (!opts.allowFailure && (result.exitCode !== 0 || result.timedOut)) {
       throw new WorkspaceError("docker_failed", `docker ${args[0]} failed (exit ${result.exitCode}): ${this.clean(result.stderr).slice(-500)}`);
@@ -249,11 +311,13 @@ export class Workspace {
   }
 
   private checkAbort(): void {
+    this.checkDeadline();
     if (this.init.signal?.aborted) throw new WorkspaceError("aborted", "workspace operation aborted");
   }
 
   /** `npm ci` with network, then removes every network and verifies it. Fails closed. */
   async install(): Promise<CommandRecord> {
+    await this.ensureWithinDeadline();
     if (this.state === "dead") throw new WorkspaceError("workspace_destroyed", "workspace was destroyed");
     if (this.state === "installed") throw new WorkspaceError("already_installed", "dependencies already installed");
     let record: CommandRecord;
@@ -280,6 +344,7 @@ export class Workspace {
       throw new WorkspaceError("command_not_allowed", "command is not in the allowlist");
     }
     if (command === "npm ci") throw new WorkspaceError("use_install", "use install() for npm ci");
+    await this.ensureWithinDeadline();
     if (this.state === "dead") throw new WorkspaceError("workspace_destroyed", "workspace was destroyed");
     if (this.state !== "installed") throw new WorkspaceError("install_required", "install() must succeed before run()");
     return this.exec(command);
@@ -328,16 +393,17 @@ export class Workspace {
   private async exec(command: string): Promise<CommandRecord> {
     const argv = COMMAND_ALLOWLIST.get(command)!;
     this.checkAbort();
-    const remaining = this.init.deadline - this.init.now();
+    const remaining = this.remainingMs();
     if (remaining <= 0) {
+      this.expired = true;
       await this.destroy();
-      throw new WorkspaceError("task_timeout", "task time limit exceeded");
+      throw new WorkspaceError("task_deadline_exceeded", "task time limit exceeded");
     }
     const timeoutMs = Math.min(this.init.limits.commandTimeoutMs, remaining);
     const started = this.init.now();
     const result = await this.init.docker.run(
       argv[0] === "git" ? this.gitArgs(argv) : ["exec", "--user", CONTAINER_USER, "-w", WORKSPACE_DIR, this.containerName, ...argv],
-      { timeoutMs, signal: this.init.signal }
+      { timeoutMs, signal: this.signal }
     );
     const durationMs = Math.max(0, this.init.now() - started);
     const combined = this.clean(`${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`);
@@ -345,6 +411,10 @@ export class Workspace {
     const record: CommandRecord = { command, exitCode: result.exitCode, durationMs, timedOut: result.timedOut, output };
     this.records.push(record);
     this.init.log({ level: "info", workspaceId: this.id, message: `command "${command}" exit=${result.exitCode} timedOut=${result.timedOut} ms=${durationMs}` });
+    if (this.expired) {
+      await this.destroy();
+      throw new WorkspaceError("task_deadline_exceeded", "task time limit exceeded");
+    }
     if (this.init.signal?.aborted) {
       await this.destroy();
       throw new WorkspaceError("aborted", "workspace operation aborted");
@@ -357,9 +427,11 @@ export class Workspace {
   }
 
   /** Removes container(s) and volume. Idempotent and never throws; resolves false if something could not be removed. */
-  async destroy(): Promise<boolean> {
+  async destroy(again = false): Promise<boolean> {
     this.state = "dead";
-    if (this.cleaned) return true;
+    if (this.deadlineTimer) { clearTimeout(this.deadlineTimer); this.deadlineTimer = undefined; }
+    // `again` (internal) re-runs cleanup after a deadline/abort raced an in-flight create call.
+    if (this.cleaned && !again) return true;
     this.destroying ??= this.doDestroy().finally(() => { this.destroying = undefined; });
     return this.destroying;
   }

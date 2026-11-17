@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertTaskBranch } from "@jev/control";
 import {
   COMMAND_ALLOWLIST, FakeDockerCli, WorkspaceError, WorkspaceExecutor, isTaskBranch, sanitizeOutput,
@@ -225,7 +225,7 @@ describe("install and run", () => {
     expect(fake.callsMatching(["exec"]).at(-1)!.timeoutMs).toBe(200_000);
     now += 250_000;
     const before = fake.callsMatching(["exec"]).length;
-    await expect(ws.run("npm test")).rejects.toMatchObject({ code: "task_timeout" });
+    await expect(ws.run("npm test")).rejects.toMatchObject({ code: "task_deadline_exceeded" });
     expect(fake.callsMatching(["exec"]).length).toBe(before);
     expect(fake.callsMatching(["rm", "-f"])).toHaveLength(1);
   });
@@ -315,5 +315,92 @@ describe("sanitizeOutput", () => {
 
   it("keeps harmless text", () => {
     expect(sanitizeOutput("npm test ok\n3 passed")).toBe("npm test ok\n3 passed");
+  });
+});
+
+describe("task deadline owned by the executor", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const limits = { commandTimeoutMs: 600_000, taskTimeoutMs: 10_000 };
+
+  it("destroys an idle workspace when the deadline passes and later operations fail with task_deadline_exceeded", async () => {
+    vi.useFakeTimers();
+    const fake = fakeDocker();
+    const ws = await executor(fake, { limits }).create(spec());
+    expect(fake.callsMatching(["volume", "rm"])).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(10_001);
+    expect(fake.callsMatching(["rm", "-f"])).toHaveLength(1);
+    expect(fake.callsMatching(["volume", "rm"])).toHaveLength(1);
+    await expect(ws.install()).rejects.toMatchObject({ code: "task_deadline_exceeded" });
+    await expect(ws.run("npm test")).rejects.toMatchObject({ code: "task_deadline_exceeded" });
+  });
+
+  it("cancels the timer on destroy()", async () => {
+    vi.useFakeTimers();
+    const fake = fakeDocker();
+    const ws = await executor(fake, { limits }).create(spec());
+    expect(vi.getTimerCount()).toBe(1);
+    await ws.destroy();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(fake.callsMatching(["volume", "rm"])).toHaveLength(1);
+  });
+
+  it("caps every docker call during create() by the time left", async () => {
+    vi.useFakeTimers();
+    const fake = fakeDocker();
+    await executor(fake, { limits: { commandTimeoutMs: 600_000, taskTimeoutMs: 5_000 } }).create(spec());
+    const timeouts = fake.calls.filter((c) => c.args[0] !== "rm" && c.args[0] !== "volume" || c.args[1] === "create").map((c) => c.timeoutMs);
+    expect(timeouts.length).toBeGreaterThan(3);
+    for (const t of timeouts) expect(t).toBeLessThanOrEqual(5_000);
+  });
+
+  it("fails create() with task_deadline_exceeded and cleans up when the deadline passes during the clone", async () => {
+    vi.useFakeTimers();
+    const fake = fakeDocker();
+    fake.when(["run"], async () => { await vi.advanceTimersByTimeAsync(11_000); return {}; });
+    await expect(executor(fake, { limits }).create(spec())).rejects.toMatchObject({ code: "task_deadline_exceeded" });
+    expect(fake.callsMatching(["create"])).toHaveLength(0);
+    expect(fake.callsMatching(["volume", "rm"]).length).toBeGreaterThanOrEqual(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("withWorkspace cleanup", () => {
+  const failingRm = () => {
+    const fake = fakeDocker();
+    fake.when(["volume", "rm"], { exitCode: 1, stderr: `volume busy ${TOKEN}` });
+    return fake;
+  };
+
+  it("throws cleanup_failed when destroy fails after a successful fn", async () => {
+    const fake = failingRm();
+    const logs: string[] = [];
+    const error = await executor(fake, { logger: (e) => logs.push(`${e.level}:${e.message}`) })
+      .withWorkspace(spec(), async () => "ok").catch((e) => e as WorkspaceError);
+    expect(error).toBeInstanceOf(WorkspaceError);
+    expect((error as WorkspaceError).code).toBe("cleanup_failed");
+    expect(logs.some((l) => l.startsWith("warn:"))).toBe(true);
+    expect(logs.join("\n")).not.toContain(TOKEN);
+  });
+
+  it("keeps the original error and attaches the cleanup error when both fail", async () => {
+    const fake = failingRm();
+    const original = new Error("boom");
+    const error = await executor(fake).withWorkspace(spec(), async () => { throw original; }).catch((e) => e);
+    expect(error).toBe(original);
+    expect(error.cleanupError).toMatchObject({ code: "cleanup_failed" });
+  });
+
+  it("returns the result when cleanup succeeds", async () => {
+    await expect(executor(fakeDocker()).withWorkspace(spec(), async () => 7)).resolves.toBe(7);
+  });
+
+  it("default logger warns on failed cleanup, sanitized", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await executor(failingRm()).withWorkspace(spec(), async () => 1).catch(() => undefined);
+      expect(warn).toHaveBeenCalled();
+      expect(warn.mock.calls.flat().join("\n")).not.toContain(TOKEN);
+    } finally { warn.mockRestore(); }
   });
 });

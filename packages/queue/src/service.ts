@@ -187,6 +187,29 @@ export class QueueService {
     return result.rowCount ?? 0;
   }
 
+  /**
+   * Releases RUNNING jobs locked by `workerId`. Call at process start, before `registerWorker`:
+   * a freshly started process has nothing in flight, so any job still locked by its id belongs
+   * to a previous process (same `WORKER_ID` after a restart) and would otherwise look alive once
+   * the heartbeat is renewed. QUEUED, or FAILED when attempts are exhausted; `last_error =
+   * worker_restarted`. Single atomic statement. WORKER_ID must be unique per live process.
+   */
+  async releaseWorkerJobs(workerId: string): Promise<number> {
+    const result = await this.pool.query(
+      `UPDATE jobs
+          SET status = CASE WHEN attempt_count < max_attempts THEN 'QUEUED' ELSE 'FAILED' END,
+              available_at = CASE WHEN attempt_count < max_attempts THEN NOW() ELSE available_at END,
+              last_error = 'worker_restarted',
+              finished_at = CASE WHEN attempt_count < max_attempts THEN NULL ELSE NOW() END,
+              updated_at = NOW(),
+              locked_by = NULL,
+              locked_at = NULL
+        WHERE status = 'RUNNING' AND locked_by = $1`,
+      [workerId]
+    );
+    return result.rowCount ?? 0;
+  }
+
   private async clearWorkerJob(workerId: string, jobId: string): Promise<void> {
     await this.pool.query(
       `UPDATE worker_instances

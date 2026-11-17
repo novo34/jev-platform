@@ -175,4 +175,11 @@ describe("runtime timeout integration", () => {
     expect(destroyed(fake)).toBe(true);
     expect(outcomes.join()).not.toContain(TOKEN);
   });
+
+  it("treats a failed workspace cleanup as an infrastructure failure (throws, so queue.fail runs)", async () => {
+    const fake = fakeDocker();
+    fake.when(["volume", "rm"], { exitCode: 1, stderr: "busy" });
+    const { handler } = setup(fake);
+    await expect(handler(job(payload()), ctx())).rejects.toMatchObject({ code: "workspace_failed", message: expect.stringContaining("cleanup_failed") });
+  });
 });

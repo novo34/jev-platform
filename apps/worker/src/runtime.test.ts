@@ -169,6 +169,58 @@ describe("WorkerRuntime", () => {
       expect(row.status).toBe("SUCCEEDED");
     });
 
+    it("stop() waits a second bounded window for the aborted handler to finish its final write", async () => {
+      const q = `worker-queue-${randomUUID()}`;
+      const rt = make({
+        queue: q,
+        stopTimeoutMs: 100,
+        handlers: {
+          SLOW: (_job, { signal }) =>
+            new Promise((_resolve, reject) => {
+              // Cleanup after the abort takes longer than the first wait but fits the second one.
+              signal.addEventListener("abort", () => setTimeout(() => reject(new Error("cleaned")), 60));
+            })
+        }
+      });
+      await rt.start();
+      const job = await enqueue(q, { maxAttempts: 1 });
+      const running = rt.pollOnce();
+      await new Promise((r) => setTimeout(r, 50));
+      await rt.stop();
+      // The final queue.fail must be persisted before stop() returns (so the pool can be closed safely).
+      const row = (await pool.query("SELECT status, last_error FROM jobs WHERE id = $1", [job.id])).rows[0];
+      expect(row).toMatchObject({ status: "FAILED", last_error: "cleaned" });
+      await running;
+    });
+
+    it("stop() returns after the second window when the handler never finishes; the job stays RUNNING", async () => {
+      const q = `worker-queue-${randomUUID()}`;
+      const rt = make({ queue: q, stopTimeoutMs: 50, handlers: { SLOW: () => new Promise(() => {}) } });
+      await rt.start();
+      const job = await enqueue(q);
+      void rt.pollOnce();
+      await new Promise((r) => setTimeout(r, 50));
+      const started = Date.now();
+      await rt.stop();
+      expect(Date.now() - started).toBeLessThan(2_000);
+      const row = (await pool.query("SELECT status FROM jobs WHERE id = $1", [job.id])).rows[0];
+      expect(row.status).toBe("RUNNING");
+    });
+
+    it("start() releases jobs left RUNNING by a previous process with the same worker id", async () => {
+      const q = `worker-queue-${randomUUID()}`;
+      const id = `runtime-worker-${randomUUID()}`;
+      extraWorkers.push(id);
+      await queue.registerWorker(id);
+      const job = await enqueue(q, { maxAttempts: 3 });
+      expect((await queue.claimNext(id, q))?.id).toBe(job.id);
+      const rt = make({ queue: q, workerId: id, handlers: { SLOW: async () => ({}) } });
+      await rt.start();
+      const row = (await pool.query("SELECT status, locked_by, last_error FROM jobs WHERE id = $1", [job.id])).rows[0];
+      expect(row).toMatchObject({ status: "QUEUED", locked_by: null, last_error: "worker_restarted" });
+      await rt.stop();
+    });
+
     it("recovers orphaned jobs through the runtime", async () => {
       const q = `worker-queue-${randomUUID()}`;
       const rt = make({ queue: q, staleWorkerAfterMs: 1_000, handlers: { SLOW: async () => ({}) } });

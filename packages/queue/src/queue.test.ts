@@ -163,4 +163,33 @@ describe("QueueService", () => {
     await queue.complete(liveWorker, alive.id, {});
     await pool.query("DELETE FROM worker_instances WHERE worker_id = ANY($1)", [[deadWorker, liveWorker]]);
   });
+
+  it("releases RUNNING jobs locked by a restarted worker id, only that id", async () => {
+    const restarted = `restart-worker-${randomUUID()}`;
+    const other = `other-worker-${randomUUID()}`;
+    await queue.registerWorker(restarted);
+    await queue.registerWorker(other);
+    const queueName = `queue-${randomUUID()}`;
+    const mk = (maxAttempts: number) =>
+      queue.enqueue({ queue: queueName, jobType: "NOOP", correlationId: `queue-test-${randomUUID()}`, maxAttempts });
+    const retryable = await mk(3);
+    const exhausted = await mk(1);
+    const foreign = await mk(3);
+    await queue.claimNext(restarted, queueName);
+    await queue.claimNext(restarted, queueName);
+    await queue.claimNext(other, queueName);
+
+    // The heartbeat of the restarted id is fresh, so stale recovery cannot see these jobs.
+    expect(await queue.recoverStaleJobs(60_000)).toBe(0);
+    expect(await queue.releaseWorkerJobs(restarted)).toBe(2);
+
+    const rows = await pool.query("SELECT id, status, locked_by, last_error FROM jobs WHERE queue = $1", [queueName]);
+    const byId = Object.fromEntries(rows.rows.map((r) => [r.id, r]));
+    expect(byId[retryable.id]).toMatchObject({ status: "QUEUED", locked_by: null, last_error: "worker_restarted" });
+    expect(byId[exhausted.id]).toMatchObject({ status: "FAILED", locked_by: null, last_error: "worker_restarted" });
+    expect(byId[foreign.id]).toMatchObject({ status: "RUNNING", locked_by: other });
+
+    await queue.complete(other, foreign.id, {});
+    await pool.query("DELETE FROM worker_instances WHERE worker_id = ANY($1)", [[restarted, other]]);
+  });
 });
