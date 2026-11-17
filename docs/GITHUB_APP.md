@@ -79,8 +79,23 @@ production/staging branch targets are rejected.
 | GITHUB_READ_CHECKS | {sha} | project:read |
 | GITHUB_READ_REVIEWS | {number} | project:read |
 | GITHUB_MERGE_PR | {taskId,number,approvedSha} | project:admin plus current ADMIN role |
+| GITHUB_INTEGRATE_STAGING | {taskId,headSha} | project:admin plus current ADMIN role |
 
-Code writes require RUNNING; merge requires APPROVED. Verified GitHub identities
+Code writes require RUNNING; merge requires APPROVED.
+
+GITHUB_INTEGRATE_STAGING (PLT-012) merges the task branch into the repository
+staging_branch through `POST /repos/{owner}/{repo}/merges` (base=staging_branch,
+head=exact SHA) with a single-repository `contents: write` installation token.
+It requires the task in VERIFIED (before STAGING: migration 0016 needs a READY
+staging deployment to reach AWAITING_HUMAN), the task branch on GitHub at exactly
+headSha, and the signed independent verification of the current cycle bound to
+that SHA and to the pull request created through the controlled path. No human
+approval is required yet: it is granted after reviewing staging. The target is
+never default_branch, main, master, production, prod, the task branch or an unset
+staging_branch. It uses the github_operations ledger (idempotent by request hash,
+migration 0028 only adds the action to the trigger allowlist) and immutable audit.
+A 409/422 is GITHUB_CONFLICT and is never retried; 204 means already integrated
+(alreadyIntegrated: true). Responses contain only {merged,sha,alreadyIntegrated}. Verified GitHub identities
 are required for writers. The existing controlled project lock serializes operations
 with lifecycle/approval/staging writers. The narrow audited
 jev_lock_actor_authorization helper then locks user and membership rows before

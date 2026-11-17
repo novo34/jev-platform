@@ -29,7 +29,8 @@ const ACTION_POLICY: Record<ControlAction, ActionPolicy> = {
   GITHUB_CREATE_BRANCH: { permission: "project:write", mutating: true },
   GITHUB_WRITE_FILE: { permission: "project:write", mutating: true },
   GITHUB_CREATE_PR: { permission: "project:write", mutating: true },
-  GITHUB_MERGE_PR: { permission: "project:admin", mutating: true }
+  GITHUB_MERGE_PR: { permission: "project:admin", mutating: true },
+  GITHUB_INTEGRATE_STAGING: { permission: "project:admin", mutating: true }
 };
 
 function validateCommand(command: ControlCommand): void {

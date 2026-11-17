@@ -258,7 +258,8 @@ describe("canonical PostgreSQL persistence", () => {
       "0024_github_authorization_serialization.sql",
       "0025_immutable_task_verification_history.sql",
       "0026_github_immutable_identity_and_ledger.sql",
-      "0027_password_recovery.sql"
+      "0027_password_recovery.sql",
+      "0028_github_integrate_staging_action.sql"
     ]);
   });
 });

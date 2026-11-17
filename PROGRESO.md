@@ -16,26 +16,26 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
 
 ```json
 {
-  "foundation_sha": "828af46aace249e9a3c83a835215be5fcb2bd446",
-  "platform_sha": "e7302aeaba761c033104c7692ed510746476ef89",
+  "foundation_sha": "f145a850171fdd3e47638253bd0063e0b93068a8",
+  "platform_sha": "fc29ab37d65c8757f4ee7af9a61d52643e50ef6b",
   "last_completed": {
-    "task": "PLT-051",
+    "task": "PLT-011",
     "status": "DONE",
-    "pr": "https://github.com/novo34/jev-platform/pull/30",
-    "ci": "https://github.com/novo34/jev-platform/actions/runs/43949674151",
-    "review": "https://github.com/novo34/jev-platform/pull/30#issuecomment-6920931740"
+    "pr": "https://github.com/novo34/jev-platform/pull/34",
+    "ci": "https://github.com/novo34/jev-platform/actions/runs/44094656821",
+    "review": "https://github.com/novo34/jev-platform/pull/34#issuecomment-6945577631"
   },
   "next_task": {
-    "task": "PLT-011",
+    "task": "PLT-012",
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Implementar PLT-011 según docs/architecture/PLT-011-WORKSPACE-ENGINE.md, empezando por la robustez del worker. Después de PLT-011 (decisión del operador, pendiente de Foundation): caché de prompts, Fase 10 y guard de presupuesto mínimo antes de las Fases 12/20."
+  "next_action": "Implementar PLT-012 según docs/architecture/PLT-012-PERMANENT-STAGING.md, pasos 5 y 6 (pasos 2 a 4 hechos: integración en staging_branch, adaptador Dokploy y orquestador con job STAGING_DEPLOY): paso 5 CI y PR; luego paso 6 R4 con el proyecto de prueba novo34/jev-staging-demo (Espacore después)."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. El operador autorizó el 2026-11-17 iniciar PLT-011 (Real Docker Workspace Worker); NEXT_TASK la seleccionó en Foundation `828af46`. Fase actual: diseño aprobado por el operador; implementación en curso. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). El operador autorizó el 2026-11-17 iniciar PLT-012. Fase actual: diseño aprobado (decisiones del 2026-11-17 en [PLT-012](docs/architecture/PLT-012-PERMANENT-STAGING.md)); implementación pendiente. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -165,7 +165,9 @@ verificación y a la PR/SHA, endurece ACL y registros con las migraciones
 
 ## Trabajo pendiente
 
-PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. La aceptación en staging está comprobada (17 de noviembre de 2026). El cierre en Foundation está completado. Queda la autorización de PLT-011 y, como mejora opcional de UX, validar el enlace de recuperación al abrirlo.
+PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación transaccional y envío configurable con Resend. Está fusionado en `main` en `2d29785`. El operador configuró el dominio `notificaciones.nuvurent.com` en Resend, sin seguimiento de enlaces, y las variables `JEV_STAGING_RESET_*` en Dokploy. La aceptación en staging está comprobada (17 de noviembre de 2026). El cierre en Foundation está completado. Como mejora opcional de UX, validar el enlace de recuperación al abrirlo.
+
+PLT-011 está cerrada. Quedan como tareas posteriores la activación de `WORKSPACE_RUN` en un servidor dedicado y, como mejora, fijar por digest las imágenes base de `deploy/staging/Dockerfile.*`.
 
 Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
@@ -194,9 +196,13 @@ El 17 de noviembre de 2026 el operador decidió dejar CodeRabbit y usar Greptile
 
 El 17 de noviembre de 2026 el operador autorizó iniciar PLT-011 y fusionar la PR #33.
 
-El 17 de noviembre de 2026 el operador decidió, en la fase de investigación previa al desarrollo, adelantar en el roadmap la caché de prompts del Model Gateway y la Fase 10 (Context Runtime con Context Packs acotados) por el coste de tokens, y documentar las mejoras detectadas ([ROADMAP](docs/product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17), [mejoras](docs/architecture/MEJORAS-PRE-DESARROLLO-2026-11.md)). Orden: PLT-011 (en curso, sin interrumpir) → caché de prompts y adaptador Anthropic → Fase 10 → guard de presupuesto mínimo (PLT-017) → Fases 12/20. **Pendiente de Foundation:** reflejarlo en `backlog/jev-master-tasks.yaml` y en NEXT_TASK; hasta entonces NEXT_TASK manda. Discrepancia abierta para el operador: PLT-009 figura `DONE` aquí, pero `docs/MODEL_GATEWAY.md` y `docs/PLT-009-LIVE-ACCEPTANCE.md` mantienen la aceptación en vivo como pendiente.
+El 17 de noviembre de 2026 el operador autorizó fusionar la PR #34 y la PR #27 de Foundation, e iniciar PLT-012.
+
+El 17 de noviembre de 2026 el operador decidió, en la fase de investigación previa al desarrollo, adelantar en el roadmap la caché de prompts del Model Gateway y la Fase 10 (Context Runtime con Context Packs acotados) por el coste de tokens, y documentar las mejoras detectadas ([ROADMAP](docs/product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17), [mejoras](docs/architecture/MEJORAS-PRE-DESARROLLO-2026-11.md)). Orden: la tarea en curso según NEXT_TASK (hoy PLT-012, sin interrumpir; PLT-011 ya está cerrada) → caché de prompts y adaptador Anthropic → Fase 10 → guard de presupuesto mínimo (PLT-017) → Fases 12/20. **Pendiente de Foundation:** reflejarlo en `backlog/jev-master-tasks.yaml` y en NEXT_TASK; hasta entonces NEXT_TASK manda. PLT-009: Aceptación con llamadas de pago reales confirmada por el operador el 2026-11-17. El enlace a la evidencia (fecha de ejecución, proveedores y resultado) está pendiente de adjuntar.
 
 El 17 de noviembre de 2026 el operador decidió para PLT-011 (ver [diseño](docs/architecture/PLT-011-WORKSPACE-ENGINE.md)): (1) el ejecutor se prueba con Docker real en el CI de GitHub y no se activa en JEV Staging; su activación en un servidor o VM dedicado es posterior; (2) el ejecutor clona fuera del contenedor, que tiene red solo durante `npm ci` y después `--network none`; (3) límites por defecto de 1 CPU, 2 GB de RAM, 256 procesos, 15 min por comando y 60 min por tarea; (4) sin retención: el workspace se destruye siempre al terminar.
+
+El 17 de noviembre de 2026 el operador decidió para PLT-012 (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md)): (1) alcance por fases: primero el motor probado en CI con un Dokploy simulado y después, como paso aparte aprobado (R4), el staging real del primer caso (proyecto de prueba mínimo `novo34/jev-staging-demo`, decisión posterior del operador; Espacore queda para después), con cuya evidencia se cierra PLT-012; (2) proveedor: API de Dokploy detrás del contrato neutral de FND-026, con la API exacta verificada contra la instancia antes del paso real; (3) un contenedor PostgreSQL propio por proyecto con volumen propio y roles owner/runtime separados, sin credenciales ni datos de producción; (4) nueva operación GitHub controlada que integra la rama de la tarea en `staging_branch` con las guardas de PLT-010. Los valores por defecto (dominio, API key cifrada, migraciones con copia previa, seeds sintéticos, E2E mínimo) quedan pendientes de confirmar antes del paso real.
 
 ## Higiene del repositorio
 
@@ -211,6 +217,20 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
+PLT-012 (diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/architecture/PLT-012-PERMANENT-STAGING.md)):
+
+1. HECHO: diseño y decisiones del operador del 2026-11-17.
+2. HECHO: operación GitHub `GITHUB_INTEGRATE_STAGING` (migración 0028, solo amplía la lista del trigger del ledger).
+3. HECHO: adaptador Dokploy + plantilla de Compose en `packages/staging` (`@jev/staging`), probado con un Dokploy simulado; la API se verificó en solo lectura contra Dokploy v0.31.2 (queda `VERIFY-R4` solo lo no verificado) (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#implementación-del-adaptador)).
+4. HECHO (commit `feat(PLT-012): orquestador de staging, deployments controlados y job STAGING_DEPLOY`): orquestador en `packages/staging` (evidencia saneada por etapa, `READY` solo con las seis etapas), `PgDeploymentRegistry` sobre `jev_create_environment`/`jev_create_deployment`/`jev_set_deployment_status` (wrapper `createEnvironment` en `@jev/db`, sin migraciones ni permisos nuevos) y job `STAGING_DEPLOY` en `apps/worker/src/staging-job.ts`, no registrado en `server.ts`. La API key de Dokploy se inyecta y no va en la BD; su almacenamiento cifrado se decide en la activación (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#implementación-del-orquestador)).
+4b. HECHO (commit `fix(PLT-012): desplegar staging desde el SHA exacto registrado`): el Compose construye desde `https://github.com/<repo>.git#<sha40>` (no la rama), `appImage` exige digest, `JEV_STAGING_REVISION` en el Compose, el health/E2E comprueba la revisión (distinta: `FAILED`; no informada: «no verificable», VERIFY-R4) y el job exige que `revision` coincida con el `sha` de `GITHUB_INTEGRATE_STAGING` en el ledger (solo SELECT). Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#integridad-de-la-revisión-desplegada). Al activar el job, `StagingJobDeps.integratedRevision` debe cablearse con `loadIntegratedRevision(pool, ids)`.
+4c. HECHO (commit `fix(PLT-012): atender la revisión de Greptile (revisión integrada, propiedad, E2E degradado y reserva)`): 4 hallazgos de Greptile sobre `2150435` (https://github.com/novo34/jev-platform/pull/35#issuecomment-6951991817), todos reales. (P1) un 204 de la Merges API registraba `headSha` aunque no fuera la punta de `staging_branch`: ahora registra la punta actual (`headSha` aparte). (P1) el Compose se reutilizaba solo por `appName`: ahora lleva `JEV_STAGING_OWNER=<proyecto>:<repositorio>` y se rechaza con `staging_resource_owned_by_other_project` antes de escribir (también si otro compose del entorno sirve el host); `ProjectRegistryService.register` rechaza un `staging_url` repetido (`STAGING_URL_IN_USE`, sin migración). (P1) `runOnlineE2E` descartaba `degraded`: ahora lo conserva con evidencia por ruta y da `BLOCKED`. (P2) dos ejecuciones sobre el mismo staging podían pisarse: `PgDeploymentRegistry` toma un `pg_try_advisory_lock` de sesión hasta `finish` y la segunda termina `BLOCKED` `staging_busy` sin tocar Dokploy. Sin migraciones ni permisos nuevos. Ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md#revisión-de-greptile-de-la-pr-35-sobre-2150435). Segunda ronda de Greptile sobre `03a4473` (2 hallazgos, ambos reales), corregida en `fix(PLT-012): reutilizar la conexión reservada y ordenar los bloqueos de registro`: (P1) `PgDeploymentRegistry.begin` pedía otra conexión al pool además de la del bloqueo (con `max: 1` se colgaba): ahora la conexión reservada sirve a `ensureStagingEnvironment`, `createDeployment` y `setDeploymentStatuses` (los escritores de `@jev/db` aceptan `Queryable`, `Pool` o `PoolClient`, mismo SQL) y se libera en `finish`; prueba con pool `max: 1`. (P2) `register` bloqueaba los hosts en el orden recibido y A/B con B/A daba `40P01`: ahora se deduplican y ordenan antes de bloquear; prueba con registros concurrentes. Sin migraciones ni permisos nuevos. Pendiente: revisión de Greptile del nuevo commit.
+5. Pruebas de CI (Dokploy simulado, PostgreSQL efímero, GitHub simulado).
+6. Paso real con `novo34/jev-staging-demo` (R4, aprobación explícita del operador; Espacore después); con esa evidencia se cierra PLT-012.
+7. DESPUÉS DE LA TAREA EN CURSO (hoy PLT-012 según NEXT_TASK; decisión del operador del 2026-11-17, pendiente de Foundation): caché de prompts en el gateway y adaptador Anthropic con caché, Fase 10, guard de presupuesto mínimo (PLT-017) y solo entonces Fases 12/20. Antes de iniciar cada una, confirmar NEXT_TASK y la autorización del operador.
+
+Historial de PLT-011 (cerrada):
+
 1. HECHO (`e3ebb6b`): robustez del worker (una tarea en vuelo, timeout y recuperación de jobs `RUNNING` sin latido).
 2. HECHO (`2595b3b`): ejecutor `packages/workspace` (contenedor aislado, allowlist, límites y limpieza).
 3. HECHO (commit `feat(PLT-011): token de clonado, git aislado y job de workspace`): `GitHubOperations.cloneToken` (solo lectura, un repositorio), `git status/diff/log` en un auxiliar `alpine/git` sin red con el volumen `:ro`, y el handler `WORKSPACE_RUN` (`apps/worker/src/workspace-job.ts`, estado en `jobs.result`, no registrado en `server.ts`).
@@ -218,7 +238,6 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 5. HECHO (commit `fix(PLT-011): atender la revisión de Greptile (parada, reinicio, plazo y limpieza)`): 4 hallazgos de Greptile sobre `fd2ce68`, todos reales. (P1) `stop()` esperaba una sola vez y `server.ts` cerraba el pool bajo `runOnce`: ahora hay una segunda espera acotada tras abortar y los temporizadores no generan rechazos sin capturar. (P1) un reinicio con el mismo `WORKER_ID` renovaba el latido y los jobs `RUNNING` previos nunca se recuperaban: `start()` llama a `QueueService.releaseWorkerJobs` (`worker_restarted`). (P1) `taskTimeoutMs` solo se aplicaba en `exec()`: el ejecutor arma su propio temporizador desde `create()`, limita cada llamada a Docker al tiempo restante y destruye el workspace inactivo (`task_deadline_exceeded`, antes `task_timeout`). (P2) `withWorkspace` ignoraba el fallo de `destroy()`: ahora lanza `cleanup_failed` y el logger por defecto avisa. Sin migraciones ni permisos nuevos.
    Revisión de Greptile de la PR #34: https://github.com/novo34/jev-platform/pull/34#issuecomment-6945577631. Primera revisión sobre `fd2ce68` con 4 hallazgos, corregidos en `abe44e7`; la revisión de `abe44e7` dejó 2 hallazgos: (P1) `destroy(true)` reutilizaba un barrido pendiente lanzado por el plazo antes de que existiera el contenedor, y ahora espera a ese barrido y ejecuta otro completo (prueba en `packages/workspace/src/workspace.test.ts`); (P2) esta viñeta no enlazaba la revisión (corregido aquí). Corregidos en el commit `fix(PLT-011): repetir el barrido tras una creación abortada y enlazar la revisión`. No quedan hallazgos pendientes conocidos.
    Evidencia de Docker real (PLT-011): `workspace-docker` en verde con Docker real en https://github.com/novo34/jev-platform/actions/runs/44081305078 sobre `a75ab13`; Greptile 5/5 sin hallazgos en `a75ab13`; las imágenes `node:22-alpine` y `alpine/git:v2.47.2` quedan fijadas por digest en `packages/workspace/src/policy.ts` (commit `chore(PLT-011): fijar las imágenes del ejecutor por digest`), y el job las lee de ahí.
-6. DESPUÉS DE PLT-011 (decisión del operador del 2026-11-17, pendiente de Foundation): caché de prompts en el gateway y adaptador Anthropic con caché, Fase 10, guard de presupuesto mínimo (PLT-017) y solo entonces Fases 12/20. Antes de iniciar cada una, confirmar NEXT_TASK y la autorización del operador.
 
 ## Instrucciones para continuar en otra sesión
 
@@ -249,7 +268,7 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
    queda fuera de ese control automático. CI valida el archivo sin escribirlo.
 
 [gate]: https://github.com/novo34/base-skills_klever/blob/main/docs/JEV_MASTER_BACKLOG.md
-[backlog]: https://github.com/novo34/base-skills_klever/blob/828af46aace249e9a3c83a835215be5fcb2bd446/backlog/jev-master-tasks.yaml
+[backlog]: https://github.com/novo34/base-skills_klever/blob/f145a850171fdd3e47638253bd0063e0b93068a8/backlog/jev-master-tasks.yaml
 [pr]: https://github.com/novo34/jev-platform/pull/23
 [ci]: https://github.com/novo34/jev-platform/actions/runs/40024024437
 [main-ci]: https://github.com/novo34/jev-platform/actions/runs/40024566808
