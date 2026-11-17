@@ -201,7 +201,7 @@ Convertir órdenes humanas en IntentBrief y AcceptanceContract persistentes ante
 **Backlog:** PLT-041  
 **Depende de:** PLT-006, PLT-008, PLT-040, FND-044..047
 
-> **Prioridad adelantada (2026-11-17).** Por decisión del operador esta fase se ejecuta tras PLT-011 y la caché de prompts, y antes de cualquier ejecución automatizada de agentes con gasto (Fases 12 y 20). Ver [Prioridad de ejecución ajustada](#prioridad-de-ejecución-ajustada-2026-11-17). Queda pendiente de reflejarse en Foundation.
+> **Prioridad adelantada (2026-11-17).** Por decisión del operador esta fase se ejecuta tras la tarea en curso (hoy PLT-012) y la caché de prompts, y antes de cualquier ejecución automatizada de agentes con gasto (Fases 12 y 20). Ver [Prioridad de ejecución ajustada](#prioridad-de-ejecución-ajustada-2026-11-17). Queda pendiente de reflejarse en Foundation.
 >
 > **Dependencias revisadas.** Las dependencias declaradas (PLT-006, PLT-008, PLT-040, FND-044..047) pertenecen a fases anteriores; ninguna exige una fase posterior. Sin embargo, algunas fuentes de contexto viven en fases posteriores (Requirement Graph y Decision Ledger, Fase 13; Reuse Engine, Fase 14; Workspace Engine, Fase 19; presupuesto, Fase 25). Se resuelve con alcance mínimo: el ContextPack de esta fase se construye solo con fuentes ya disponibles (Project Registry, Work Orders, IntentBrief/AcceptanceContract, especificaciones y reglas del repositorio, lectura de GitHub de solo lectura). Las fuentes de fases posteriores quedan como tipos de elemento declarados pero no obligatorios; cuando existan se incorporan sin cambiar el contrato del ContextPack. La medición de tokens (REQ-CTX-010) usa el uso normalizado que ya registra el Model Gateway (PLT-009).
 
