@@ -204,7 +204,7 @@ En OpenAI anterior a 5.6 (p. ej. `gpt-4.1`) solo llega `cached_tokens`; `cache_w
 | --- | --- | --- | --- | --- | --- | --- |
 | gpt-6.2-sol (Standard) | 2 | 2,50 | 5 | 0,10 | 10 | OpenAI pricing |
 | gpt-6.1-sol (Standard) | 2 | 2,50 | 5 | 0,10 | 10 | OpenAI pricing |
-| gpt-6.1-terra (Standard, contexto corto) — candidato para la aceptación | 1 | 1,25 | 2,50 | 0,05 | 5 | OpenAI pricing (consultada con `curl` a `https://developers.openai.com/api/docs/pricing.md` el 2026-11-18) |
+| gpt-6.1-terra (Standard, contexto corto) — modelo elegido para la aceptación (DECIDIDA 2026-11-18) | 1 | 1,25 | 2,50 | 0,05 | 5 | OpenAI pricing (consultada con `curl` a `https://developers.openai.com/api/docs/pricing.md` el 2026-11-18) |
 
 | Modelo (DeepSeek) | Lectura (hit) | Entrada (miss) | Salida |
 | --- | --- | --- | --- |
@@ -215,7 +215,7 @@ Notas sobre la tabla:
 
 * Haiku 5.5 tiene precio por longitud de prompt: un prompt de más de 100.000 tokens (incluidas lecturas y escrituras de caché) paga la segunda tarifa. **DECIDIDA 2026-11-18:** se configura solo la tarifa del tramo ≤ 100.000 tokens y el gateway rechaza (`BLOCKED`, motivo `PROMPT_TOO_LARGE_FOR_TIER`, antes de llamar) los prompts mayores con ese modelo, con una estimación previa conservadora del tamaño; el catálogo no se amplía con tramos. Si tras la respuesta `totalInputTokens` supera 100.000, el coste queda `NOT_ESTIMABLE` con motivo y alerta (la estimación previa falló). Sonnet 5.5 es el modelo de Anthropic por defecto (DECIDIDA 2026-11-18).
 * Las lecturas valen 0,05× la entrada en Sonnet 5.5, Opus 5.5 (Anthropic) y `gpt-6.2-sol`, `gpt-6.1-sol` y `gpt-6.1-terra` (OpenAI); en Haiku 5.5, `gpt-6-luna` y otros modelos usan 0,1×. Las escrituras valen 1,25× (5 min) y 2× (1 h) la entrada en Anthropic, y 1,25× (30 min) y 2,5× (12 h) en OpenAI 5.6+. Estos precios aplican a la tarifa estándar; los modificadores (Batch, `inference_geo: us` ×1,1, fast mode) quedan fuera de alcance.
-* **`gpt-4.1-nano` queda descartado (DECIDIDA 2026-11-18).** No se encontró su fila ni su precio de caché en la página de precios (aunque PLT-009 lo usó en su aceptación). Para la aceptación de PLT-052 se propone **`gpt-6.1-terra`**, modelo intermedio de la línea 6.x, ni caro ni de gama mínima. Su tarifa Standard de contexto corto está publicada en la fuente oficial citada (consulta del 2026-11-18): entrada $1,00, salida $5,00, entrada cacheada $0,05, escritura 30 m $1,25 y escritura 12 h $2,50 por millón. Es una propuesta pendiente de confirmación del operador y debe revisarse otra vez antes de implementar. Como en Haiku 5.5, la página publica además una tarifa de contexto largo (entrada $2,00, cacheada $0,10); se configura la de contexto corto y la aceptación usa prefijos de ~1.100 tokens. Alternativa más barata publicada: `gpt-6-luna` (entrada $0,10, salida $0,50, cacheada $0,01, escritura 30 m $0,125).
+* **`gpt-4.1-nano` queda descartado (DECIDIDA 2026-11-18).** No se encontró su fila ni su precio de caché en la página de precios (aunque PLT-009 lo usó en su aceptación). Para la aceptación de PLT-052 se usa **`gpt-6.1-terra`** (DECIDIDA 2026-11-18), modelo intermedio de la línea 6.x, ni caro ni de gama mínima. Su tarifa Standard de contexto corto está publicada en la fuente oficial citada (consulta del 2026-11-18): entrada $1,00, salida $5,00, entrada cacheada $0,05, escritura 30 m $1,25 y escritura 12 h $2,50 por millón. Motivo: la prueba solo necesita los contadores de caché y el coste adicional frente a `gpt-6-luna` es de fracciones de céntimo. Hay que volver a consultar el precio oficial antes de implementar, y la prueba pagada se autoriza aparte. Como en Haiku 5.5, la página publica además una tarifa de contexto largo (entrada $2,00, cacheada $0,10); se configura la de contexto corto y la aceptación usa prefijos de ~1.100 tokens. Alternativa descartada: `gpt-6-luna` (entrada $0,10, salida $0,50, cacheada $0,01, escritura 30 m $0,125).
 
 **Pruebas.** Falta de cada tarifa aplicable → `BLOCKED` con `PRICING_REQUIRED` y sin fetch; OpenAI/DeepSeek bloquean sin tarifa de lectura incluso con la caché desactivada; Anthropic con caché desactivada no exige tarifas de caché; `NOT_ESTIMABLE` solo tras la respuesta, con motivo y alerta; `cacheWriteBilledAs` explícito; cotas de `validRate`.
 
@@ -354,7 +354,7 @@ Medidas:
 | --- | --- | --- |
 | Haiku 5.5 | prefijo ≈ 600 tokens (mínimo 512), 50 de entrada, 16 de salida; escritura 5 min + lectura | ≈ $0,0001 |
 | deepseek-flash (tarifa punta) | prefijo ≈ 650 tokens, 16 de salida; 2 llamadas más una tercera por si el acierto tarda | ≈ $0,0003 |
-| OpenAI (`gpt-6.1-terra`, candidato) | prefijo ≈ 1.100 tokens (mínimo 1.024), 50 de entrada, 16 de salida; escritura 30 min + lectura | ≈ $0,0017 |
+| OpenAI (`gpt-6.1-terra`, DECIDIDA 2026-11-18) | prefijo ≈ 1.100 tokens (mínimo 1.024), 50 de entrada, 16 de salida; escritura 30 min + lectura | ≈ $0,0017 |
 | **Total** | | **≈ $0,002** |
 
 **OpenAI entra en la prueba solo si el modelo elegido tiene configuradas sus tarifas de caché** (lectura y, en 5.6+, escritura del TTL usado). Sin ellas no se estima, no se puede validar el tope y OpenAI se excluye de la fase 2 (y la llamada ya quedaría `BLOCKED` con `PRICING_REQUIRED`); no se sustituye por la tarifa de entrada.
@@ -379,7 +379,7 @@ Medidas:
 
 Decisiones tomadas por el operador el 2026-11-18 (el documento sigue en «DISEÑO — pendiente de aprobación»; estas decisiones no lo aprueban):
 
-1. **`gpt-4.1-nano` descartado — DECIDIDA 2026-11-18.** Se usa otro modelo de OpenAI ni caro ni malo, con precio de caché publicado. Propuesta: `gpt-6.1-terra` (tarifa verificada en `https://developers.openai.com/api/docs/pricing.md`, consulta del 2026-11-18; ver punto 3). Confirmación del modelo concreto y nueva consulta de precios antes de implementar: pendientes.
+1. **`gpt-4.1-nano` descartado — DECIDIDA 2026-11-18.** Se usa otro modelo de OpenAI ni caro ni malo, con precio de caché publicado. **Modelo de OpenAI para las pruebas de caché: `gpt-6.1-terra` — DECIDIDA 2026-11-18** (tarifa en `https://developers.openai.com/api/docs/pricing.md`, consulta del 2026-11-18). `gpt-6-luna` queda como alternativa descartada: la prueba solo necesita los contadores de caché y el coste adicional es de fracciones de céntimo. Pendientes: volver a consultar el precio oficial antes de implementar; la prueba pagada se autoriza aparte.
 2. **DeepSeek sin aislamiento de caché documentado y sin `prompt_cache_key` — DECIDIDA 2026-11-18: riesgo aceptado.** El aislamiento depende solo del `tenant_namespace`.
 3. **Modelo de Anthropic por defecto — DECIDIDA 2026-11-18:** Sonnet 5.5 por defecto; Haiku 5.5 con la tarifa del tramo ≤ 100.000 tokens de prompt y rechazo (`BLOCKED`) de prompts mayores con ese modelo; sin ampliar el catálogo.
 
