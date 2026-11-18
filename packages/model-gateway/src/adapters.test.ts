@@ -213,3 +213,60 @@ describe("provider adapter usage validation", () => {
     ).rejects.toMatchObject({ code: "PROVIDER_RESPONSE_INVALID" });
   });
 });
+
+describe("PLT-052 adapter usage mapping through HTTP responses", () => {
+  const input = { model: "m", prompt: "hi", timeoutMs: 1000 };
+
+  it("maps OpenAI cached and written tokens and keeps request bodies unchanged", async () => {
+    let sent: Record<string, unknown> = {};
+    const adapter = new OpenAIAdapter(async (_url, init) => {
+      sent = JSON.parse(String(init?.body));
+      return jsonResponse({
+        id: "resp_1", status: "completed", output_text: "ok",
+        usage: {
+          input_tokens: 1_150, output_tokens: 16, total_tokens: 1_166,
+          input_tokens_details: { cached_tokens: 1_000, cache_write_tokens: 100,
+            cache_write_tokens_details: { ttl_30m_tokens: 100, ttl_12h_tokens: 0 } }
+        }
+      });
+    }, "https://example.test");
+    const result = await adapter.execute("sk-test", input);
+    expect(result.usage).toMatchObject({
+      inputTokens: 50, cacheReadTokens: 1_000, cacheWriteTokens: 100,
+      cacheWrite30mTokens: 100, totalInputTokens: 1_150, totalTokens: 1_166
+    });
+    // No cache marking is sent in this PR (the switch arrives later).
+    expect(Object.keys(sent).sort()).toEqual(["input", "model", "store"]);
+  });
+
+  it("maps DeepSeek hit/miss tokens", async () => {
+    const adapter = new DeepSeekAdapter(async () => jsonResponse({
+      id: "ds_1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: {
+        prompt_tokens: 700, completion_tokens: 16, total_tokens: 716,
+        prompt_cache_hit_tokens: 640, prompt_cache_miss_tokens: 60
+      }
+    }), "https://example.test");
+    const result = await adapter.execute("ds-test", input);
+    expect(result.usage).toMatchObject({
+      inputTokens: 60, cacheReadTokens: 640, cacheWriteTokens: 0, totalInputTokens: 700
+    });
+  });
+
+  it("rejects inconsistent cache counters as PROVIDER_RESPONSE_INVALID", async () => {
+    const openai = new OpenAIAdapter(async () => jsonResponse({
+      output_text: "ok",
+      usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11,
+        input_tokens_details: { cached_tokens: 8, cache_write_tokens: 8 } }
+    }), "https://example.test");
+    await expect(openai.execute("sk-test", input))
+      .rejects.toMatchObject({ code: "PROVIDER_RESPONSE_INVALID" });
+    const deepseek = new DeepSeekAdapter(async () => jsonResponse({
+      choices: [{ message: { content: "ok" } }],
+      usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11,
+        prompt_cache_hit_tokens: 1, prompt_cache_miss_tokens: 1 }
+    }), "https://example.test");
+    await expect(deepseek.execute("ds-test", input))
+      .rejects.toMatchObject({ code: "PROVIDER_RESPONSE_INVALID" });
+  });
+});
