@@ -54,7 +54,7 @@ organization must match exactly for cost attribution.
 
 <a id="prompt-caching"></a>
 
-## Prompt caching: parcialmente implementado (PLT-052, PR 5/6)
+## Prompt caching: implementado, pendiente de la aceptación pagada (PLT-052, PR 6/6)
 
 Estado: diseño aprobado el 2026-11-18 ([PLT-052-PROMPT-CACHING.md](architecture/PLT-052-PROMPT-CACHING.md)); implementación por PR, cada una autorizada aparte (R3). **El adaptador Anthropic (PR 4/6) ya marca caché con `cache_control` explícito solo con `JEV_PROMPT_CACHE=on` y un prompt segmentado; por defecto sigue `off` y no se ha hecho ninguna llamada real.** Hecho hasta la PR 5/6:
 
@@ -69,7 +69,9 @@ Estado: diseño aprobado el 2026-11-18 ([PLT-052-PROMPT-CACHING.md](architecture
 
 - Métricas y alerta (PR 5/6, migración `0030`): tres vistas de solo lectura, `model_cache_metrics_by_call`, `_by_task` y `_by_project`, con `organization_id` como primera columna: tokens leídos, escritos y ordinarios, tasa de acierto (lectura / (lectura + escritura + entrada ordinaria), 0 sin entrada), coste real, coste sin caché, ahorro estimado en CHF (puede ser negativo) y recuento de `cache_status`. Las vistas agregadas devuelven `calls_without_cache_baseline` (llamadas `SUCCESS` sin coste sin caché o sin ahorro, p. ej. anteriores a `0029`): si es mayor que 0, `cost_without_cache_chf` y `cache_savings_chf` son `NULL` (desconocidos, nunca una suma parcial); `cost_chf` suma los costes conocidos y `calls_not_estimable` cuenta los que faltan. El nivel `project` rechaza `taskId` con 400 (la vista no tiene dimensión de tarea) en vez de ignorarlo; `task` y `call` aplican `projectId` y `taskId` a la vez. Se leen con `CacheMetricsReader` (`organizationId` obligatorio en cada consulta; no hay RLS) y con `GET /model-gateway/cache-metrics/{project|task|call}?projectId=&taskId=&limit=` (solo ADMIN, organización de la sesión). Tras desplegar `0030` hay que volver a ejecutar `provision-runtime-role.sql` para el `SELECT` de `jev_runtime` sobre las vistas. La migración añade la huella completa del prefijo (`prefix_tools_sha256`, `prefix_segment_refs`) y el gateway la compara con la última llamada con éxito de la misma tarea: si un hash cambia sin cambio declarado de `version`, `id`, `kind` ni `tools`, emite `PROMPT_UNSTABLE_CONTENT` por `onAlert` sin bloquear la llamada.
 
-Pendiente (PR 6): harness de aceptación de 2 llamadas. Principios del diseño (REQ-CACHE-001..007 en la [SPEC](product-specs/SPEC.md)):
+- Harness de aceptación de la caché (PR 6/6): `npm run accept:cache -w @jev/api`. Por defecto es un dry-run sin red, base de datos ni gasto (plan, estimación en USD y CHF, variables que faltan). La ejecución pagada exige `JEV_LIVE_CACHE_ACCEPTANCE=I_AUTHORIZE_CACHE_PAID_CALLS` y `JEV_LIVE_CACHE_MAX_CHF` (> 0 y como máximo 0,10), estima el peor caso antes de llamar, para al alcanzar el tope y no reintenta ninguna llamada de pago. Detalle, variables, comando exacto y entrega de claves: [PLT-052-CACHE-ACCEPTANCE.md](PLT-052-CACHE-ACCEPTANCE.md). La PR no hizo ninguna llamada real; la ejecución pagada está pendiente.
+
+Principios del diseño (REQ-CACHE-001..007 en la [SPEC](product-specs/SPEC.md)):
 
 - Prefijo estable al inicio de la petición: instrucciones del sistema, reglas, skills y especificación. Contenido variable (tarea, ContextPack específico, historial) al final. El prefijo debe ser determinista byte a byte.
 - El adaptador Anthropic nació con caché (`cache_control`) y con el interruptor `off` por defecto.
