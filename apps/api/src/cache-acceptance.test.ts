@@ -286,6 +286,84 @@ describe("live guards (nothing is called)", () => {
   });
 });
 
+describe("tenant A and B must not share the cache namespace", () => {
+  const ORG_B = "66666666-6666-4666-8666-666666666666";
+
+  it("rejects, in dry-run and live, B equal to A in organization and project (even with another task)", async () => {
+    for (const mode of [undefined, CACHE_ACCEPTANCE_CONSENT]) {
+      const env = liveEnv({ JEV_LIVE_CACHE_ACCEPTANCE: mode, JEV_ACCEPT_OTHER_PROJECT_ID: PROJECT_A });
+      const plan = buildCacheAcceptancePlan(env);
+      expect(plan.problems.some(p => p.code === "CONFIG_INVALID" && /differ from tenant A/.test(p.message))).toBe(true);
+      expect(plan.live).toBeUndefined();
+      expect(formatPlanText(plan)).toContain("tenant B must differ");
+    }
+    const { deps, calls } = makeDeps();
+    await expect(run(liveEnv({ JEV_ACCEPT_OTHER_PROJECT_ID: PROJECT_A }), deps)).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    // Explicit same organization and upper-case ids are the same tenant too.
+    await expect(run(liveEnv({
+      JEV_ACCEPT_OTHER_PROJECT_ID: PROJECT_A.toUpperCase(), JEV_ACCEPT_OTHER_ORGANIZATION_ID: ORG.toUpperCase()
+    }), deps)).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects the same task id for A and B", async () => {
+    const plan = buildCacheAcceptancePlan(liveEnv({ JEV_ACCEPT_OTHER_TASK_ID: TASK_A }));
+    expect(plan.problems.some(p => p.code === "CONFIG_INVALID")).toBe(true);
+    expect(plan.live).toBeUndefined();
+  });
+
+  it("accepts another project, or another organization with the same project", () => {
+    expect(buildCacheAcceptancePlan(liveEnv()).problems).toEqual([]);
+    const otherOrg = buildCacheAcceptancePlan(liveEnv({
+      JEV_ACCEPT_OTHER_ORGANIZATION_ID: ORG_B, JEV_ACCEPT_OTHER_PROJECT_ID: PROJECT_A
+    }));
+    expect(otherOrg.problems).toEqual([]);
+    expect(otherOrg.live).toBeDefined();
+  });
+});
+
+describe("persisted cache_status source", () => {
+  it("database when the lookup works", async () => {
+    const { deps } = makeDeps("cache", { lookupCacheStatus: async () => "WRITE" });
+    const report = await run(liveEnv(), deps);
+    expect(report.overall).toBe("PASS");
+    for (const p of report.providers) for (const c of p.calls) expect(c.cacheStatusSource).toBe("database");
+    expect(formatReportText(report)).toContain("source database");
+    expect(JSON.stringify(report)).toContain('"cacheStatusSource":"database"');
+  });
+
+  it("a failing lookup (A-2, B-1) is INCONCLUSIVE, not PASS, and the paid call is not repeated", async () => {
+    let n = 0;
+    const base = makeDeps("cache");
+    const failing = new Set<string>();
+    const { deps, calls } = makeDeps("cache", {
+      lookupCacheStatus: async (_org, requestId) => {
+        if (failing.has(requestId)) throw new Error("db down");
+        return "WRITE";
+      },
+      execute: async request => {
+        n += 1;
+        // Calls come in order A-1, A-2, B-1 per provider.
+        if (n % 3 !== 1) failing.add(request.requestId);
+        return base.deps.execute(request);
+      }
+    });
+    const report = await run(liveEnv(), deps);
+    expect(calls).toHaveLength(0); // base.deps recorded them, not this wrapper
+    expect(base.calls).toHaveLength(9);
+    expect(n).toBe(9);
+    expect(report.overall).toBe("INCOMPLETE");
+    for (const p of report.providers) {
+      const labels = p.calls.map(c => c.cacheStatusSource);
+      expect(labels).toEqual(["database", "unavailable", "unavailable"]);
+      expect(p.calls[1]!.cacheStatus).toBeNull();
+      expect(p.checks.find(c => c.name === "tenant_isolation")!.status).toBe("INCONCLUSIVE");
+      expect(p.checks.find(c => c.name === "read_second_call")!.status).toBe("INCONCLUSIVE");
+    }
+    expect(formatReportText(report)).toContain("source unavailable");
+  });
+});
+
 describe("full run with simulated adapters", () => {
   it("PASS: write on the first call, read on the second, no cross-tenant read", async () => {
     const { deps, calls } = makeDeps("cache");

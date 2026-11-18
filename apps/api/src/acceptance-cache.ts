@@ -62,7 +62,8 @@ async function main(): Promise<void> {
             ORDER BY created_at DESC LIMIT 1`,
           [organizationId, requestId]
         );
-        return (result.rows[0]?.cache_status as string | null | undefined) ?? null;
+        if (result.rows.length === 0) throw new Error("no persisted call row");
+        return (result.rows[0]!.cache_status as string | null) ?? null;
       },
       observer,
       pricing,

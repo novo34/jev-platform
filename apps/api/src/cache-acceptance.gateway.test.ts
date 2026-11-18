@@ -170,7 +170,8 @@ async function runAgainst(network: FakeNetwork): Promise<CacheAcceptanceReport> 
         "SELECT cache_status FROM model_provider_calls WHERE organization_id = $1 AND request_id = $2 AND outcome = 'SUCCESS'",
         [org, requestId]
       );
-      return (result.rows[0]?.cache_status as string | null | undefined) ?? null;
+      if (result.rows.length === 0) throw new Error("no persisted call row");
+      return (result.rows[0]!.cache_status as string | null) ?? null;
     },
     observer,
     pricing,

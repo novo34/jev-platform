@@ -384,6 +384,21 @@ export function buildCacheAcceptancePlan(env: Env): CacheAcceptancePlan {
   if (otherOrgRaw && !UUID.test(otherOrgRaw)) {
     problems.push({ code: "CONFIG_INVALID", message: "JEV_ACCEPT_OTHER_ORGANIZATION_ID must be a UUID" });
   }
+  // Tenant namespace = HMAC(organization, project) (deriveTenantNamespace): if B
+  // matches A in that pair, both calls share the cache prefix and the isolation
+  // check would report a false cross-tenant read. A task belongs to one project,
+  // so equal task ids are rejected as well.
+  const [orgA, projA, taskA, projB, taskB] = ids;
+  const orgB = otherOrgRaw ?? orgA;
+  if (orgA && projA && projB && orgB === orgA && projB === projA) {
+    problems.push({
+      code: "CONFIG_INVALID",
+      message: "tenant B must differ from tenant A in organization or project (same organization and project share the cache namespace)"
+    });
+  }
+  if (taskA && taskB && taskA === taskB) {
+    problems.push({ code: "CONFIG_INVALID", message: "JEV_ACCEPT_OTHER_TASK_ID must differ from JEV_ACCEPT_TASK_ID" });
+  }
   const liveMissing = missingVariables.length > liveMissingBefore;
   if (liveMissing) {
     problems.push({ code: "MISSING_VARIABLE", message: "live variables are missing: " + missingVariables.slice(liveMissingBefore).join(", ") });
@@ -555,7 +570,8 @@ export interface AcceptanceDeps {
   execute(request: ModelGatewayRequest): Promise<ModelGatewayResult>;
   // Providers with a stored credential for the organization (names only).
   listCredentialProviders(organizationId: string): Promise<string[]>;
-  // cache_status persisted for the request (null when unknown / not available).
+  // cache_status persisted for the request: the value, or null when the row exists
+  // with a NULL status. It must throw when the row cannot be read or is missing.
   lookupCacheStatus?(organizationId: string, requestId: string): Promise<string | null>;
   observer: CallObserver;
   pricing: PricingCatalog;
@@ -588,6 +604,11 @@ export interface CallReport {
     output: number; totalInput: number;
   };
   cacheStatus?: string | null;
+  // Where cacheStatus comes from: the row read from PostgreSQL, inferred from the
+  // response tokens (no lookup configured), or unavailable (the lookup failed or
+  // found no row; the value is then null and never inferred). A row whose status
+  // is NULL (e.g. DeepSeek) is still a database read.
+  cacheStatusSource?: "database" | "derived" | "unavailable";
   costChf?: number | null;
   costWithoutCacheChf?: number | null;
   savingsChf?: number | null;
@@ -664,13 +685,21 @@ function evaluateChecks(provider: AcceptanceProvider, calls: CallReport[]): Chec
   const ok = (c: CallReport | undefined): c is CallReport & { tokens: NonNullable<CallReport["tokens"]> } =>
     c?.outcome === "SUCCESS" && c.tokens !== undefined;
   const checks: CheckResult[] = [];
+  // A PASS that depends on the persisted cache_status cannot stand when that
+  // status could not be read: it becomes INCONCLUSIVE (a FAIL from tokens stays).
+  const pending = (c: CallReport | undefined): boolean => c?.cacheStatusSource === "unavailable";
+  const PENDING_DETAIL = "persisted cache_status could not be read from PostgreSQL";
 
   // 1. Write on the first call. Only Anthropic (explicit marks) is required to
   // report it; DeepSeek has no separately billed write, so it has no such check.
   if (provider === "deepseek") {
     // intentionally no write check
   } else if (!ok(a1)) checks.push({ name: "write_first_call", status: "NOT_RUN" });
-  else if (a1.tokens.cacheWrite > 0) checks.push({ name: "write_first_call", status: "PASS" });
+  else if (a1.tokens.cacheWrite > 0) {
+    checks.push(pending(a1)
+      ? { name: "write_first_call", status: "INCONCLUSIVE", detail: PENDING_DETAIL }
+      : { name: "write_first_call", status: "PASS" });
+  }
   else if (provider === "anthropic") {
     checks.push({ name: "write_first_call", status: "FAIL", detail: "no cache_creation tokens on the first call" });
   } else {
@@ -680,7 +709,11 @@ function evaluateChecks(provider: AcceptanceProvider, calls: CallReport[]): Chec
   // 2. Read on the second call. DeepSeek is best-effort: no hit is not a failure
   // and, with no paid retries allowed, it is reported as inconclusive.
   if (!ok(a2)) checks.push({ name: "read_second_call", status: "NOT_RUN" });
-  else if (a2.tokens.cacheRead > 0) checks.push({ name: "read_second_call", status: "PASS" });
+  else if (a2.tokens.cacheRead > 0) {
+    checks.push(pending(a2)
+      ? { name: "read_second_call", status: "INCONCLUSIVE", detail: PENDING_DETAIL }
+      : { name: "read_second_call", status: "PASS" });
+  }
   else if (provider === "deepseek") {
     checks.push({ name: "read_second_call", status: "INCONCLUSIVE", detail: "DeepSeek cache is best effort; no paid retry is allowed" });
   } else {
@@ -689,7 +722,11 @@ function evaluateChecks(provider: AcceptanceProvider, calls: CallReport[]): Chec
 
   // 3. Tenant isolation: the other tenant must never read the first tenant's cache.
   if (!ok(b1)) checks.push({ name: "tenant_isolation", status: "NOT_RUN" });
-  else if (b1.tokens.cacheRead === 0) checks.push({ name: "tenant_isolation", status: "PASS" });
+  else if (b1.tokens.cacheRead === 0) {
+    checks.push(pending(b1)
+      ? { name: "tenant_isolation", status: "INCONCLUSIVE", detail: PENDING_DETAIL }
+      : { name: "tenant_isolation", status: "PASS" });
+  }
   else checks.push({ name: "tenant_isolation", status: "FAIL", detail: `cross-tenant cache read of ${b1.tokens.cacheRead} tokens` });
 
   // 4. Usage mapping invariants.
@@ -881,20 +918,29 @@ export async function runCacheAcceptance(
       const cost = result.estimatedCostChf;
       const counted = cost ?? planned.worstCaseChf;
       accumulatedChf += counted;
-      let cacheStatus: string | null | undefined;
-      try {
-        cacheStatus = deps.lookupCacheStatus
-          ? await deps.lookupCacheStatus(tenantA ? live.organizationId : live.otherOrganizationId, requestId)
-          : undefined;
-      } catch {
-        cacheStatus = undefined;
+      // Never repeats the paid call: only the database read can fail here.
+      let cacheStatus: string | null;
+      let cacheStatusSource: NonNullable<CallReport["cacheStatusSource"]>;
+      if (!deps.lookupCacheStatus) {
+        cacheStatus = observedCacheStatus(result.usage) ?? null;
+        cacheStatusSource = "derived";
+      } else {
+        let read: string | null | undefined;
+        try {
+          read = await deps.lookupCacheStatus(tenantA ? live.organizationId : live.otherOrganizationId, requestId);
+        } catch {
+          read = undefined;
+        }
+        cacheStatus = read ?? null;
+        cacheStatusSource = read === undefined ? "unavailable" : "database";
       }
       calls.push({
         ...base, ...common,
         outcome: "SUCCESS",
         attempts: result.attempts,
         tokens: tokensOf(result.usage),
-        cacheStatus: cacheStatus ?? observedCacheStatus(result.usage) ?? null,
+        cacheStatus,
+        cacheStatusSource,
         costChf: cost,
         costWithoutCacheChf: costWithoutCache,
         savingsChf: savings,
@@ -992,7 +1038,7 @@ export function formatReportText(report: CacheAcceptanceReport): string {
         lines.push(`  ${c.label}: FAILED ${c.errorCode}${c.httpError ? ` (HTTP ${c.httpError.status})` : ""}; worst case counted CHF ${chf(c.assumedWorstCaseChf)}`);
       } else {
         const t = c.tokens!;
-        lines.push(`  ${c.label}: ordinary ${t.ordinary} read ${t.cacheRead} write5m ${t.cacheWrite5m} write1h ${t.cacheWrite1h} write30m ${t.cacheWrite30m} write12h ${t.cacheWrite12h} out ${t.output} | cache_status ${c.cacheStatus ?? "n/a"} | cost CHF ${chf(c.costChf)} | saving CHF ${chf(c.savingsChf)}`);
+        lines.push(`  ${c.label}: ordinary ${t.ordinary} read ${t.cacheRead} write5m ${t.cacheWrite5m} write1h ${t.cacheWrite1h} write30m ${t.cacheWrite30m} write12h ${t.cacheWrite12h} out ${t.output} | cache_status ${c.cacheStatus ?? "n/a"} (source ${c.cacheStatusSource ?? "n/a"}) | cost CHF ${chf(c.costChf)} | saving CHF ${chf(c.savingsChf)}`);
       }
     }
     for (const check of p.checks) {
