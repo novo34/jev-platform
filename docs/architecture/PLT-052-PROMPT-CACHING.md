@@ -1,6 +1,6 @@
 # PLT-052 — Caché de prompts del Model Gateway
 
-> **Estado: DISEÑO — pendiente de aprobación del operador; sin implementación ni llamadas de pago.**
+> **Estado: DISEÑO APROBADO por el operador el 2026-11-18 — implementación pendiente de autorizar PR a PR (R3).** Sin implementación ni llamadas de pago.
 
 Este documento fija el diseño de PLT-052 (caché de prompts del Model Gateway, con un adaptador Anthropic que nace con caché). Riesgo: **R3** para el cambio del gateway (contratos de coste, aislamiento entre organizaciones, esquema de BD) y **R4** para cualquier llamada de pago real, que requiere una autorización aparte y un tope de gasto (ver punto 8, fase 2). Que el CI pase demostrará el diseño contra proveedores simulados, **no** un ahorro real en producción.
 
@@ -377,7 +377,7 @@ Medidas:
 
 ## Riesgos y preguntas abiertas para el operador
 
-Decisiones tomadas por el operador el 2026-11-18 (el documento sigue en «DISEÑO — pendiente de aprobación»; estas decisiones no lo aprueban):
+Decisiones tomadas por el operador el 2026-11-18 (previas a la aprobación del diseño, también del 2026-11-18):
 
 1. **`gpt-4.1-nano` descartado — DECIDIDA 2026-11-18.** Se usa otro modelo de OpenAI ni caro ni malo, con precio de caché publicado. **Modelo de OpenAI para las pruebas de caché: `gpt-6.1-terra` — DECIDIDA 2026-11-18** (tarifa en `https://developers.openai.com/api/docs/pricing.md`, consulta del 2026-11-18). `gpt-6-luna` queda como alternativa descartada: la prueba solo necesita los contadores de caché y el coste adicional es de fracciones de céntimo. Pendientes: volver a consultar el precio oficial antes de implementar; la prueba pagada se autoriza aparte.
 2. **DeepSeek sin aislamiento de caché documentado y sin `prompt_cache_key` — DECIDIDA 2026-11-18: riesgo aceptado.** El aislamiento depende solo del `tenant_namespace`.
