@@ -37,6 +37,17 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+// Optional nested object: absent or null means "not reported" (undefined);
+// a present value that is not a plain object is a malformed response.
+function optionalRecord(
+  value: unknown, provider: string, field: string
+): Record<string, unknown> | undefined {
+  if (value === undefined || value === null) return undefined;
+  const object = record(value);
+  if (!object) throw invalid(provider, `${field} is not an object`);
+  return object;
+}
+
 interface Parts {
   inputTokens: number;
   outputTokens: number;
@@ -98,7 +109,7 @@ export function mapAnthropicUsage(raw: unknown): NormalizedUsage {
   const cacheReadTokens = optional(
     usage.cache_read_input_tokens, "Anthropic", "cache_read_input_tokens"
   );
-  const breakdown = record(usage.cache_creation);
+  const breakdown = optionalRecord(usage.cache_creation, "Anthropic", "cache_creation");
   const cacheWrite5mTokens = optional(
     breakdown?.ephemeral_5m_input_tokens, "Anthropic", "ephemeral_5m_input_tokens"
   );
@@ -123,13 +134,18 @@ export function mapOpenAIUsage(raw: unknown): NormalizedUsage {
   if (!usage) throw invalid("OpenAI", "usage missing");
   const totalInput = required(usage.input_tokens, "OpenAI", "input_tokens");
   const outputTokens = required(usage.output_tokens, "OpenAI", "output_tokens");
-  const details = record(usage.input_tokens_details);
+  const details = optionalRecord(usage.input_tokens_details, "OpenAI", "input_tokens_details");
   const cacheReadTokens = optional(details?.cached_tokens, "OpenAI", "cached_tokens");
   const cacheWriteTokens = optional(details?.cache_write_tokens, "OpenAI", "cache_write_tokens");
   // The documentation shows the TTL split next to the write counter; accept it
   // under the input details or at the top level of usage.
-  const ttl = record(details?.cache_write_tokens_details) ??
-    record(usage.cache_write_tokens_details);
+  const nestedTtl = optionalRecord(
+    details?.cache_write_tokens_details, "OpenAI", "cache_write_tokens_details"
+  );
+  const topLevelTtl = optionalRecord(
+    usage.cache_write_tokens_details, "OpenAI", "cache_write_tokens_details"
+  );
+  const ttl = nestedTtl ?? topLevelTtl;
   const cacheWrite30mTokens = optional(ttl?.ttl_30m_tokens, "OpenAI", "ttl_30m_tokens");
   const cacheWrite12hTokens = optional(ttl?.ttl_12h_tokens, "OpenAI", "ttl_12h_tokens");
   if (cacheReadTokens + cacheWriteTokens > totalInput) {

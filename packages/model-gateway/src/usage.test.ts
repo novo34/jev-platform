@@ -156,4 +156,80 @@ describe("PLT-052 normalized usage mapping", () => {
     expect(cacheHitRate(read)).toBeCloseTo(0.9302, 4);
     expect(cacheHitRate(plainUsage(0, 0))).toBe(0);
   });
+  // Present-but-malformed detail objects must be rejected, never read as zero.
+  // Explicit null is treated as absent: OpenAI and Anthropic serialize
+  // unreported nested objects as null, and a null carries no cache split.
+  const malformed: Array<[string, unknown]> = [
+    ["array", []], ["string", "x"], ["number", 5], ["boolean", true]
+  ];
+
+  it("rejects malformed OpenAI input_tokens_details and accepts absent or null", () => {
+    for (const [, bad] of malformed) {
+      expect(invalidCode(() => mapOpenAIUsage(
+        { input_tokens: 100, output_tokens: 1, input_tokens_details: bad }
+      ))).toBe("PROVIDER_RESPONSE_INVALID");
+    }
+    for (const ok of [undefined, null]) {
+      const usage = mapOpenAIUsage({ input_tokens: 100, output_tokens: 1, input_tokens_details: ok });
+      expect(usage.inputTokens).toBe(100);
+      expect(usage.cacheReadTokens).toBe(0);
+    }
+  });
+
+  it("rejects malformed OpenAI TTL breakdowns in both locations", () => {
+    for (const [, bad] of malformed) {
+      expect(invalidCode(() => mapOpenAIUsage({
+        input_tokens: 100, output_tokens: 1,
+        input_tokens_details: { cache_write_tokens: 10, cache_write_tokens_details: bad }
+      }))).toBe("PROVIDER_RESPONSE_INVALID");
+      expect(invalidCode(() => mapOpenAIUsage({
+        input_tokens: 100, output_tokens: 1,
+        input_tokens_details: { cache_write_tokens: 10 },
+        cache_write_tokens_details: bad
+      }))).toBe("PROVIDER_RESPONSE_INVALID");
+    }
+    // A malformed top-level split is rejected even when the nested one is valid.
+    expect(invalidCode(() => mapOpenAIUsage({
+      input_tokens: 100, output_tokens: 1,
+      input_tokens_details: {
+        cache_write_tokens: 10,
+        cache_write_tokens_details: { ttl_30m_tokens: 10 }
+      },
+      cache_write_tokens_details: []
+    }))).toBe("PROVIDER_RESPONSE_INVALID");
+    const ok = mapOpenAIUsage({
+      input_tokens: 100, output_tokens: 1,
+      input_tokens_details: { cache_write_tokens: 10, cache_write_tokens_details: null }
+    });
+    expect(ok.cacheWriteTokens).toBe(10);
+  });
+
+  it("rejects a malformed Anthropic cache_creation breakdown and accepts absent or null", () => {
+    for (const [, bad] of malformed) {
+      expect(invalidCode(() => mapAnthropicUsage({
+        input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 10, cache_creation: bad
+      }))).toBe("PROVIDER_RESPONSE_INVALID");
+    }
+    for (const ok of [undefined, null]) {
+      const usage = mapAnthropicUsage({
+        input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 10, cache_creation: ok
+      });
+      expect(usage.cacheWriteTokens).toBe(10);
+      expect(usage.cacheWrite5mTokens).toBe(0);
+    }
+  });
+
+  it("rejects malformed top-level usage and DeepSeek counters", () => {
+    for (const bad of [[], "x", 5, null, undefined]) {
+      expect(invalidCode(() => mapOpenAIUsage(bad))).toBe("PROVIDER_RESPONSE_INVALID");
+      expect(invalidCode(() => mapAnthropicUsage(bad))).toBe("PROVIDER_RESPONSE_INVALID");
+      expect(invalidCode(() => mapDeepSeekUsage(bad))).toBe("PROVIDER_RESPONSE_INVALID");
+    }
+    for (const bad of [{}, [], "5", -1]) {
+      expect(invalidCode(() => mapDeepSeekUsage({
+        prompt_tokens: 10, completion_tokens: 1,
+        prompt_cache_hit_tokens: bad, prompt_cache_miss_tokens: 5
+      }))).toBe("PROVIDER_RESPONSE_INVALID");
+    }
+  });
 });
