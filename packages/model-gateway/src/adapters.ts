@@ -1,6 +1,8 @@
 import {
   ModelGatewayError,
   type AdapterResult,
+  type AdapterCacheOptions,
+  type CacheSupport,
   type ModelProvider,
   type ProviderAdapter,
   type ProviderHealth
@@ -158,12 +160,17 @@ abstract class BaseHttpAdapter implements ProviderAdapter {
       prompt: string;
       maxOutputTokens?: number;
       timeoutMs: number;
+      cache?: AdapterCacheOptions;
     }
   ): Promise<AdapterResult>;
 }
 
 export class OpenAIAdapter extends BaseHttpAdapter {
   readonly provider = "openai" as const;
+  // Automatic cache that cannot be disabled; no cache marks are sent yet.
+  readonly cacheSupport: CacheSupport = {
+    mode: "automatic", ttls: [], minPrefixTokens: () => undefined, billsWrite: true
+  };
 
   constructor(fetchImpl: FetchLike = fetch, baseUrl = "https://api.openai.com/v1") {
     super(fetchImpl, baseUrl);
@@ -176,6 +183,7 @@ export class OpenAIAdapter extends BaseHttpAdapter {
       prompt: string;
       maxOutputTokens?: number;
       timeoutMs: number;
+      cache?: AdapterCacheOptions;
     }
   ): Promise<AdapterResult> {
     assertOutputTokenCap(input.maxOutputTokens);
@@ -220,6 +228,9 @@ export class OpenAIAdapter extends BaseHttpAdapter {
 
 export class DeepSeekAdapter extends BaseHttpAdapter {
   readonly provider = "deepseek" as const;
+  readonly cacheSupport: CacheSupport = {
+    mode: "automatic", ttls: [], minPrefixTokens: () => undefined, billsWrite: false
+  };
 
   constructor(fetchImpl: FetchLike = fetch, baseUrl = "https://api.deepseek.com") {
     super(fetchImpl, baseUrl);
@@ -232,6 +243,7 @@ export class DeepSeekAdapter extends BaseHttpAdapter {
       prompt: string;
       maxOutputTokens?: number;
       timeoutMs: number;
+      cache?: AdapterCacheOptions;
     }
   ): Promise<AdapterResult> {
     assertOutputTokenCap(input.maxOutputTokens);

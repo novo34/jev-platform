@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabasePool, migrate } from "@jev/db";
 import {
   ModelGateway,
+  CachePolicy,
   ModelGatewayError,
   PricingCatalog,
   ProviderCredentialStore,
@@ -10,6 +11,7 @@ import {
   mapDeepSeekUsage,
   mapOpenAIUsage,
   plainUsage,
+  type PriceRate,
   type ProviderAdapter
 } from "./index.js";
 
@@ -618,7 +620,8 @@ describe("PLT-052 gateway cache accounting", () => {
       new ProviderRegistry().register(adapterReturning("deepseek", usage, counter)),
       new PricingCatalog({
         "deepseek:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 }
-      })
+      }),
+      3, 30_000, () => undefined, CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "on" })
     );
     const request = { ...baseRequest(), targets: [{ provider: "deepseek" as const, model: "m" }] };
     const result = await gateway.execute(request);
@@ -655,7 +658,7 @@ describe("PLT-052 gateway cache accounting", () => {
       new PricingCatalog({
         "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 }
       }),
-      3, 30_000, alert => alerts.push(alert)
+      3, 30_000, alert => alerts.push(alert), CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "on" })
     );
     const request = { ...baseRequest(), targets: [{ provider: "openai" as const, model: "m" }] };
     const result = await gateway.execute(request);
@@ -699,5 +702,200 @@ describe("PLT-052 gateway cache accounting", () => {
       targets: [{ provider: "openai" as const, model: "tier" }] };
     await expect(gateway.execute(small)).resolves.toMatchObject({ provider: "openai" });
     expect(counter.calls).toBe(1);
+  });
+});
+
+describe("PLT-052 cache switch and safe failure", () => {
+  const rates = {
+    "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 },
+    "deepseek:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 }
+  };
+  const request = () => ({
+    requestId: randomUUID(), organizationId, projectId, orderId, taskId,
+    agentRole: "DEVELOPER", prompt: "Cache switch",
+    targets: [{ provider: "openai" as const, model: "m" }]
+  });
+  const rows = async (requestId: string) => (await pool.query(
+    "SELECT * FROM model_provider_calls WHERE request_id = $1 ORDER BY created_at, attempt_count", [requestId]
+  )).rows;
+  const costs = async (requestId: string) => (await pool.query(
+    "SELECT amount FROM cost_events WHERE usage->>'requestId' = $1", [requestId]
+  )).rows;
+
+  // Simulated adapter with explicit cache marks: no network at all.
+  function explicitAdapter(script: Array<(cacheEnabled: boolean | undefined) => void>) {
+    const seen: Array<boolean | undefined> = [];
+    const adapter: ProviderAdapter = {
+      provider: "openai",
+      cacheSupport: { mode: "explicit", ttls: ["5m"], minPrefixTokens: () => undefined, billsWrite: true },
+      async execute(_key, input) {
+        seen.push(input.cache?.enabled);
+        script[Math.min(seen.length - 1, script.length - 1)]?.(input.cache?.enabled);
+        return { content: "ok", usage: plainUsage(10, 5) };
+      },
+      async health() { return { ok: true }; }
+    };
+    return { adapter, seen };
+  }
+  const reject = (status: number, message: string, retryable = false) => () => {
+    throw new ModelGatewayError("PROVIDER_HTTP_ERROR", message, retryable, status);
+  };
+  const gatewayFor = (adapter: ProviderAdapter, policy: CachePolicy, pricing: Record<string, PriceRate> = rates) =>
+    new ModelGateway(
+      pool, credentials, new ProviderRegistry().register(adapter),
+      new PricingCatalog(pricing), 3, 30_000, () => undefined, policy
+    );
+  const on = () => CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "on" });
+  const withCachePricing = {
+    "openai:*": { ...rates["openai:*"], cacheWrite5mPerMillionChf: 1.25 }
+  };
+
+  it("records DISABLED, sends no cache marks, and says automatic caches stay active (off by default)", async () => {
+    await credentials.configure(organizationId, "openai", "sk-cache-test-secret-1111", userId);
+    const { adapter, seen } = explicitAdapter([() => undefined]);
+    const req = request();
+    // Default policy (not injected) is off.
+    await new ModelGateway(pool, credentials, new ProviderRegistry().register(adapter), new PricingCatalog(rates))
+      .execute(req);
+    expect(seen).toEqual([undefined]); // no cache options at all
+    const [row] = await rows(req.requestId);
+    expect(row).toMatchObject({ outcome: "SUCCESS", cache_status: "DISABLED" });
+    expect(row.cache_reason).toMatch(/JEV_PROMPT_CACHE is off/);
+
+    // Automatic providers: the reason says the provider cache remains active.
+    const automatic: ProviderAdapter = {
+      provider: "openai",
+      cacheSupport: { mode: "automatic", ttls: [], minPrefixTokens: () => undefined, billsWrite: true },
+      async execute() { return { content: "ok", usage: mapOpenAIUsage({
+        input_tokens: 100, output_tokens: 1, input_tokens_details: { cached_tokens: 60 } }) }; },
+      async health() { return { ok: true }; }
+    };
+    const req2 = request();
+    await gatewayFor(automatic, CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "off" })).execute(req2);
+    const [auto] = await rows(req2.requestId);
+    expect(auto).toMatchObject({ cache_status: "DISABLED", cache_read_tokens: "60" });
+    expect(auto.cache_reason).toMatch(/automatic provider cache cannot be disabled/);
+  });
+
+  it("does not mark the cache for a provider outside JEV_PROMPT_CACHE_PROVIDERS", async () => {
+    const { adapter, seen } = explicitAdapter([() => undefined]);
+    const req = request();
+    await gatewayFor(adapter, CachePolicy.fromEnv({
+      JEV_PROMPT_CACHE: "on", JEV_PROMPT_CACHE_PROVIDERS: "anthropic"
+    })).execute(req);
+    expect(seen).toEqual([undefined]);
+    expect((await rows(req.requestId))[0]).toMatchObject({ cache_status: "DISABLED" });
+  });
+
+  it("with the switch on, marks the cache for an explicit adapter and keeps the observed status", async () => {
+    const { adapter, seen } = explicitAdapter([() => undefined]);
+    const req = request();
+    await gatewayFor(adapter, on(), withCachePricing).execute(req);
+    expect(seen).toEqual([true]);
+    expect((await rows(req.requestId))[0]).toMatchObject({ outcome: "SUCCESS", cache_status: null });
+  });
+
+  it("retries ONCE without cache after a cache-attributable 400, records ERROR and both attempts", async () => {
+    const { adapter, seen } = explicitAdapter([
+      reject(400, "cache_control: invalid ttl for breakpoint"), () => undefined
+    ]);
+    const req = { ...request(), maxRetries: 0 };
+    const result = await gatewayFor(adapter, on(), withCachePricing).execute(req);
+    expect(seen).toEqual([true, false]);
+    expect(result.attempts).toBe(2);
+    const recorded = await rows(req.requestId);
+    expect(recorded).toHaveLength(2);
+    expect(recorded[0]).toMatchObject({
+      outcome: "FAILED", attempt_count: 1, error_code: "PROVIDER_HTTP_ERROR",
+      cache_status: "ERROR", estimated_cost_chf: null
+    });
+    expect(recorded[0].cache_reason).toMatch(/rejected the cache marks \(HTTP 400\)/);
+    expect(recorded[1]).toMatchObject({ outcome: "SUCCESS", attempt_count: 2, cache_status: "ERROR" });
+    expect(recorded[1].cache_reason).toMatch(/retried once without cache/);
+    // Only the billed (second) attempt has a cost event: exactly one, never duplicated.
+    expect(await costs(req.requestId)).toHaveLength(1);
+  });
+
+  it("propagates the second failure and never retries without cache twice", async () => {
+    const { adapter, seen } = explicitAdapter([
+      reject(400, "cache_control rejected"), reject(400, "cache_control rejected again")
+    ]);
+    const req = { ...request(), maxRetries: 3 };
+    await expect(gatewayFor(adapter, on(), withCachePricing).execute(req))
+      .rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(seen).toEqual([true, false]);
+    const recorded = await rows(req.requestId);
+    expect(recorded.map(r => r.outcome)).toEqual(["FAILED", "FAILED"]);
+    expect(recorded.every(r => r.cache_status === "ERROR")).toBe(true);
+    expect(await costs(req.requestId)).toHaveLength(0);
+  });
+
+  it.each([
+    ["401", 401, "invalid cache credentials", false],
+    ["429", 429, "cache rate limit", true],
+    ["500", 500, "cache backend error", true],
+    ["unrelated 400", 400, "max_tokens is too large", false]
+  ])("does not retry without cache on %s", async (_name, status, message, retryable) => {
+    const { adapter, seen } = explicitAdapter([reject(status, message, retryable)]);
+    const req = { ...request(), maxRetries: 0 };
+    await expect(gatewayFor(adapter, on(), withCachePricing).execute(req))
+      .rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(seen).toEqual([true]);
+    const recorded = await rows(req.requestId);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].cache_status).toBeNull();
+  });
+
+  it("does not retry without cache on a timeout", async () => {
+    const { adapter, seen } = explicitAdapter([() => {
+      throw new ModelGatewayError("PROVIDER_TIMEOUT", "cache request timed out", true);
+    }]);
+    const req = { ...request(), maxRetries: 0 };
+    await expect(gatewayFor(adapter, on(), withCachePricing).execute(req))
+      .rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(seen).toEqual([true]);
+    expect((await rows(req.requestId))[0]).toMatchObject({ outcome: "TIMEOUT", cache_status: null });
+  });
+
+  it("never falls back without cache when the cache was not marked (switch off)", async () => {
+    const { adapter, seen } = explicitAdapter([reject(400, "cache_control rejected")]);
+    const req = { ...request(), maxRetries: 0 };
+    await expect(gatewayFor(adapter, CachePolicy.disabled(), withCachePricing).execute(req))
+      .rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(seen).toEqual([undefined]);
+  });
+
+  it("the cache retry consumes the shared attempt budget", async () => {
+    // Two targets would normally allow 8 attempts; here one target uses 2 for the cache retry.
+    const { adapter, seen } = explicitAdapter([
+      reject(400, "cache_control rejected"), reject(500, "boom", true)
+    ]);
+    const req = { ...request(), maxRetries: 0 };
+    await expect(gatewayFor(adapter, on(), withCachePricing).execute(req)).rejects.toBeDefined();
+    expect(seen).toHaveLength(2);
+    const recorded = await rows(req.requestId);
+    expect(recorded[1]).toMatchObject({ outcome: "FAILED", attempt_count: 2, cache_status: "ERROR" });
+  });
+
+  it("missing prices still block before any call, with the cache off or on", async () => {
+    for (const policy of [CachePolicy.disabled(), on()]) {
+      const { adapter, seen } = explicitAdapter([() => undefined]);
+      const req = request();
+      // Cache read rate missing (openai needs it even with the cache off).
+      await expect(gatewayFor(adapter, policy, {
+        "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 }
+      }).execute(req)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+      expect(seen).toEqual([]);
+      expect((await rows(req.requestId))[0]).toMatchObject({
+        outcome: "BLOCKED", error_code: "PRICING_REQUIRED"
+      });
+    }
+    // With the cache on for an explicit adapter, the read rate is required too.
+    const { adapter, seen } = explicitAdapter([() => undefined]);
+    const req = request();
+    await expect(gatewayFor(adapter, on(), {
+      "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 }
+    }).execute(req)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(seen).toEqual([]);
   });
 });
