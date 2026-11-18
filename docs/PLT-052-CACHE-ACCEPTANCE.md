@@ -2,7 +2,7 @@
 
 Harness de desarrollo de la PR 6/6: `apps/api/src/acceptance-gateway.ts` sigue siendo la aceptación de una llamada de PLT-009; este es su hermano para la caché (`apps/api/src/acceptance-cache.ts`, núcleo en `cache-acceptance.ts`). Diseño: [PLT-052-PROMPT-CACHING.md](architecture/PLT-052-PROMPT-CACHING.md), punto 8. Reglas de gasto heredadas de [PLT-009-PAID-CALL-HARNESS.md](PLT-009-PAID-CALL-HARNESS.md).
 
-La PR 6/6 no ejecuta ninguna llamada real. La ejecución pagada (una sola, tope total CHF 0,10, sin reintentos de pago) la autorizó el operador. Se ejecutó el 2026-11-18 con OpenAI y con Anthropic y ambas dieron PASS (ver [OpenAI](#resultado-de-la-prueba-real-con-openai-2026-11-18) y [Anthropic](#resultado-de-la-prueba-real-con-anthropic-2026-11-18)); DeepSeek NO se ha verificado con tráfico real.
+La PR 6/6 no ejecuta ninguna llamada real. La ejecución pagada (una sola, tope total CHF 0,10, sin reintentos de pago) la autorizó el operador. Se ejecutó el 2026-11-18 con OpenAI, Anthropic y DeepSeek y las tres dieron PASS (ver [OpenAI](#resultado-de-la-prueba-real-con-openai-2026-11-18), [Anthropic](#resultado-de-la-prueba-real-con-anthropic-2026-11-18) y [DeepSeek](#resultado-de-la-prueba-real-con-deepseek-2026-11-18)).
 
 ## Modo por defecto: dry-run
 
@@ -108,7 +108,7 @@ Resultado global PASS, una única ejecución con OpenAI `gpt-6.1-terra`, lanzada
 - El único aviso en stderr fue el experimental UNDICI-EHPA de Node (inocuo).
 - El informe completo (JSON y texto) quedó solo en el scratchpad de la sesión, sin claves ni prompt; no se versiona.
 
-Al registrar esta ejecución Anthropic y DeepSeek seguían sin verificar; Anthropic se verificó después (sección siguiente). Sigue sin verificar: DeepSeek; el caso null frente a ausente en `input_tokens_details` de OpenAI; el coste real en el panel de OpenAI.
+Al registrar esta ejecución Anthropic y DeepSeek seguían sin verificar; ambos se verificaron después (secciones siguientes). Sigue sin verificar: el caso null frente a ausente en `input_tokens_details` de OpenAI; el coste real en el panel de OpenAI.
 
 ## Resultado de la prueba real con Anthropic (2026-11-18)
 
@@ -125,4 +125,21 @@ Resultado global PASS, una única ejecución con Anthropic `claude-sonnet-5-5` e
 - Forma real del `usage` (solo tipos): `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `cache_creation` {`ephemeral_5m_input_tokens`, `ephemeral_1h_input_tokens`}, `output_tokens`, `output_tokens_details` {`thinking_tokens`}, `service_tier`, `inference_geo`, `speed`; todos números salvo los tres últimos, que son strings.
 - Confirmado con la API real: `cache_control` explícito aceptado, TTL híbrido 1h/5m atribuido correctamente por TTL, aislamiento por tenant, mapeo de `usage` y ahorro positivo en la lectura.
 
-Estado: la caché está verificada con tráfico real en OpenAI y en Anthropic. Sigue SIN verificar con tráfico real: DeepSeek; el formato real de los errores de caché de Anthropic y la heurística `isCacheAttributableError` (anthropic_error_format NOT_RUN: no hubo error HTTP); el coste real en los paneles de OpenAI y Anthropic; el caso null/ausente en `input_tokens_details` de OpenAI. PLT-052 sigue sin marcarse DONE (decisión del operador).
+Estado tras esta ejecución: la caché estaba verificada con tráfico real en OpenAI y en Anthropic (DeepSeek se verificó después, sección siguiente). Sigue SIN verificar: el formato real de los errores de caché de Anthropic y la heurística `isCacheAttributableError` (anthropic_error_format NOT_RUN: no hubo error HTTP); el caso null/ausente en `input_tokens_details` de OpenAI. El coste real en el panel de Anthropic sí coincidió: US$ 0,02 en el panel frente a CHF 0,0176 (unos US$ 0,021) del harness. PLT-052 sigue sin marcarse DONE (decisión del operador).
+
+## Resultado de la prueba real con DeepSeek (2026-11-18)
+
+Resultado global PASS, una única ejecución con DeepSeek `deepseek-flash` el 2026-11-18, lanzada desde el hilo principal del coordinador tras la autorización directa del operador, con la clave inyectada por el proxy del entorno y `NODE_USE_ENV_PROXY=1` (necesario solo en el entorno cloud), tope CHF 0,10, sin reintentos de pago y `max_tokens` 128. Comprobaciones PASS: read_second_call, tenant_isolation, usage_mapping, read_saves_cost y no_paid_retry. DeepSeek no tiene comprobación de escritura. Una llamada de red por llamada lógica; 0 reintentos bloqueados. La autorización de esa ejecución está consumida.
+
+| Llamada | Ordinarios | Lectura | Salida | cache_status | Coste CHF | Ahorro CHF | requestId |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A-1 (cliente A) | 1467 | 0 | 55 | vacío | 0,000425 | n/d | `0e477d35-74c9-4b2b-9a8e-ec0e0befade3` |
+| A-2 (A, mismo prefijo) | 187 | 1280 | 30 | PARTIAL | 0,000084 | +0,000316 | `9866b91d-1ca5-41eb-8e97-20f1bd1d0ee2` |
+| B-1 (otro cliente) | 1472 | 0 | 56 | sin estado | 0,000427 | n/d | `4f34cb30-5fb9-4c41-84ba-39fb229da09d` |
+
+- `cache_status` vacío en A-1 y B-1: DeepSeek no informa escritura, así está diseñado.
+- Aislamiento entre clientes: B no leyó la caché de A, consistente con `tenant_namespace`. Es una sola muestra; DeepSeek no documenta el aislamiento y el operador aceptó ese riesgo.
+- Coste acumulado según el harness con las tarifas de `deepseek-flash` a PUNTA verificadas el 2026-11-18 en https://api-docs.deepseek.com/quick_start/pricing (entrada miss 0,30 USD/M, hit 0,006, salida 1,20; el valle es la mitad), convertidas a 0,8402 CHF/USD: CHF 0,000937 frente al tope de 0,10. NO es factura y no se comprobó en el panel de DeepSeek. Peor caso previo: CHF 0,002873.
+- Forma real del `usage` (solo tipos, todos números): `prompt_tokens`, `completion_tokens`, `total_tokens`, `prompt_tokens_details` {`cached_tokens`}, `completion_tokens_details` {`reasoning_tokens`}, `prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`. La lectura 1280 es múltiplo de 64.
+
+Estado: la caché de prompts está verificada con tráfico real en los TRES proveedores (OpenAI 2026-11-18 desde el entorno cloud, Anthropic 2026-11-18 ejecutada por el operador en su ordenador y DeepSeek 2026-11-18). Sigue SIN verificar: el formato real de los errores de caché de Anthropic y la heurística `isCacheAttributableError` (anthropic_error_format NOT_RUN: no hubo error HTTP); el coste real en los paneles de OpenAI y DeepSeek (el de Anthropic sí coincidió: US$ 0,02 en el panel frente a CHF 0,0176, unos US$ 0,021, del harness); el caso null/ausente en `input_tokens_details` de OpenAI. PLT-052 sigue sin marcarse DONE (decisión del operador).
