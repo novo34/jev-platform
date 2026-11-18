@@ -2,6 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabasePool, migrate } from "@jev/db";
 import {
+  AnthropicAdapter,
+  MODEL_PROVIDERS,
   ModelGateway,
   CachePolicy,
   ModelGatewayError,
@@ -951,5 +953,348 @@ describe("PLT-052 cache switch and safe failure", () => {
       "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 }
     }).execute(req)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
     expect(seen).toEqual([]);
+  });
+});
+
+describe("PLT-052 Anthropic adapter through the gateway (simulated fetch, no network)", () => {
+  const rates = {
+    "anthropic:*": {
+      inputPerMillionChf: 2, outputPerMillionChf: 10, cacheReadPerMillionChf: 0.1,
+      cacheWrite5mPerMillionChf: 2.5, cacheWrite1hPerMillionChf: 4
+    }
+  };
+  const target = { provider: "anthropic" as const, model: "claude-sonnet-5-5" };
+  const segmented = () => ({
+    requestId: randomUUID(), organizationId, projectId, orderId, taskId,
+    agentRole: "DEVELOPER", targets: [target],
+    segments: [
+      { kind: "system" as const, content: "You are JEV." },
+      { kind: "rules" as const, id: "r1", content: "rule one" },
+      { kind: "task_context" as const, content: "task details" },
+      { kind: "history" as const, content: "earlier turn" },
+      { kind: "input" as const, content: "go" }
+    ]
+  });
+  const rows = async (requestId: string) => (await pool.query(
+    "SELECT * FROM model_provider_calls WHERE request_id = $1 ORDER BY created_at, attempt_count", [requestId]
+  )).rows;
+  const okBody = (usage: Record<string, unknown>) => ({
+    id: "msg_t", type: "message", role: "assistant", stop_reason: "end_turn",
+    content: [{ type: "text", text: "OK" }], usage
+  });
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+    status, headers: { "Content-Type": "application/json" }
+  });
+  const errorResponse = (status: number, type: string, message: string) =>
+    json({ type: "error", error: { type, message } }, status);
+
+  function build(responses: Array<Response | (() => Response)>, opts: {
+    policy?: CachePolicy; pricing?: Record<string, PriceRate>; secret?: string | null;
+  } = {}) {
+    const bodies: any[] = [];
+    let n = 0;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      const next = responses[Math.min(n++, responses.length - 1)]!;
+      return typeof next === "function" ? next() : next.clone();
+    }) as unknown as typeof fetch;
+    const gateway = new ModelGateway(
+      pool, credentials, new ProviderRegistry().register(new AnthropicAdapter(fetchImpl, "https://example.test/v1")),
+      new PricingCatalog(opts.pricing ?? rates), 3, 30_000, () => undefined,
+      opts.policy ?? CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "on" }),
+      opts.secret === null ? undefined : opts.secret ?? "tenant-namespace-test-secret"
+    );
+    return { gateway, bodies };
+  }
+  const hasCacheControl = (body: unknown) => JSON.stringify(body).includes("cache_control");
+
+  it("fails the 'MODEL_PROVIDERS vs database CHECK' guard when a provider is not admitted", async () => {
+    for (const table of ["model_provider_calls", "provider_credentials"]) {
+      const defs = (await pool.query(
+        `SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c
+          WHERE c.conrelid = $1::regclass AND c.contype = 'c' AND pg_get_constraintdef(c.oid) LIKE '%provider = ANY%'
+             OR c.conrelid = $1::regclass AND c.contype = 'c' AND pg_get_constraintdef(c.oid) LIKE '%provider%IN%'`,
+        [table]
+      )).rows.map(r => r.def as string);
+      expect(defs.length).toBeGreaterThan(0);
+      for (const provider of MODEL_PROVIDERS) {
+        expect(defs.some(def => def.includes(`'${provider}'`)), `${table} CHECK admits ${provider}`).toBe(true);
+      }
+    }
+  });
+
+  it("writes then hits: 3 breakpoints, per-TTL cost, hashes and WRITE/HIT status", async () => {
+    await credentials.configure(organizationId, "anthropic", "anthropic-test-secret-1234", userId);
+    const write = build([json(okBody({
+      input_tokens: 30, output_tokens: 10, cache_creation_input_tokens: 1000,
+      cache_creation: { ephemeral_5m_input_tokens: 200, ephemeral_1h_input_tokens: 800 }
+    }))]);
+    const first = segmented();
+    const result = await write.gateway.execute(first);
+    expect(write.bodies[0]).not.toHaveProperty("cache_control");
+    expect(JSON.stringify(write.bodies[0]).match(/"cache_control"/g)).toHaveLength(3);
+    expect(result.estimatedCostChf).toBeCloseTo(0.00386, 9);
+    const [row] = await rows(first.requestId);
+    expect(row).toMatchObject({
+      outcome: "SUCCESS", cache_status: "WRITE", cache_write_tokens: "1000",
+      cache_write_5m_tokens: "200", cache_write_1h_tokens: "800", cache_read_tokens: "0"
+    });
+    expect(row.prefix_project_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.prefix_task_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.prefix_task_sha256).not.toBe(row.prefix_project_sha256);
+    expect(Number(row.estimated_cache_savings_chf)).toBeLessThan(0);
+
+    const read = build([json(okBody({ input_tokens: 5, output_tokens: 10, cache_read_input_tokens: 1000 }))]);
+    const second = segmented();
+    await read.gateway.execute(second);
+    const [hit] = await rows(second.requestId);
+    expect(hit).toMatchObject({ cache_status: "PARTIAL", cache_read_tokens: "1000" });
+    expect(hit.prefix_project_sha256).toBe(row.prefix_project_sha256);
+    expect(Number(hit.estimated_cache_savings_chf)).toBeGreaterThan(0);
+  });
+
+  it("records BELOW_MINIMUM under the model minimum and MISS at or above it", async () => {
+    const low = build([json(okBody({ input_tokens: 100, output_tokens: 5 }))]);
+    const a = segmented();
+    await low.gateway.execute(a);
+    expect((await rows(a.requestId))[0]).toMatchObject({ outcome: "SUCCESS", cache_status: "BELOW_MINIMUM" });
+    expect((await rows(a.requestId))[0].cache_reason).toMatch(/512-token/);
+    const enough = build([json(okBody({ input_tokens: 512, output_tokens: 5 }))]);
+    const b = segmented();
+    await enough.gateway.execute(b);
+    expect((await rows(b.requestId))[0]).toMatchObject({ outcome: "SUCCESS", cache_status: "MISS" });
+  });
+
+  it("sends no cache_control with the switch off and does not require cache rates", async () => {
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 100, output_tokens: 5 }))], {
+      policy: CachePolicy.disabled(),
+      pricing: { "anthropic:*": { inputPerMillionChf: 2, outputPerMillionChf: 10 } }
+    });
+    const req = segmented();
+    await gateway.execute(req);
+    expect(hasCacheControl(bodies[0])).toBe(false);
+    expect((await rows(req.requestId))[0]).toMatchObject({ cache_status: "DISABLED" });
+    expect((await rows(req.requestId))[0].prefix_project_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("records UNSUPPORTED and sends no marks for a plain-text prompt with the switch on", async () => {
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 100, output_tokens: 5 }))]);
+    const { segments: _s, ...rest } = segmented();
+    const req = { ...rest, prompt: "plain text only" };
+    await gateway.execute(req);
+    expect(hasCacheControl(bodies[0])).toBe(false);
+    expect(bodies[0].messages).toEqual([{ role: "user", content: "plain text only" }]);
+    const [row] = await rows(req.requestId);
+    expect(row).toMatchObject({ outcome: "SUCCESS", cache_status: "UNSUPPORTED", prefix_project_sha256: null });
+  });
+
+  it("records UNSUPPORTED for a registered adapter without cache support when the switch is on", async () => {
+    const plain: ProviderAdapter = {
+      provider: "openai",
+      async execute() { return { content: "ok", usage: plainUsage(10, 5) }; },
+      async health() { return { ok: true }; }
+    };
+    await credentials.configure(organizationId, "openai", "openai-test-secret-4321", userId);
+    const gateway = new ModelGateway(
+      pool, credentials, new ProviderRegistry().register(plain),
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 } }),
+      3, 30_000, () => undefined, CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "on" })
+    );
+    const req = { ...segmented(), segments: undefined, prompt: "p", targets: [{ provider: "openai" as const, model: "m" }] };
+    delete (req as { segments?: unknown }).segments;
+    await gateway.execute(req);
+    expect((await rows(req.requestId))[0]).toMatchObject({ cache_status: "UNSUPPORTED" });
+  });
+
+  it("blocks with PRICING_REQUIRED before any fetch when a write rate of a TTL used is missing", async () => {
+    for (const missing of ["cacheWrite1hPerMillionChf", "cacheWrite5mPerMillionChf", "cacheReadPerMillionChf"] as const) {
+      const rate: Record<string, number> = { ...rates["anthropic:*"] };
+      delete rate[missing];
+      const { gateway, bodies } = build([json(okBody({ input_tokens: 1, output_tokens: 1 }))], {
+        pricing: { "anthropic:*": rate as unknown as PriceRate }
+      });
+      const req = segmented();
+      await expect(gateway.execute(req)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+      expect(bodies).toHaveLength(0);
+      expect((await rows(req.requestId))[0]).toMatchObject({ outcome: "BLOCKED", error_code: "PRICING_REQUIRED" });
+    }
+    // Only the TTLs actually used are required: without task_context/history the 5m rate is not needed.
+    const rate: Record<string, number> = { ...rates["anthropic:*"] };
+    delete rate.cacheWrite5mPerMillionChf;
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 600, output_tokens: 1 }))], {
+      pricing: { "anthropic:*": rate as unknown as PriceRate }
+    });
+    const req = { ...segmented(), segments: [
+      { kind: "system" as const, content: "s" }, { kind: "input" as const, content: "go" }
+    ] };
+    await gateway.execute(req);
+    expect(bodies).toHaveLength(1);
+  });
+
+  it("blocks PRICING_REQUIRED before any fetch when write rates are absent even with cacheWriteBilledAs input", async () => {
+    const rate = { inputPerMillionChf: 2, outputPerMillionChf: 10, cacheReadPerMillionChf: 0.1, cacheWriteBilledAs: "input" as const };
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 1, output_tokens: 1 }))], {
+      pricing: { "anthropic:*": rate }
+    });
+    const req = segmented();
+    await expect(gateway.execute(req)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(bodies).toHaveLength(0);
+    expect((await rows(req.requestId))[0]).toMatchObject({ outcome: "BLOCKED", error_code: "PRICING_REQUIRED" });
+  });
+
+  it("accepts a request with several task_context/project blocks (3 marks, no planning failure)", async () => {
+    await credentials.configure(organizationId, "anthropic", "anthropic-test-secret-1234", userId);
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 5, output_tokens: 1 }))]);
+    const req = { ...segmented(), segments: [
+      { kind: "system" as const, content: "s" },
+      { kind: "rules" as const, id: "r1", content: "r" },
+      { kind: "task_context" as const, content: "t1" },
+      { kind: "task_context" as const, content: "t2" },
+      { kind: "task_context" as const, content: "t3" },
+      { kind: "history" as const, content: "h" },
+      { kind: "input" as const, content: "go" }
+    ] };
+    await gateway.execute(req);
+    expect(bodies).toHaveLength(1);
+    expect(JSON.stringify(bodies[0]).split("cache_control").length - 1).toBe(3);
+  });
+
+  it("treats a planning failure as a failed target and falls back to the next provider", async () => {
+    await credentials.configure(organizationId, "anthropic", "anthropic-test-secret-1234", userId);
+    await credentials.configure(organizationId, "openai", "sk-fallback-test-secret-2222", userId);
+    const anthropicBodies: unknown[] = [];
+    const anthropic = new AnthropicAdapter((async (_u: string, init: RequestInit) => {
+      anthropicBodies.push(init.body);
+      return json(okBody({ input_tokens: 1, output_tokens: 1 }));
+    }) as unknown as typeof fetch, "https://example.test/v1");
+    let openaiCalls = 0;
+    const openai: ProviderAdapter = {
+      provider: "openai",
+      async execute() { openaiCalls++; return { content: "ok", usage: plainUsage(10, 5) }; },
+      async health() { return { ok: true }; }
+    };
+    const pricing = new PricingCatalog({
+      ...rates,
+      "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 }
+    });
+    const registry = new ProviderRegistry().register(anthropic).register(openai);
+    const mk = (targets: Array<{ provider: "anthropic" | "openai"; model: string }>) => new ModelGateway(
+      pool, credentials, registry, pricing, 3, 30_000, () => undefined,
+      CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "on" }), "tenant-namespace-test-secret"
+    );
+    // A system-only prompt passes buildPrompt but Anthropic cannot send it.
+    const req = { ...segmented(), segments: [{ kind: "system" as const, content: "only system" }],
+      targets: [target, { provider: "openai" as const, model: "m" }] };
+    await expect(mk(req.targets).execute(req)).resolves.toMatchObject({ provider: "openai", fallbackFrom: "anthropic" });
+    expect(anthropicBodies).toHaveLength(0);
+    expect(openaiCalls).toBe(1);
+    const recorded = await rows(req.requestId);
+    expect(recorded[0]).toMatchObject({ provider: "anthropic", outcome: "BLOCKED", error_code: "INVALID_REQUEST", attempt_count: 0 });
+    expect(recorded[1]).toMatchObject({ provider: "openai", outcome: "SUCCESS", fallback_from: "anthropic" });
+
+    // No further target: the planning error propagates after being recorded.
+    const only = { ...req, requestId: randomUUID(), targets: [target] };
+    await expect(mk(only.targets).execute(only)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect((await rows(only.requestId))[0]).toMatchObject({ outcome: "BLOCKED", error_code: "INVALID_REQUEST" });
+  });
+
+  it("rejects prompts over the Haiku 5.5 tier with PROMPT_TOO_LARGE_FOR_TIER before any fetch", async () => {
+    const haiku = { provider: "anthropic" as const, model: "claude-haiku-5-5" };
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 1, output_tokens: 1 }))], {
+      pricing: { "anthropic:claude-haiku-5-5": { ...rates["anthropic:*"], maxPromptTokens: 1_000 } }
+    });
+    const big = { ...segmented(), targets: [haiku], segments: [
+      { kind: "system" as const, content: "x".repeat(2_100) }, { kind: "input" as const, content: "go" }
+    ] };
+    await expect(gateway.execute(big)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(bodies).toHaveLength(0);
+    expect((await rows(big.requestId))[0]).toMatchObject({ outcome: "BLOCKED", error_code: "PROMPT_TOO_LARGE_FOR_TIER" });
+  });
+
+  it("retries once without cache after a cache 400 (cache_status ERROR) and reuses the PR 3 policy", async () => {
+    const { gateway, bodies } = build([
+      errorResponse(400, "invalid_request_error", "system.0.cache_control.ttl: Input should be '5m' or '1h'"),
+      json(okBody({ input_tokens: 700, output_tokens: 5 }))
+    ]);
+    const req = segmented();
+    await gateway.execute(req);
+    expect(bodies).toHaveLength(2);
+    expect(hasCacheControl(bodies[0])).toBe(true);
+    expect(hasCacheControl(bodies[1])).toBe(false);
+    const recorded = await rows(req.requestId);
+    expect(recorded).toHaveLength(2);
+    expect(recorded.every(r => r.cache_status === "ERROR")).toBe(true);
+    expect(recorded[1]).toMatchObject({ outcome: "SUCCESS", attempt_count: 2 });
+  });
+
+  it("does not treat a non-cache 400 as a cache failure", async () => {
+    const { gateway, bodies } = build([errorResponse(400, "invalid_request_error", "max_tokens: too large")]);
+    const req = { ...segmented(), maxRetries: 3 };
+    await expect(gateway.execute(req)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(bodies).toHaveLength(1);
+    expect((await rows(req.requestId))[0]).toMatchObject({ outcome: "FAILED", cache_status: null });
+  });
+
+  it.each([
+    [429, "rate_limit_error"], [529, "overloaded_error"], [500, "api_error"], [503, "api_error"]
+  ])("retries a transient HTTP %i within maxRetries and succeeds", async (status, type) => {
+    const { gateway, bodies } = build([
+      errorResponse(status, type, "try later"), json(okBody({ input_tokens: 700, output_tokens: 5 }))
+    ]);
+    const req = { ...segmented(), maxRetries: 1 };
+    const result = await gateway.execute(req);
+    expect(result.attempts).toBe(2);
+    expect(bodies).toHaveLength(2);
+    // A transient failure is never confused with a cache rejection: marks stay on.
+    expect(hasCacheControl(bodies[1])).toBe(true);
+  });
+
+  it("does not retry with maxRetries 0, nor an authentication error", async () => {
+    const overloaded = build([errorResponse(529, "overloaded_error", "Overloaded")]);
+    await expect(overloaded.gateway.execute({ ...segmented(), maxRetries: 0 }))
+      .rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(overloaded.bodies).toHaveLength(1);
+    const unauthorized = build([errorResponse(401, "authentication_error", "invalid x-api-key")]);
+    await expect(unauthorized.gateway.execute({ ...segmented(), maxRetries: 3 }))
+      .rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(unauthorized.bodies).toHaveLength(1);
+  });
+
+  it("blocks without a fetch when the Anthropic credential is missing", async () => {
+    await credentials.remove(organizationId, "anthropic", userId);
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 1, output_tokens: 1 }))]);
+    const req = segmented();
+    await expect(gateway.execute(req)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(bodies).toHaveLength(0);
+    expect((await rows(req.requestId))[0]).toMatchObject({ outcome: "BLOCKED", error_code: "PROVIDER_CREDENTIAL_MISSING" });
+    await credentials.configure(organizationId, "anthropic", "anthropic-test-secret-1234", userId);
+  });
+
+  it("validates the request shape: exactly one of prompt/segments, tools only with segments, secret required", async () => {
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 1, output_tokens: 1 }))]);
+    const base = segmented();
+    await expect(gateway.execute({ ...base, prompt: "both" })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    const { segments: _s, ...noSegments } = base;
+    await expect(gateway.execute(noSegments)).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    await expect(gateway.execute({ ...noSegments, prompt: "p", tools: [{ name: "t", input_schema: {} }] }))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    const noSecret = build([json(okBody({ input_tokens: 1, output_tokens: 1 }))], { secret: null });
+    await expect(noSecret.gateway.execute(segmented())).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    expect(bodies).toHaveLength(0);
+    expect(noSecret.bodies).toHaveLength(0);
+  });
+
+  it("isolates tenants: different projects of the same content get different prefix hashes", async () => {
+    const a = build([json(okBody({ input_tokens: 700, output_tokens: 1 }))]);
+    const reqA = segmented();
+    await a.gateway.execute(reqA);
+    // Same organization, same content, other tenant secret => other namespace and hashes.
+    const b = build([json(okBody({ input_tokens: 700, output_tokens: 1 }))], { secret: "another-test-secret" });
+    const reqB = segmented();
+    await b.gateway.execute(reqB);
+    const [rowA] = await rows(reqA.requestId);
+    const [rowB] = await rows(reqB.requestId);
+    expect(rowA.prefix_project_sha256).not.toBe(rowB.prefix_project_sha256);
+    expect(JSON.stringify(a.bodies[0])).not.toContain(organizationId);
   });
 });

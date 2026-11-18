@@ -1,4 +1,8 @@
-export const MODEL_PROVIDERS = ["openai", "deepseek", "qwen", "glm"] as const;
+import type { BuiltPrompt, PromptSegment, ToolDefinition } from "./prompt-builder.js";
+
+// Every entry must be admitted by the provider CHECKs of the database
+// (migrations 0020 and 0029); a test enforces it.
+export const MODEL_PROVIDERS = ["openai", "deepseek", "qwen", "glm", "anthropic"] as const;
 
 export type ModelProvider = (typeof MODEL_PROVIDERS)[number];
 
@@ -14,7 +18,11 @@ export interface ModelGatewayRequest {
   orderId?: string;
   taskId: string;
   agentRole: string;
-  prompt: string;
+  // Exactly one of `prompt` (plain text, never cached) or `segments` (canonical
+  // segmented prompt built by buildPrompt, cacheable). `tools` only with `segments`.
+  prompt?: string;
+  segments?: PromptSegment[];
+  tools?: ToolDefinition[];
   targets: ProviderTarget[];
   maxOutputTokens?: number;
   timeoutMs?: number;
@@ -42,9 +50,10 @@ export interface NormalizedUsage {
   totalInputTokens: number;
 }
 
-// Written so far: HIT/PARTIAL/WRITE (observed), DISABLED (switch off) and ERROR
-// (cache-attributable rejection retried without cache). MISS, BELOW_MINIMUM and
-// UNSUPPORTED need the Anthropic adapter (PR 4/6).
+// Written: HIT/PARTIAL/WRITE (observed), DISABLED (switch off), ERROR
+// (cache-attributable rejection retried without cache), UNSUPPORTED (switch on
+// but the adapter or the input cannot carry cache marks) and, for explicit-mark
+// adapters, MISS / BELOW_MINIMUM (marks sent, both cache counters 0).
 export type CacheStatus =
   | "HIT" | "PARTIAL" | "MISS" | "WRITE" | "DISABLED"
   | "BELOW_MINIMUM" | "ERROR" | "UNSUPPORTED";
@@ -52,6 +61,9 @@ export type CacheStatus =
 export interface AdapterResult {
   content: string;
   usage: NormalizedUsage;
+  // Number of cache breakpoints actually sent (explicit-mark adapters only).
+  // undefined = the adapter does not report it.
+  cacheMarks?: number;
   finishReason?: string;
   rawMetadata?: Record<string, unknown>;
 }
@@ -73,20 +85,33 @@ export interface CacheSupport {
 
 // Cache marking requested by the gateway for one provider call. Adapters that
 // support explicit marks send them only when enabled is true.
+export type CacheTtl = "5m" | "1h";
+
 export interface AdapterCacheOptions {
   enabled: boolean;
+  // Anthropic TTLs: 1h project block, 5m task/history (JEV_PROMPT_CACHE_*_TTL).
+  projectTtl?: CacheTtl;
+  taskTtl?: CacheTtl;
+}
+
+export interface AdapterExecuteInput {
+  model: string;
+  // Always the full prompt text (for a segmented request: the canonical bytes).
+  prompt: string;
+  // Present only for a segmented request; explicit-mark adapters build their
+  // blocks from it.
+  built?: BuiltPrompt;
+  maxOutputTokens?: number;
+  timeoutMs: number;
+  cache?: AdapterCacheOptions;
 }
 
 export interface ProviderAdapter {
   readonly provider: ModelProvider;
   readonly cacheSupport?: CacheSupport;
-  execute(apiKey: string, input: {
-    model: string;
-    prompt: string;
-    maxOutputTokens?: number;
-    timeoutMs: number;
-    cache?: AdapterCacheOptions;
-  }): Promise<AdapterResult>;
+  // Write TTLs the adapter would use for this prompt with marks on (pre-call pricing).
+  plannedCacheTtls?(built: BuiltPrompt | undefined, cache: AdapterCacheOptions): CacheTtl[];
+  execute(apiKey: string, input: AdapterExecuteInput): Promise<AdapterResult>;
   health(apiKey: string, timeoutMs?: number): Promise<ProviderHealth>;
 }
 

@@ -1,13 +1,17 @@
 import {
   ModelGatewayError,
+  type AdapterExecuteInput,
   type AdapterResult,
   type AdapterCacheOptions,
   type CacheSupport,
+  type CacheTtl,
   type ModelProvider,
   type ProviderAdapter,
   type ProviderHealth
 } from "./types.js";
-import { mapDeepSeekUsage, mapOpenAIUsage } from "./usage.js";
+import type { BuiltPrompt } from "./prompt-builder.js";
+import { DEFAULT_PROJECT_TTL, DEFAULT_TASK_TTL } from "./cache-policy.js";
+import { mapAnthropicUsage, mapDeepSeekUsage, mapOpenAIUsage } from "./usage.js";
 
 type FetchLike = typeof fetch;
 
@@ -131,6 +135,10 @@ abstract class BaseHttpAdapter implements ProviderAdapter {
     protected readonly baseUrl: string
   ) {}
 
+  protected authHeaders(apiKey: string): Record<string, string> {
+    return { Authorization: `Bearer ${apiKey}` };
+  }
+
   async health(apiKey: string, timeoutMs = 10_000): Promise<ProviderHealth> {
     const started = Date.now();
     try {
@@ -139,7 +147,7 @@ abstract class BaseHttpAdapter implements ProviderAdapter {
         `${this.baseUrl}/models`,
         {
           method: "GET",
-          headers: { Authorization: `Bearer ${apiKey}` }
+          headers: this.authHeaders(apiKey)
         },
         timeoutMs
       );
@@ -153,16 +161,7 @@ abstract class BaseHttpAdapter implements ProviderAdapter {
     }
   }
 
-  abstract execute(
-    apiKey: string,
-    input: {
-      model: string;
-      prompt: string;
-      maxOutputTokens?: number;
-      timeoutMs: number;
-      cache?: AdapterCacheOptions;
-    }
-  ): Promise<AdapterResult>;
+  abstract execute(apiKey: string, input: AdapterExecuteInput): Promise<AdapterResult>;
 }
 
 export class OpenAIAdapter extends BaseHttpAdapter {
@@ -294,6 +293,158 @@ export class DeepSeekAdapter extends BaseHttpAdapter {
   }
 }
 
+// Anthropic Messages API. Source: platform.claude.com/docs/en/build-with-claude/prompt-caching
+// and /api/errors, consulted 2026-11-18 (curl, text only; no API call was made).
+export const ANTHROPIC_API_VERSION = "2026-10-21";
+// max_tokens is mandatory in the Messages API; used when the caller sets none.
+// Thinking (on by default in Claude 5.x) shares max_tokens with the answer, so a
+// very small cap may leave no text block (rejected as PROVIDER_RESPONSE_INVALID).
+export const ANTHROPIC_DEFAULT_MAX_TOKENS = 4096;
+// The API accepts at most 4 breakpoints; the adapter uses at most 3.
+export const ANTHROPIC_MAX_BREAKPOINTS = 4;
+
+// Minimum cacheable prompt length per model (docs table, 2026-11-18). Below it
+// the API caches nothing and returns no error. Unknown model => undefined.
+const ANTHROPIC_MIN_PREFIX_TOKENS: Readonly<Record<string, number>> = {
+  ...Object.fromEntries([
+    "claude-fable-5-2", "claude-fable-5-1", "claude-fable-5",
+    "claude-mythos-5-2", "claude-mythos-5-1", "claude-mythos-5",
+    "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5-5"
+  ].map(id => [id, 512])),
+  ...Object.fromEntries([
+    "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5",
+    "claude-opus-4-1", "claude-opus-4", "claude-sonnet-4"
+  ].map(id => [id, 1024])),
+  "claude-opus-4-7": 2048,
+  ...Object.fromEntries(
+    ["claude-opus-4-6", "claude-opus-4-5", "claude-haiku-4-5"].map(id => [id, 4096])
+  )
+};
+
+export function anthropicMinPrefixTokens(model: string): number | undefined {
+  // Accept dated snapshots (claude-sonnet-5-5-20261001) and "-latest" aliases.
+  const id = model.toLowerCase().replace(/-(\d{8}|latest)$/, "");
+  return Object.hasOwn(ANTHROPIC_MIN_PREFIX_TOKENS, id) ? ANTHROPIC_MIN_PREFIX_TOKENS[id] : undefined;
+}
+
+interface AnthropicTextBlock {
+  type: "text";
+  text: string;
+  cache_control?: { type: "ephemeral"; ttl: CacheTtl };
+}
+
+export interface AnthropicRequestPlan {
+  system: AnthropicTextBlock[];
+  messages: Array<{ role: "user"; content: AnthropicTextBlock[] }>;
+  // Breakpoints sent, in request order (1h always before 5m).
+  breakpoints: CacheTtl[];
+}
+
+// Canonical layout (design point 2): tools text -> project blocks -> task_context
+// in `system`; history + input in ONE user message. Explicit per-block breakpoints
+// only (never the top-level automatic cache_control): (1) last project block, project
+// TTL; (2) last task block, task TTL; (3) last history block, task TTL.
+// `tools` are sent as the canonical text the builder hashed, NOT as the API
+// `tools` parameter: the gateway has no tool loop, and this way the hashed bytes
+// are the bytes sent.
+export function planAnthropicRequest(
+  built: BuiltPrompt, cache: AdapterCacheOptions | undefined
+): AnthropicRequestPlan {
+  const mark = cache?.enabled === true;
+  const projectTtl = cache?.projectTtl ?? DEFAULT_PROJECT_TTL;
+  const taskTtl = cache?.taskTtl ?? DEFAULT_TASK_TTL;
+  if (mark && projectTtl === "5m" && taskTtl === "1h") {
+    throw new ModelGatewayError("INVALID_REQUEST", "project cache TTL cannot be shorter than task cache TTL");
+  }
+  const breakpoints: CacheTtl[] = [];
+  const block = (text: string, ttl?: CacheTtl): AnthropicTextBlock => {
+    if (mark && ttl) breakpoints.push(ttl);
+    return { type: "text", text, ...(mark && ttl ? { cache_control: { type: "ephemeral", ttl } } : {}) };
+  };
+  const system: AnthropicTextBlock[] = [];
+  if (built.toolsText) system.push(block(built.toolsText));
+  const project = built.blocks.filter(b => b.stability === "project");
+  project.forEach((b, i) => system.push(block(b.text, i === project.length - 1 ? projectTtl : undefined)));
+  // Only the LAST task block carries the mark (like project and history), so the
+  // plan never exceeds 3 breakpoints however many task_context segments exist.
+  const task = built.blocks.filter(b => b.stability === "task");
+  task.forEach((b, i) => system.push(block(b.text, i === task.length - 1 ? taskTtl : undefined)));
+  const history = built.blocks.filter(b => b.kind === "history");
+  const inputs = built.blocks.filter(b => b.kind === "input");
+  const content: AnthropicTextBlock[] = [];
+  history.forEach((b, i) => content.push(block(b.text, i === history.length - 1 ? taskTtl : undefined)));
+  for (const b of inputs) content.push(block(b.text));
+  if (system.length === 0 || content.length === 0) {
+    throw new ModelGatewayError("INVALID_REQUEST", "a segmented Anthropic request needs a project segment and a history or input segment");
+  }
+  if (breakpoints.length > ANTHROPIC_MAX_BREAKPOINTS) {
+    throw new ModelGatewayError("INVALID_REQUEST", "too many cache breakpoints");
+  }
+  return { system, messages: [{ role: "user", content }], breakpoints };
+}
+
+export class AnthropicAdapter extends BaseHttpAdapter {
+  readonly provider = "anthropic" as const;
+  readonly cacheSupport: CacheSupport = {
+    mode: "explicit", ttls: ["5m", "1h"], minPrefixTokens: anthropicMinPrefixTokens, billsWrite: true
+  };
+
+  constructor(fetchImpl: FetchLike = fetch, baseUrl = "https://api.anthropic.com/v1") {
+    super(fetchImpl, baseUrl);
+  }
+
+  protected authHeaders(apiKey: string): Record<string, string> {
+    return { "x-api-key": apiKey, "anthropic-version": ANTHROPIC_API_VERSION };
+  }
+
+  plannedCacheTtls(built: BuiltPrompt | undefined, cache: AdapterCacheOptions): CacheTtl[] {
+    if (!built || !cache.enabled) return [];
+    return [...new Set(planAnthropicRequest(built, cache).breakpoints)];
+  }
+
+  async execute(apiKey: string, input: AdapterExecuteInput): Promise<AdapterResult> {
+    assertOutputTokenCap(input.maxOutputTokens);
+    // Plain-text input: one user message, no breakpoints (never cached).
+    const plan: AnthropicRequestPlan | undefined = input.built
+      ? planAnthropicRequest(input.built, input.cache)
+      : undefined;
+    const { body } = await fetchJsonWithTimeout(
+      this.fetchImpl,
+      `${this.baseUrl}/messages`,
+      {
+        method: "POST",
+        headers: { ...this.authHeaders(apiKey), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: input.model,
+          max_tokens: input.maxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
+          ...(plan
+            ? { system: plan.system, messages: plan.messages }
+            : { messages: [{ role: "user", content: input.prompt }] })
+        })
+      },
+      input.timeoutMs
+    );
+    const parts: string[] = [];
+    for (const item of Array.isArray(body?.content) ? body.content : []) {
+      if (item?.type === "text" && typeof item.text === "string") parts.push(item.text);
+    }
+    if (parts.length === 0) {
+      throw new ModelGatewayError(
+        "PROVIDER_RESPONSE_INVALID", "Anthropic response did not contain text output"
+      );
+    }
+    return {
+      content: parts.join(""),
+      usage: mapAnthropicUsage(body?.usage),
+      cacheMarks: input.cache?.enabled === true ? (plan?.breakpoints.length ?? 0) : undefined,
+      finishReason: typeof body?.stop_reason === "string" ? body.stop_reason : undefined,
+      rawMetadata: {
+        responseId: typeof body?.id === "string" ? body.id : undefined
+      }
+    };
+  }
+}
+
 export class ProviderRegistry {
   private readonly adapters = new Map<ModelProvider, ProviderAdapter>();
 
@@ -321,5 +472,6 @@ export class ProviderRegistry {
 export function createDefaultProviderRegistry(): ProviderRegistry {
   return new ProviderRegistry()
     .register(new OpenAIAdapter())
-    .register(new DeepSeekAdapter());
+    .register(new DeepSeekAdapter())
+    .register(new AnthropicAdapter());
 }

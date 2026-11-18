@@ -54,6 +54,21 @@ function validRate(value: unknown): value is PriceRate {
 // cache-read rate is always required before a paid call (design point 3).
 const AUTOMATIC_CACHE_PROVIDERS: ReadonlySet<string> = new Set(["openai", "deepseek"]);
 
+// cacheWriteBilledAs "input" is honoured only where writes have no separate
+// charge: DeepSeek, and OpenAI models before 5.6 (design PLT-052). Anthropic and
+// OpenAI 5.6+ need explicit write rates; an unparseable OpenAI model is treated
+// conservatively as 5.6+ (the declaration is ignored).
+function writeBilledAsInput(provider: string, model: string, rate: PriceRate | undefined): boolean {
+  if (rate?.cacheWriteBilledAs !== "input") return false;
+  if (provider === "deepseek") return true;
+  if (provider !== "openai") return false;
+  const match = /(\d+)\.(\d+)/.exec(model);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major < 5 || (major === 5 && minor < 6);
+}
+
 export interface PricingRequirements {
   // Explicit JEV cache use (Anthropic-style): read plus the write rate of every TTL used.
   cacheEnabled?: boolean;
@@ -116,7 +131,7 @@ export class PricingCatalog {
     }
     for (const ttl of requirements.cacheEnabled ? requirements.cacheWriteTtls ?? [] : []) {
       const key = WRITE_RATE_KEY[ttl];
-      if (rate?.[key] === undefined && rate?.cacheWriteBilledAs !== "input") {
+      if (rate?.[key] === undefined && !writeBilledAsInput(provider, model, rate)) {
         missing.push(key as string);
       }
     }
@@ -157,7 +172,7 @@ export class PricingCatalog {
     const writeRate = (key: keyof PriceRate): number | undefined => {
       const configured = rate[key] as number | undefined;
       if (configured !== undefined) return configured;
-      return rate.cacheWriteBilledAs === "input" ? rate.inputPerMillionChf : undefined;
+      return writeBilledAsInput(provider, model, rate) ? rate.inputPerMillionChf : undefined;
     };
     const writes: Array<[CacheWriteTtl, number]> = [
       ["5m", usage.cacheWrite5mTokens], ["1h", usage.cacheWrite1hTokens],
@@ -178,7 +193,7 @@ export class PricingCatalog {
     if (unattributed > 0) {
       // Provider reported writes without a TTL: only an explicit "input"
       // billing declaration allows pricing them.
-      if (rate.cacheWriteBilledAs !== "input") {
+      if (!writeBilledAsInput(provider, model, rate)) {
         throw notEstimable("cache write tokens reported without a TTL attribution or write rate");
       }
       cacheWriteChf += (unattributed / 1_000_000) * rate.inputPerMillionChf;

@@ -2,7 +2,7 @@ import React, { FormEvent, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
 
-type ProviderName = "openai" | "deepseek" | "qwen" | "glm";
+type ProviderName = "openai" | "deepseek" | "qwen" | "glm" | "anthropic";
 
 interface ProviderStatus {
   provider: ProviderName;
@@ -164,7 +164,9 @@ function ProviderCard({
         ? "DeepSeek"
         : provider === "qwen"
           ? "Qwen"
-          : "GLM";
+          : provider === "anthropic"
+            ? "Anthropic / Claude"
+            : "GLM";
 
   async function save() {
     if (!apiKey.trim()) return;
@@ -369,7 +371,7 @@ function Settings({
         {error ? <p className="error">{error}</p> : null}
 
         <div className="provider-grid">
-          {(["openai", "deepseek", "qwen", "glm"] as ProviderName[]).map((provider) => {
+          {(["openai", "deepseek", "qwen", "glm", "anthropic"] as ProviderName[]).map((provider) => {
             const status =
               providers.find((item) => item.provider === provider) ??
               ({ provider, configured: false } as ProviderStatus);
