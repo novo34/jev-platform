@@ -12,7 +12,7 @@ Cada mejora indica problema, propuesta, fase o REQ afectado y prioridad. Los IDs
 
 - **Problema:** el coste de tokens amenaza la viabilidad económica. Hoy el gateway (solo OpenAI y DeepSeek) no usa caché ni mide su efecto, y no hay ContextPack acotado.
 - **Propuesta:** caché de prompts con prefijo estable (sistema, reglas, skills y especificación al inicio; contenido variable al final), adaptador Anthropic con `cache_control` desde su primera versión, y Fase 10 con Context Packs acotados con presupuesto de tokens por tipo de tarea.
-- **Afecta a:** Fase 17, Fase 10; REQ-CACHE-001..007, REQ-CTX-009 y REQ-CTX-010. Detalle en [MODEL_GATEWAY.md](../MODEL_GATEWAY.md#prompt-caching-not_implemented-planificado-prioridad-adelantada).
+- **Afecta a:** Fase 17, Fase 10; REQ-CACHE-001..007, REQ-CTX-009 y REQ-CTX-010. Detalle en [MODEL_GATEWAY.md](../MODEL_GATEWAY.md#prompt-caching-not_implemented-diseño-en-revisión).
 - **Prioridad:** alta, adelantada: PLT-052 es la siguiente tarea (PLT-012 ya está cerrada).
 
 ## 2. Decisión: no integrar rsc-harness ni rsc-brain
