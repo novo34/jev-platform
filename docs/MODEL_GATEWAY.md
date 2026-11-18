@@ -52,9 +52,11 @@ attempt budget expires. Every paid response requires valid usage and
 nonnegative finite configured pricing, capped at CHF 1,000,000 per million tokens per usage category; estimates must fit the persisted NUMERIC(14,6) amount. The supplied order, task, project and
 organization must match exactly for cost attribution.
 
-## Prompt caching: NOT_IMPLEMENTED (planificado, prioridad adelantada)
+<a id="prompt-caching"></a>
 
-Estado: **NOT_IMPLEMENTED**. Hoy solo existen los adaptadores OpenAI y DeepSeek, y ninguno marca caché de prompts ni registra tokens de escritura o lectura de caché. El operador adelantó esta capacidad en el roadmap el 2026-11-17 por el coste de tokens (ver [ROADMAP](product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17)); el cambio de prioridad ya está reflejado en Foundation (novo34/base-skills_klever#28) como PLT-052, que es la siguiente tarea según NEXT_TASK.
+## Prompt caching: NOT_IMPLEMENTED (diseño aprobado, sin implementar)
+
+Estado: **NOT_IMPLEMENTED**; diseño aprobado por el operador el 2026-11-18, sin implementar: [PLT-052-PROMPT-CACHING.md](architecture/PLT-052-PROMPT-CACHING.md). Hoy solo existen los adaptadores OpenAI y DeepSeek, y ninguno marca caché de prompts ni registra tokens de escritura o lectura de caché. El operador adelantó esta capacidad en el roadmap el 2026-11-17 por el coste de tokens (ver [ROADMAP](product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17)); el cambio de prioridad ya está reflejado en Foundation (novo34/base-skills_klever#28) como PLT-052, que es la siguiente tarea según NEXT_TASK.
 
 Diseño planificado (REQ-CACHE-001..007 en la [SPEC](product-specs/SPEC.md)):
 
