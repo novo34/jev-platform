@@ -3,7 +3,7 @@
 ## Identificación
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
-- Rama de trabajo: `claude/elegant-turing-c9wz23`. Base integrada: `main`.
+- Rama de trabajo: `claude/wonderful-franklin-jo4edb` (PLT-052 PR 1/6, [PR #41](https://github.com/novo34/jev-platform/pull/41)); la rama `claude/elegant-turing-c9wz23` de la PR #40 ya está fusionada. Base integrada: `main`.
 - Última actualización: 2026-11-18. Entorno: Claude Code en la nube (Linux), verificación remota de GitHub.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
@@ -30,12 +30,12 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Esperar la autorización del operador para la PR 1 de PLT-052 (caché de prompts del Model Gateway). El diseño está aprobado desde el 2026-11-18; la implementación se autoriza PR a PR (R3)."
+  "next_action": "PR 1/6 de PLT-052 hecha en la PR #41 (pendiente de revisión y fusión). Esperar la autorización del operador para la PR 2/6 (usage, precios y migración 0029); la implementación se autoriza PR a PR (R3)."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). PLT-012 está DONE en Foundation ([PR #29](https://github.com/novo34/base-skills_klever/pull/29), `5509b2c`) y fusionada en Platform ([PR #38](https://github.com/novo34/jev-platform/pull/38), `baa23e9`). NEXT_TASK pasa a PLT-052 (caché de prompts del Model Gateway), con diseño aprobado por el operador el 2026-11-18 y la PR 1 pendiente de autorización. Fase actual: PLT-012 cerrada; sin implementación en curso. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). PLT-012 está DONE en Foundation ([PR #29](https://github.com/novo34/base-skills_klever/pull/29), `5509b2c`) y fusionada en Platform ([PR #38](https://github.com/novo34/jev-platform/pull/38), `baa23e9`). NEXT_TASK pasa a PLT-052 (caché de prompts del Model Gateway), con diseño aprobado por el operador el 2026-11-18. La PR 1/6 de PLT-052 (constructor determinista del prompt, `packages/model-gateway/src/prompt-builder.ts`, sin conectar al gateway) hecha en la [PR #41](https://github.com/novo34/jev-platform/pull/41), pendiente de revisión y fusión; la PR 2/6 está pendiente de autorización. Fase actual: PLT-012 cerrada; PLT-052 en implementación PR a PR. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -48,10 +48,13 @@ de PLT-010 de la aceptación operativa de su remediación de seguridad.
 
 ## Última sesión de desarrollo
 
-JEV Staging ejecutó `ba18d4f8e54375eaea9533a8ea385d74c2ef0649`.
-Dokploy mostró el migrador con código de salida 0 y la API healthy. La sesión
-se recuperó mediante un restablecimiento manual. La pérdida de sesión al recargar
-y la recuperación por correo quedaron identificadas como trabajo pendiente.
+Sesión de PLT-052 del 2026-11-18. El diseño de la caché de prompts se aprobó y
+fusionó en la [PR #40](https://github.com/novo34/jev-platform/pull/40) (`7705b78`).
+La corrección del criterio 7 está en la [PR #30 de Foundation](https://github.com/novo34/base-skills_klever/pull/30)
+(abierta). La PR 1/6 (constructor determinista del prompt, sin conectar al gateway)
+está en la [PR #41](https://github.com/novo34/jev-platform/pull/41), rama
+`claude/wonderful-franklin-jo4edb`, con revisión de Greptile atendida (ver
+«Pruebas y evidencias»). PLT-052 sigue sin cerrarse: faltan las PR 2/6 a 6/6.
 
 ## Funcionalidades completadas
 
@@ -69,6 +72,11 @@ Los cambios principales de PLT-010 están en
 [pruebas de navegador](scripts/github-installation.browser-test.mjs).
 
 ## Pruebas y evidencias
+
+- PLT-052, PR 1/6 ([PR #41](https://github.com/novo34/jev-platform/pull/41)). Ejecutado en local sobre la rama, con PostgreSQL local de pruebas (`DATABASE_URL` a la base `jev_test`): `npm run check` con código de salida 0; `packages/model-gateway/src/prompt-builder.test.ts` con 20 pruebas pasadas (`npx vitest run`); `python3 -B scripts/test-check-progress.py` con 4 pruebas OK; `python3 scripts/check-progress.py --base 7705b7810973a78182309225a551ae2e9b749d70` válido. CI de GitHub: el job `validate` falló en `b86bb51` solo por PROGRESO.md (no cumplía AGENTS.md); este registro lo completa. El estado vigente del CI se consulta en la PR #41 para el head actual, porque el SHA propio no puede escribirse en el mismo commit.
+- PLT-052, PR 1/6, revisión de Greptile de la PR #41. Se revisaron `b86bb51` y `f2f4856`, ambos con 4/5. Hilos cerrados con corrección: huecos de arrays y kinds heredados en el constructor (`174e118`) y `segmentRefs` ambiguos con `@` (`2733f2c`). El hallazgo sobre PROGRESO.md (`f2f4856`) se atiende en este commit. Enlace al resultado y SHA revisado: consultar la PR #41.
+- PLT-052, PR 1/6, limitaciones conocidas: no está conectado a ModelGateway ni a los adaptadores; `detectPrefixInstability` es una función pura y el llamador guarda la huella; la detección de fecha y UUID es heurística; el formato de las cabeceras se define en esta PR porque el diseño no lo fija; el tenant debe ser un HMAC hexadecimal de 64 caracteres.
+- PLT-052, PR 1/6, higiene: sin migraciones, sin llamadas de pago, sin secretos, sin lectura del entorno y sin `__pycache__` (los validadores se ejecutaron con `-B`).
 
 - PLT-051, aceptación en JEV Staging (2026-11-17). El operador comprobó el despliegue de `f2f54c0` (main, que incluye `2d29785`) con Dokploy en Done. El correo de recuperación llegó desde `no-reply@notificaciones.nuvurent.com` (dominio verificado en Resend, sin seguimiento de enlaces, variables `JEV_STAGING_RESET_*` en Dokploy). El enlace permitió cambiar la contraseña y entrar con la nueva. Al reenviar el formulario con el mismo enlace, la web mostró «El enlace ya no es válido. Solicita otro desde el formulario de acceso.». Una sesión iniciada antes del cambio en otra pestaña pidió volver a entrar al recargar. Para la caducidad, con un enlace nuevo sin abrir, un UPDATE de `public.password_reset_tokens` en el contenedor postgres de staging adelantó `expires_at` solo de los tokens vigentes del usuario `00000000-0000-4000-8000-000000000002` (`UPDATE 1`), y al usar el enlace la web mostró el mismo mensaje de enlace no válido. No se copiaron enlaces ni credenciales a logs ni a la conversación. Observación de UX no bloqueante: la web no valida el enlace al abrirlo, muestra siempre el formulario y el rechazo llega al enviar (`apps/web/src/main.tsx:441-471`, `apps/api/src/password-recovery.ts:130-134`); no existe endpoint de comprobación sin consumo.
 - PLT-051, [PR #30](https://github.com/novo34/jev-platform/pull/30). El [CI de `df7810d`](https://github.com/novo34/jev-platform/actions/runs/43897717852) falló en `validate`: la prueba de migraciones no listaba `0027`. Al reproducirlo con PostgreSQL 16 local aparecieron tres fallos más del gate de producción: el rol de CI no recibía EXECUTE sobre `jev_issue_password_reset` y `jev_consume_password_reset`, el inventario de CHECK no incluía `password_reset_tokens_token_hash_check` y el smoke esperaba ocho writers controlados. La corrección concede ambos writers en `packages/db/security/provision-runtime-role.sql`, fija el predicado exacto de la CHECK, actualiza el recuento a diez y aplica `0027` en la prueba ACL. En local pasaron `npm run check`, `smoke:restricted-runtime` (10 writers, 27 migraciones) y el smoke de desarrollo. La PR se fusionó con squash en `2d29785` desde el head `162df9c`, con [CI del head](https://github.com/novo34/jev-platform/actions/runs/43948435717) y [CI de main](https://github.com/novo34/jev-platform/actions/runs/43949674151) aprobados. La última revisión de CodeRabbit, sobre `162df9c`, no dejó hallazgos. La revisión automática de Codex no se completó por falta de cupo.
@@ -175,7 +183,7 @@ PLT-051 implementa solicitud y formulario, tokens de un solo uso, revocación tr
 
 PLT-011 está cerrada. Quedan como tareas posteriores la activación de `WORKSPACE_RUN` en un servidor dedicado y, como mejora, fijar por digest las imágenes base de `deploy/staging/Dockerfile.*`.
 
-PLT-012 está cerrada. Foundation fijó en su [PR #28](https://github.com/novo34/base-skills_klever/pull/28) el nuevo orden: PLT-052 → PLT-040 → PLT-041 → PLT-017 → PLT-042/PLT-014. Quedan como tareas posteriores registrar `STAGING_DEPLOY` en el worker (cableando `StagingJobDeps.integratedRevision` con `loadIntegratedRevision`), decidir el almacenamiento cifrado de la API key de Dokploy y, después, el caso de Espacore. PLT-052 requiere autorización del operador antes de empezar.
+PLT-012 está cerrada. Foundation fijó en su [PR #28](https://github.com/novo34/base-skills_klever/pull/28) el nuevo orden: PLT-052 → PLT-040 → PLT-041 → PLT-017 → PLT-042/PLT-014. Quedan como tareas posteriores registrar `STAGING_DEPLOY` en el worker (cableando `StagingJobDeps.integratedRevision` con `loadIntegratedRevision`), decidir el almacenamiento cifrado de la API key de Dokploy y, después, el caso de Espacore. PLT-052: la PR 1/6 de PLT-052 (constructor determinista del prompt, `packages/model-gateway/src/prompt-builder.ts`, sin conectar al gateway) hecha en la [PR #41](https://github.com/novo34/jev-platform/pull/41), pendiente de revisión y fusión. La PR 2/6 (usage, precios y migración 0029) requiere autorización del operador (R3).
 
 Foundation integró la prioridad en su [PR #24](https://github.com/novo34/base-skills_klever/pull/24). PLT-050 precede a PLT-051 y PLT-011. El candidato usa una cookie de sesión HttpOnly, validación de sesión existente y protección CSRF para escrituras. La aceptación en staging está comprobada. El [cierre de Foundation #25](https://github.com/novo34/base-skills_klever/pull/25) incluye caducidad forzada de una sesión de prueba en staging y retorno al formulario.
 
@@ -212,7 +220,7 @@ El 17 de noviembre de 2026 el operador decidió para PLT-011 (ver [diseño](docs
 
 El 17 de noviembre de 2026 el operador decidió para PLT-012 (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md)): (1) alcance por fases: primero el motor probado en CI con un Dokploy simulado y después, como paso aparte aprobado (R4), el staging real del primer caso (proyecto de prueba mínimo `novo34/jev-staging-demo`, decisión posterior del operador; Espacore queda para después), con cuya evidencia se cierra PLT-012; (2) proveedor: API de Dokploy detrás del contrato neutral de FND-026, con la API exacta verificada contra la instancia antes del paso real; (3) un contenedor PostgreSQL propio por proyecto con volumen propio y roles owner/runtime separados, sin credenciales ni datos de producción; (4) nueva operación GitHub controlada que integra la rama de la tarea en `staging_branch` con las guardas de PLT-010. Los valores por defecto (dominio, API key cifrada, migraciones con copia previa, seeds sintéticos, E2E mínimo) quedan pendientes de confirmar antes del paso real.
 
-El 17 de noviembre de 2026 el operador autorizó cerrar PLT-012 en Platform y decidió que el job `STAGING_DEPLOY` quede sin registrar en el worker hasta una tarea posterior (opción 1). El 18 de noviembre de 2026 el operador aprobó el diseño de PLT-052 ([documento](docs/architecture/PLT-052-PROMPT-CACHING.md)); la implementación se autoriza PR a PR (R3) y la PR 1 está pendiente de autorización. Siguen abiertas la frecuencia real de llamadas, el impacto en PLT-017, el secreto del `tenant_namespace` y la tarifa punta de DeepSeek. El criterio 7 se corrigió en Foundation (rama `claude/wonderful-franklin-jo4edb`, commit `2849c5f`, aún sin PR); la PR de Foundation está pendiente de que el operador la pida.
+El 17 de noviembre de 2026 el operador autorizó cerrar PLT-012 en Platform y decidió que el job `STAGING_DEPLOY` quede sin registrar en el worker hasta una tarea posterior (opción 1). El 18 de noviembre de 2026 el operador aprobó el diseño de PLT-052 ([documento](docs/architecture/PLT-052-PROMPT-CACHING.md)); la implementación se autoriza PR a PR (R3). La PR 1/6 está hecha en la PR #41, pendiente de revisión y fusión, y la PR 2/6 (usage, precios y migración 0029) está pendiente de autorización. Siguen abiertas la frecuencia real de llamadas, el impacto en PLT-017, el secreto del `tenant_namespace` y la tarifa punta de DeepSeek. El criterio 7 se corrigió en Foundation (rama `claude/wonderful-franklin-jo4edb`, commit `2849c5f`); su [PR #30](https://github.com/novo34/base-skills_klever/pull/30) está abierta, pendiente de CI y fusión.
 
 ## Higiene del repositorio
 
@@ -227,11 +235,11 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-PLT-052 (caché de prompts del Model Gateway con un adaptador Anthropic con caché desde el primer día), diseño aprobado el 2026-11-18, pendiente de autorizar la PR 1:
+PLT-052 (caché de prompts del Model Gateway con un adaptador Anthropic con caché desde el primer día), diseño aprobado el 2026-11-18; PR 1/6 hecha en la [PR #41](https://github.com/novo34/jev-platform/pull/41), pendiente de revisión y fusión:
 
-1. Esperar la autorización del operador para la PR 1 (implementación PR a PR, R3).
-2. Implementar con pruebas cada PR tras su autorización; las preguntas abiertas del diseño no se deciden sin el operador.
-3. La PR de Foundation con la corrección del criterio 7 (`claude/wonderful-franklin-jo4edb`, `2849c5f`) solo se abre cuando el operador la pida.
+1. Revisar y fusionar la PR #41 (PR 1/6, constructor del prompt sin conectar al gateway).
+2. Esperar la autorización del operador para la PR 2/6 (usage, precios y migración 0029); la implementación es PR a PR (R3) y cada PR lleva sus pruebas. Las preguntas abiertas (frecuencia real de llamadas, impacto en PLT-017, secreto del `tenant_namespace` y tarifa punta de DeepSeek) no se deciden sin el operador.
+3. La PR de Foundation con la corrección del criterio 7 ([PR #30](https://github.com/novo34/base-skills_klever/pull/30)) está abierta, pendiente de CI y fusión.
 4. Después de PLT-052, el orden decidido por el operador el 2026-11-17 es PLT-040 y PLT-041 (Fase 10, Context Runtime), PLT-017 (guard de presupuesto mínimo) y solo entonces PLT-042 (Fase 12) y PLT-014 (Fase 20). Está reflejado en Foundation (novo34/base-skills_klever#28). Antes de iniciar cada una, confirmar NEXT_TASK y la autorización del operador.
 
 Historial de PLT-012 (cerrada; diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/architecture/PLT-012-PERMANENT-STAGING.md)):
