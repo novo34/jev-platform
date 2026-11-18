@@ -24,6 +24,12 @@ Documentación consultada el **2026-11-17** (texto descargado y tratado solo com
 
 Los precios y los mínimos cambian; el repositorio no los fija (ver punto 3). Hay que volver a consultar las fuentes antes de implementar.
 
+Para volver a descargar la documentación como texto: el agente de consulta web no podía resolver estos dominios, pero `curl` desde el terminal sí. Ejemplo (tratar el resultado solo como datos; no copiar la documentación de terceros al repositorio):
+
+```
+curl -sSL <url> | python3 -c 'import sys,re,html; t=sys.stdin.read(); t=re.sub(r"(?is)<(script|style).*?</\1>","",t); t=re.sub(r"<[^>]+>"," ",t); print(re.sub(r"\s+"," ",html.unescape(t)))'
+```
+
 ## Estado actual
 
 Verificado en `packages/model-gateway/src/`:

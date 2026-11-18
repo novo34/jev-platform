@@ -114,6 +114,8 @@ El deployment `READY` (que habilita `AWAITING_HUMAN` y la aprobación ligada a l
 
 ### Primera ejecución R4 y hallazgo del sufijo de `appName`
 
+Script y registros de la aceptación R4 (2026-11-17): [plt-012-r4/README.md](plt-012-r4/README.md).
+
 **Resultado de la primera ejecución real (R4) contra Dokploy v0.31.2:** la etapa `deploy` pasó (Dokploy creó el compose y el dominio) y la etapa `verifyDatabase` falló con `compose_missing`.
 
 **Causa confirmada en vivo:** `compose.create` con `appName: "jev-stg-demo"` guarda `name: "jev-stg-demo"` pero `appName: "jev-stg-demo-dotuoz"`. Dokploy siempre añade un guion y un sufijo aleatorio de 6 caracteres `[a-z0-9]`. La versión anterior de `findCompose` exigía `compose.one.appName === appName`, por lo que no reconocía el compose recién creado y un redeploy habría creado un duplicado.
