@@ -3,6 +3,7 @@ import { ProviderCredentialStore } from "./credentials.js";
 import { PricingCatalog } from "./pricing.js";
 import { ProviderRegistry } from "./adapters.js";
 import { observedCacheStatus } from "./usage.js";
+import { buildPrompt, deriveTenantNamespace, type BuiltPrompt } from "./prompt-builder.js";
 import { CachePolicy, disabledReason, isCacheAttributableError } from "./cache-policy.js";
 import {
   ModelGatewayError,
@@ -11,12 +12,13 @@ import {
   type ModelGatewayRequest,
   type ModelGatewayResult,
   type ModelProvider,
-  type NormalizedUsage
+  type NormalizedUsage,
+  type ProviderAdapter
 } from "./types.js";
 import type { CostEstimate } from "./pricing.js";
 
 export interface GatewayAlert {
-  code: "COST_NOT_ESTIMABLE";
+  code: "COST_NOT_ESTIMABLE" | "PROMPT_UNSTABLE_CONTENT";
   requestId: string;
   organizationId: string;
   provider: ModelProvider;
@@ -34,8 +36,13 @@ function estimatePromptTokens(prompt: string): number {
 // Cache state decided by the gateway itself (switch off, or cache failover),
 // as opposed to the state observed from the response.
 interface CacheOverride {
-  status: Extract<CacheStatus, "DISABLED" | "ERROR">;
+  status: CacheStatus;
   reason: string;
+}
+
+interface PrefixHashes {
+  project: string;
+  task: string;
 }
 
 interface CircuitState {
@@ -56,8 +63,27 @@ export class ModelGateway {
     private readonly onAlert: (alert: GatewayAlert) => void = (alert) =>
       console.error(JSON.stringify({ level: "alert", ...alert })),
     // Injected, never read from the environment here. Default: cache marks off.
-    private readonly cachePolicy: CachePolicy = CachePolicy.disabled()
+    private readonly cachePolicy: CachePolicy = CachePolicy.disabled(),
+    // Secret of the tenant_namespace HMAC (JEV_TENANT_NAMESPACE_SECRET, read by
+    // the caller, never here). Required only for segmented requests.
+    private readonly tenantNamespaceSecret?: string
   ) {}
+
+  // Segmented request -> canonical prompt (tenant_namespace per organization and
+  // project). Plain `prompt` requests return undefined.
+  private buildSegmented(request: ModelGatewayRequest): BuiltPrompt | undefined {
+    if (request.segments === undefined) return undefined;
+    if (!this.tenantNamespaceSecret) {
+      throw new ModelGatewayError(
+        "INVALID_REQUEST", "a tenant namespace secret is required for segmented prompts"
+      );
+    }
+    return buildPrompt(
+      request.segments,
+      request.tools,
+      deriveTenantNamespace(this.tenantNamespaceSecret, request.organizationId, request.projectId)
+    );
+  }
 
   private async assertOwnership(request: ModelGatewayRequest): Promise<void> {
     const result = await this.pool.query(
@@ -93,12 +119,19 @@ export class ModelGateway {
       !request.organizationId ||
       !request.projectId ||
       !request.taskId ||
-      !request.prompt.trim() ||
       !Array.isArray(request.targets) ||
       request.targets.length === 0 ||
       request.targets.length > 4
     ) {
       throw new ModelGatewayError("INVALID_REQUEST");
+    }
+    // Exactly one of prompt / segments; tools only with segments.
+    if ((request.prompt === undefined) === (request.segments === undefined) ||
+        (request.prompt !== undefined && (typeof request.prompt !== "string" || !request.prompt.trim())) ||
+        (request.tools !== undefined && request.segments === undefined)) {
+      throw new ModelGatewayError(
+        "INVALID_REQUEST", "provide exactly one of prompt or segments (tools only with segments)"
+      );
     }
     // Bound the fallback graph before credentials or paid execution.
     if (request.targets.some((target) =>
@@ -189,6 +222,23 @@ export class ModelGateway {
   async execute(request: ModelGatewayRequest): Promise<ModelGatewayResult> {
     this.assertRequest(request);
     await this.assertOwnership(request);
+    const built = this.buildSegmented(request);
+    const promptText = built ? built.text : request.prompt!;
+    if (built && !promptText.trim()) throw new ModelGatewayError("INVALID_REQUEST");
+    for (const warning of built?.warnings ?? []) {
+      try {
+        this.onAlert({
+          code: "PROMPT_UNSTABLE_CONTENT", requestId: request.requestId,
+          organizationId: request.organizationId, provider: request.targets[0]!.provider,
+          model: request.targets[0]!.model, reason: warning.message
+        });
+      } catch {
+        // Never block on a warning sink (design point 7).
+      }
+    }
+    const hashes: PrefixHashes | undefined = built
+      ? { project: built.prefix_project_sha256, task: built.prefix_task_sha256 }
+      : undefined;
     const timeoutMs = request.timeoutMs ?? 120_000;
     const maxRetries = request.maxRetries ?? 1;
     // A per-provider retry limit alone does not cap fallback spending.
@@ -207,8 +257,16 @@ export class ModelGateway {
       // cache of that mode are required before the call, even if the cache
       // later fails over to a call without it (which needs a subset).
       const explicitCache = cacheDecision.enabled && registered?.cacheSupport?.mode === "explicit";
+      const cacheOptions = {
+        enabled: true, projectTtl: this.cachePolicy.projectTtl, taskTtl: this.cachePolicy.taskTtl
+      };
+      // Write rate of every TTL the adapter will actually mark (Anthropic: 1h
+      // project, 5m task/history), required before the call. A plain-text prompt
+      // has no marks, hence no write TTL.
+      const cacheWriteTtls = explicitCache && registered?.plannedCacheTtls
+        ? registered.plannedCacheTtls(built, cacheOptions) : [];
       if (this.pricing.missingRates(
-        target.provider, target.model, { cacheEnabled: explicitCache, cacheWriteTtls: [] }
+        target.provider, target.model, { cacheEnabled: explicitCache, cacheWriteTtls }
       ).length > 0) {
         await this.recordFailure(
           request,
@@ -229,7 +287,7 @@ export class ModelGateway {
       }
 
       if (this.pricing.exceedsTier(
-        target.provider, target.model, estimatePromptTokens(request.prompt)
+        target.provider, target.model, estimatePromptTokens(promptText)
       )) {
         await this.recordFailure(
           request,
@@ -334,6 +392,12 @@ export class ModelGateway {
             reason: disabledReason(cacheDecision, registered?.cacheSupport?.mode === "automatic")
           }
         : undefined;
+      // Switch on but the adapter cannot carry cache marks at all (mode none or
+      // undeclared): UNSUPPORTED, the call is made without cache.
+      const unsupportedOverride: CacheOverride | undefined =
+        cacheDecision.enabled && (registered?.cacheSupport?.mode ?? "none") === "none"
+          ? { status: "UNSUPPORTED", reason: `provider ${target.provider} adapter does not support prompt cache marks` }
+          : undefined;
       let cacheActive = explicitCache;
       let cacheFallbackUsed = false;
       let cacheErrorReason: string | undefined;
@@ -345,10 +409,11 @@ export class ModelGateway {
         try {
           response = await adapter.execute(apiKey, {
             model: target.model,
-            prompt: request.prompt,
+            prompt: promptText,
+            ...(built ? { built } : {}),
             maxOutputTokens: request.maxOutputTokens,
             timeoutMs,
-            ...(explicitCache ? { cache: { enabled: cacheActive } } : {})
+            ...(explicitCache ? { cache: { ...cacheOptions, enabled: cacheActive } } : {})
           });
           break;
         } catch (error) {
@@ -407,7 +472,7 @@ export class ModelGateway {
             typed.code,
             cacheErrorReason
               ? { status: "ERROR", reason: cacheErrorReason }
-              : disabledOverride
+              : disabledOverride ?? unsupportedOverride
           );
           this.failure(
             request.organizationId,
@@ -448,6 +513,12 @@ export class ModelGateway {
         }
       }
       const estimatedCostChf = estimate?.estimatedCostChf ?? null;
+      const observedOverride: CacheOverride | undefined = cacheErrorReason
+        ? { status: "ERROR", reason: cacheErrorReason }
+        : disabledOverride ??
+          // Observed cache tokens always win over UNSUPPORTED.
+          (observedCacheStatus(response.usage) === undefined ? unsupportedOverride : undefined) ??
+          this.explicitMarkOverride(registered, target.model, cacheActive, response);
 
       // Persistence is intentionally outside the provider retry block.
       // A database failure must never cause a second paid provider call.
@@ -461,9 +532,8 @@ export class ModelGateway {
         response.usage,
         estimate,
         notEstimableReason,
-        cacheErrorReason
-          ? { status: "ERROR", reason: cacheErrorReason }
-          : disabledOverride
+        observedOverride,
+        hashes
       );
       this.success(
         request.organizationId,
@@ -490,6 +560,39 @@ export class ModelGateway {
     );
   }
 
+  // Explicit-mark adapters (Anthropic): after the response, marks were sent but
+  // neither counter moved. Below the model minimum the API silently caches
+  // nothing (BELOW_MINIMUM); otherwise it is a plain MISS. No marks at all
+  // (plain-text prompt) is UNSUPPORTED. Never an error, never blocks.
+  private explicitMarkOverride(
+    adapter: ProviderAdapter | undefined,
+    model: string,
+    cacheActive: boolean,
+    response: AdapterResult
+  ): CacheOverride | undefined {
+    if (!cacheActive || adapter?.cacheSupport?.mode !== "explicit" || response.cacheMarks === undefined) {
+      return undefined;
+    }
+    if (response.cacheMarks === 0) {
+      if (observedCacheStatus(response.usage) !== undefined) return undefined;
+      return { status: "UNSUPPORTED", reason: "plain-text prompt has no segments to mark; sent without cache" };
+    }
+    if (observedCacheStatus(response.usage) !== undefined) return undefined;
+    const minimum = adapter.cacheSupport.minPrefixTokens(model);
+    if (minimum !== undefined && response.usage.totalInputTokens < minimum) {
+      return {
+        status: "BELOW_MINIMUM",
+        reason: `prompt of ${response.usage.totalInputTokens} tokens is below the ${minimum}-token cache minimum of ${model}; nothing was cached`
+      };
+    }
+    return {
+      status: "MISS",
+      reason: minimum === undefined
+        ? `no cache read or write reported and the minimum for ${model} is unknown`
+        : "marks sent and the prompt reaches the minimum, but no cache read or write was reported"
+    };
+  }
+
   private async recordSuccess(
     request: ModelGatewayRequest,
     provider: ModelProvider,
@@ -500,7 +603,8 @@ export class ModelGateway {
     usage: NormalizedUsage,
     estimate: CostEstimate | undefined,
     notEstimableReason: string | undefined,
-    cacheOverride?: CacheOverride
+    cacheOverride?: CacheOverride,
+    hashes?: PrefixHashes
   ): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -512,9 +616,10 @@ export class ModelGateway {
            usage, estimated_cost_chf, error_code,
            cache_read_tokens, cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens,
            cache_status, cache_reason,
-           estimated_cost_without_cache_chf, estimated_cache_savings_chf
+           estimated_cost_without_cache_chf, estimated_cache_savings_chf,
+           prefix_project_sha256, prefix_task_sha256
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'SUCCESS', $8, $9, $10, $11::jsonb, $12, $13,
-                   $14, $15, $16, $17, $18, $19, $20, $21)`,
+                   $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
         [
           request.requestId,
           request.organizationId,
@@ -537,7 +642,9 @@ export class ModelGateway {
           // NOT_ESTIMABLE keeps its reason; the cache reason is appended.
           [notEstimableReason, cacheOverride?.reason].filter(Boolean).join(" | ") || null,
           estimate?.estimatedCostWithoutCacheChf ?? null,
-          estimate?.estimatedCacheSavingsChf ?? null
+          estimate?.estimatedCacheSavingsChf ?? null,
+          hashes?.project ?? null,
+          hashes?.task ?? null
         ]
       );
       // A not-estimable call has no trustworthy amount: it gets no cost event
