@@ -61,7 +61,9 @@ Verificado en `packages/model-gateway/src/`:
 type SegmentKind = 'system' | 'rules' | 'skills' | 'spec'
   | 'project_context' | 'task_context' | 'history' | 'input';
 type Stability = 'project' | 'task' | 'volatile';
-interface PromptSegment { kind: SegmentKind; id: string; version: string; content: string; stability: Stability }
+interface PromptSegment { kind: SegmentKind; id?: string; version?: string; content: string; stability: Stability }
+// id obligatorio en 'rules' | 'skills' | 'spec'; opcional en el resto (por defecto `${kind}#${posición}`, p. ej. `history#3`).
+// version opcional, por defecto "1". Se usan para trazabilidad y prefix_sha256; solo ordenan en los kind reordenables.
 // ModelGatewayRequest: prompt?: string; segments?: PromptSegment[]  (exactamente uno de los dos)
 ```
 
@@ -70,7 +72,9 @@ Orden canónico: `tenant_namespace` → `system` → `rules` → `skills` → `s
 El constructor `buildPrompt(segments, tenant)` garantiza el determinismo:
 
 * `content` se conserva literalmente, byte a byte: el constructor no recorta espacios finales ni normaliza saltos de línea (dos espacios al final de una línea en Markdown y CRLF pueden tener significado). La normalización solo se aplica a la estructura que añade el constructor: separadores, cabeceras de segmento y serialización JSON canónica de metadatos y tools, con las claves ordenadas. El determinismo viene de un orden y un ensamblado deterministas, no de reescribir el contenido;
-* claves de ordenación: `id` es obligatorio para `rules`, `skills` y `spec` y único dentro de su `kind` (un id duplicado se rechaza con error); `version` identifica la versión del segmento. Los segmentos se ordenan por orden canónico de `kind`, luego `id` y luego `version`, comparando por bytes UTF-8 y sin depender del locale;
+* orden entre `kind`: siempre el canónico, sin cambios;
+* orden dentro de un `kind`: solo los conjuntos reordenables (`rules`, `skills` y `spec`) se ordenan por `id` y luego `version`, comparando por bytes UTF-8 y sin depender del locale. `id` es obligatorio en ellos y único dentro de su `kind` (un id duplicado o ausente se rechaza con error). `system`, `project_context`, `task_context`, `history` e `input` conservan el orden en que los envía el llamador. En particular `history` conserva estrictamente la secuencia cronológica y el gateway nunca la reordena: ordenar por bytes alteraría el orden de `msg-2` y `msg-10`;
+* `id` y `version` en los `kind` no reordenables: `id` es opcional y, si falta, vale el nombre del `kind` más su posición (`history#3`); `version` es opcional y vale `"1"` por defecto. Se usan solo para trazabilidad y `prefix_sha256`, nunca para ordenar, y no se exige unicidad de `id` en ellos;
 * el cambio de versión que justifica un cambio de `prefix_sha256` se detecta comparando el par `id`@`version` de cada segmento con el de la llamada anterior de la misma tarea;
 * prohibición de `Date`, UUID aleatorios, timestamps o IDs de request en segmentos estables: si se detecta un patrón de fecha o UUID en un segmento `project` o `task`, se emite un aviso y se registra (no bloquea, ver punto 7);
 * fechas e IDs de la tarea solo en `task_context` o `input`, al final;
@@ -78,7 +82,7 @@ El constructor `buildPrompt(segments, tenant)` garantiza el determinismo:
 
 En Anthropic la caché sigue la jerarquía **tools → system → messages**: cambiar las definiciones de tools invalida toda la caché. Las tools deben ir en orden canónico y estable (ordenadas por nombre, esquemas serializados canónicamente).
 
-**Pruebas.** Orden y determinismo byte a byte (mismo contenido, distinto orden de entrada → mismos bytes); detección de fecha/UUID en segmentos estables; alerta al cambiar `prefix_sha256` dentro de una tarea; compatibilidad de `prompt` con el llamador actual; orden por `kind`, `id` y `version` por bytes UTF-8 independiente del locale; rechazo de `id` duplicado dentro de un `kind` y de `id` ausente en `rules`, `skills` y `spec`; detección de cambio de versión por el par `id`@`version`; `content` con espacios finales significativos y CRLF que se conserva literalmente y prefijo idéntico byte a byte entre dos ejecuciones.
+**Pruebas.** Orden y determinismo byte a byte (mismo contenido, distinto orden de entrada → mismos bytes); detección de fecha/UUID en segmentos estables; alerta al cambiar `prefix_sha256` dentro de una tarea; compatibilidad de `prompt` con el llamador actual; orden de `rules`, `skills` y `spec` por `id` y `version` en bytes UTF-8 independiente del locale (mismo contenido, distinto orden de entrada → mismos bytes solo en estos conjuntos); varios mensajes de `history` con ids no cronológicos (`msg-10` antes que `msg-2`) que se conservan en el orden enviado, igual que `system`, `project_context`, `task_context` e `input`; `id` por defecto `history#3` y `version` `"1"` en los `kind` no reordenables, sin influir en el orden; rechazo de `id` duplicado dentro de un `kind` reordenable y de `id` ausente en `rules`, `skills` y `spec`; detección de cambio de versión por el par `id`@`version`; `content` con espacios finales significativos y CRLF que se conserva literalmente y prefijo idéntico byte a byte entre dos ejecuciones.
 
 ### 2. Todos los proveedores
 
@@ -289,7 +293,7 @@ Medidas:
 
 **Fase 1 (sin gasto)**, con proveedores simulados en `ProviderRegistry` que devuelven el usage real de cada proveedor (como los tests actuales de `model-gateway.test.ts`):
 
-* orden (`kind`, `id`, `versión`, por bytes UTF-8) y determinismo byte a byte; rechazo de ids duplicados; `content` literal (espacios finales y CRLF);
+* orden canónico por `kind`; `rules`, `skills` y `spec` ordenados por `id` y `versión` (bytes UTF-8); `history` con `msg-10` antes que `msg-2` conservado en el orden enviado; ids y versión por defecto en `kind` no reordenables; determinismo byte a byte; rechazo de ids duplicados o ausentes en los reordenables; `content` literal (espacios finales y CRLF);
 * prohibición de fechas o IDs en segmentos estables;
 * mapeo de usage de los 3 proveedores;
 * precios ausentes → `BLOCKED`;
@@ -346,7 +350,7 @@ Medidas:
 
 Una PR pequeña por fase, cada una con sus pruebas y autorización previa del operador (R3):
 
-1. **Tipos y constructor:** `PromptSegment` (con `id` y `version`), `buildPrompt` (orden por `kind`, `id` y `version`, `content` literal), `prefix_sha256`, `tenant_namespace` y detección de inestabilidad. Sin cambios de proveedor.
+1. **Tipos y constructor:** `PromptSegment` (`id` obligatorio en `rules`, `skills` y `spec`, y por defecto `kind#posición` en el resto; `version` por defecto `"1"`), `buildPrompt` (orden canónico por `kind`; `id` y `version` solo ordenan `rules`, `skills` y `spec`; el resto, incluido `history`, conserva el orden del llamador; `content` literal), `prefix_sha256`, `tenant_namespace` y detección de inestabilidad. Sin cambios de proveedor.
 2. **Adaptador de Anthropic:** `anthropic` en `MODEL_PROVIDERS`, adaptador Messages API con breakpoints y TTL, `cacheSupport`, mínimos por modelo.
 3. **Usage, precios y migración:** modelo de uso normalizado, mapeo de los tres proveedores, precios de caché y validación previa, migración `0029` y grants.
 4. **Métricas y vistas:** ahorro, tasa de acierto, consultas por organización/proyecto/tarea/modelo.
@@ -358,7 +362,7 @@ Una PR pequeña por fase, cada una con sus pruebas y autorización previa del op
 | Requisito | Punto | Criterio |
 | --- | --- | --- |
 | REQ-CACHE-001 | 1, 2 | El prefijo estable va primero y el contenido variable al final, con el orden canónico impuesto por el gateway; `prompt` sigue funcionando. |
-| REQ-CACHE-002 | 1, 6 | Mismo contenido → mismos bytes (`content` conservado literalmente, sin reescribirlo; orden por `kind`, `id` y `version`; ids duplicados rechazados); fechas, UUID e IDs fuera de los segmentos estables (aviso si aparecen); `prefix_sha256` registrado; prefijos distintos entre organizaciones. |
+| REQ-CACHE-002 | 1, 6 | Mismo contenido → mismos bytes (`content` conservado literalmente, sin reescribirlo; orden canónico por `kind`; `rules`, `skills` y `spec` ordenados por `id` y `version`; `history` y demás `kind` no reordenables en el orden del llamador; ids duplicados o ausentes rechazados donde corresponde); fechas, UUID e IDs fuera de los segmentos estables (aviso si aparecen); `prefix_sha256` registrado; prefijos distintos entre organizaciones. |
 | REQ-CACHE-003 | 2 | Cada adaptador declara `cacheSupport`; el adaptador Anthropic nace con `cache_control` (máximo 4 breakpoints, 1 h antes que 5 min, mínimo por modelo). |
 | REQ-CACHE-004 | 2, 4 | Cada llamada registra entrada, salida, escritura (5 min/1 h) y lectura de caché, agregados por llamada, tarea y proyecto, con `cost_events.usage` ampliado. |
 | REQ-CACHE-005 | 4 | Tasa de acierto y ahorro por proveedor/modelo, tarea y proyecto, con aislamiento por organización. |
