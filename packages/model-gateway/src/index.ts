@@ -6,3 +6,4 @@ export * from "./cache-policy.js";
 export * from "./gateway.js";
 export * from "./prompt-builder.js";
 export * from "./usage.js";
+export * from "./cache-metrics.js";

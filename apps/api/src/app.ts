@@ -6,6 +6,7 @@ import { registerPasswordRecovery, type PasswordRecoveryOptions } from "./passwo
 import { registerControlRoutes } from "./control.js";
 import type { ProviderRegistry } from "@jev/model-gateway";
 import { registerProviderRoutes } from "./providers.js";
+import { registerCacheMetricsRoutes } from "./cache-metrics.js";
 import { ControlService, type GitHubInstallationFlow, type GitHubOperations } from "@jev/control";
 
 interface BuildApiOptions {
@@ -44,6 +45,7 @@ export function buildApi(options: BuildApiOptions = {}) {
       encryptionKey: options.providerEncryptionKey,
       registry: options.providerRegistry
     });
+    registerCacheMetricsRoutes(app, options.pool);
   }
 
   return app;
