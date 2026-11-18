@@ -70,7 +70,7 @@ Pendiente (PR 4 a 6): adaptador Anthropic con `cache_control`, vistas de métric
 - Prefijo estable al inicio de la petición: instrucciones del sistema, reglas, skills y especificación. Contenido variable (tarea, ContextPack específico, historial) al final. El prefijo debe ser determinista byte a byte.
 - El futuro adaptador Anthropic debe nacer con caché (`cache_control`); no se añadirá primero sin caché.
 - Se expone la tasa de acierto de caché para medir el ahorro real.
-- Un fallo de caché no bloquea la llamada: se ejecuta sin caché y se registra el motivo.
+- Un fallo de caché no bloquea la llamada: se ejecuta sin caché y se registra el motivo. Ese intento sin caché es el último contra el destino (no hay más reintentos si falla) y cuenta en el tope compartido de 8 intentos.
 
 ## Live verification
 

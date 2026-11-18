@@ -865,16 +865,70 @@ describe("PLT-052 cache switch and safe failure", () => {
     expect(seen).toEqual([undefined]);
   });
 
-  it("the cache retry consumes the shared attempt budget", async () => {
-    // Two targets would normally allow 8 attempts; here one target uses 2 for the cache retry.
+  it("after the retry without cache there are no more retries, even with maxRetries left (503)", async () => {
     const { adapter, seen } = explicitAdapter([
-      reject(400, "cache_control rejected"), reject(500, "boom", true)
+      reject(400, "cache_control rejected"), reject(503, "unavailable", true)
     ]);
+    const req = { ...request(), maxRetries: 1 }; // the default value
+    await expect(gatewayFor(adapter, on(), withCachePricing).execute(req))
+      .rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(seen).toEqual([true, false]);
+    const recorded = await rows(req.requestId);
+    expect(recorded.map(r => r.attempt_count)).toEqual([1, 2]);
+    expect(recorded[1]).toMatchObject({ outcome: "FAILED", cache_status: "ERROR" });
+  });
+
+  it("after the retry without cache there are no more retries on a timeout either", async () => {
+    const { adapter, seen } = explicitAdapter([
+      reject(400, "cache_control rejected"),
+      () => { throw new ModelGatewayError("PROVIDER_TIMEOUT", "timed out", true); }
+    ]);
+    const req = { ...request(), maxRetries: 3 };
+    await expect(gatewayFor(adapter, on(), withCachePricing).execute(req)).rejects.toBeDefined();
+    expect(seen).toEqual([true, false]);
+    expect((await rows(req.requestId))[1]).toMatchObject({ outcome: "TIMEOUT", cache_status: "ERROR" });
+  });
+
+  it("the cache retries consume the shared 8-attempt budget (no ninth call)", async () => {
+    // 4 targets, maxRetries 2. A: cache 400 + no-cache 503 (2). B: 503 x3 (3).
+    // C: cache 400 + no-cache 503 (2). D: only 1 attempt is left (8th) although
+    // maxRetries would allow 3; without the cache retries counting, D would run more.
+    const { adapter, seen } = explicitAdapter([
+      reject(400, "cache_control rejected"), reject(503, "boom", true),
+      reject(503, "boom", true), reject(503, "boom", true), reject(503, "boom", true),
+      reject(400, "cache_control rejected"), reject(503, "boom", true),
+      reject(503, "boom", true)
+    ]);
+    const req = {
+      ...request(), maxRetries: 2,
+      targets: ["m1", "m2", "m3", "m4"].map(model => ({ provider: "openai" as const, model }))
+    };
+    await expect(gatewayFor(adapter, on(), withCachePricing).execute(req))
+      .rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(seen).toHaveLength(8);
+    expect(seen).toEqual([true, false, true, true, true, true, false, true]);
+  });
+
+  it("records DISABLED on a provider failure with the switch off or the provider outside the list", async () => {
+    for (const policy of [
+      CachePolicy.disabled(),
+      CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "on", JEV_PROMPT_CACHE_PROVIDERS: "anthropic" })
+    ]) {
+      const { adapter, seen } = explicitAdapter([reject(500, "boom")]);
+      const req = { ...request(), maxRetries: 0 };
+      await expect(gatewayFor(adapter, policy, withCachePricing).execute(req)).rejects.toBeDefined();
+      expect(seen).toEqual([undefined]);
+      const [row] = await rows(req.requestId);
+      expect(row).toMatchObject({ outcome: "FAILED", cache_status: "DISABLED" });
+      expect(row.cache_reason).toBeTruthy();
+    }
+  });
+
+  it("with the cache on and no cache error, a provider failure keeps cache_status NULL (design does not fix it)", async () => {
+    const { adapter } = explicitAdapter([reject(500, "boom")]);
     const req = { ...request(), maxRetries: 0 };
     await expect(gatewayFor(adapter, on(), withCachePricing).execute(req)).rejects.toBeDefined();
-    expect(seen).toHaveLength(2);
-    const recorded = await rows(req.requestId);
-    expect(recorded[1]).toMatchObject({ outcome: "FAILED", attempt_count: 2, cache_status: "ERROR" });
+    expect((await rows(req.requestId))[0].cache_status).toBeNull();
   });
 
   it("missing prices still block before any call, with the cache off or on", async () => {

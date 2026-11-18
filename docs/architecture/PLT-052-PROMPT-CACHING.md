@@ -319,7 +319,8 @@ Medidas:
 
 ### 7. Fallo seguro (REQ-CACHE-006)
 
-* Si el proveedor rechaza la marca de caché (p. ej. un 400 por breakpoints o TTL), se reintenta **una vez sin caché** dentro del mismo intento lógico, respetando el tope de intentos (8 por cadena de fallback) y el circuit breaker existentes. El reintento sin caché cuenta en el presupuesto de intentos.
+* Si el proveedor rechaza la marca de caché (p. ej. un 400 por breakpoints o TTL), se reintenta **una vez sin caché** dentro del mismo intento lógico, respetando el tope de intentos (8 por cadena de fallback) y el circuit breaker existentes. El reintento sin caché cuenta en el presupuesto de intentos y no consume `maxRetries`. Es el último intento contra ese destino: si falla (503, tiempo de espera, otro 400), el error se propaga sin más reintentos, aunque queden `maxRetries`. El circuit breaker se evalúa antes del primer intento del destino y cuenta un único fallo por destino.
+* Las llamadas con la caché apagada (`off` o proveedor fuera de la lista) registran `cache_status=DISABLED` también cuando el proveedor falla; con la caché activa y sin error de caché, un fallo del proveedor deja `cache_status` vacío (el diseño no fija otro valor). `ERROR` tiene prioridad.
 * Se registra `cache_status=ERROR` y `cache_reason`.
 * Nunca se bloquea el trabajo por la caché. La única excepción son los precios ausentes del punto 3, que son una política de gasto y no un fallo de caché.
 * Una caché por debajo del mínimo (`BELOW_MINIMUM`), o sin acierto (`MISS`), no es un error.

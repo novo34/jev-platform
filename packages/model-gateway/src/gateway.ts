@@ -323,7 +323,17 @@ export class ModelGateway {
       let response: AdapterResult | undefined;
       // Safe failure (design point 7): ONE retry without cache, only for a
       // cache-attributable rejection. It does not consume the caller's
-      // maxRetries, but it does consume the shared 8-attempt budget.
+      // maxRetries, but it does consume the shared 8-attempt budget. Once it
+      // has been used, the call without cache is the LAST attempt on this target:
+      // a further failure propagates (no more retries, whatever maxRetries says).
+      // The circuit breaker is evaluated before the first attempt of the target
+      // and records one failure per target when the target finally fails.
+      const disabledOverride: CacheOverride | undefined = !cacheDecision.enabled
+        ? {
+            status: "DISABLED",
+            reason: disabledReason(cacheDecision, registered?.cacheSupport?.mode === "automatic")
+          }
+        : undefined;
       let cacheActive = explicitCache;
       let cacheFallbackUsed = false;
       let cacheErrorReason: string | undefined;
@@ -369,7 +379,7 @@ export class ModelGateway {
             continue;
           }
 
-          if (typed.retryable && attempts <= allowedRetries && remainingProviderAttempts > 0) {
+          if (typed.retryable && !cacheFallbackUsed && attempts <= allowedRetries && remainingProviderAttempts > 0) {
             const retryAfterMs = (typed as ModelGatewayError & {
               retryAfterMs?: number;
             }).retryAfterMs;
@@ -395,7 +405,9 @@ export class ModelGateway {
             latencyMs,
             previousProvider,
             typed.code,
-            cacheErrorReason ? { status: "ERROR", reason: cacheErrorReason } : undefined
+            cacheErrorReason
+              ? { status: "ERROR", reason: cacheErrorReason }
+              : disabledOverride
           );
           this.failure(
             request.organizationId,
@@ -451,14 +463,7 @@ export class ModelGateway {
         notEstimableReason,
         cacheErrorReason
           ? { status: "ERROR", reason: cacheErrorReason }
-          : !cacheDecision.enabled
-            ? {
-                status: "DISABLED",
-                reason: disabledReason(
-                  cacheDecision, adapter.cacheSupport?.mode === "automatic"
-                )
-              }
-            : undefined
+          : disabledOverride
       );
       this.success(
         request.organizationId,
