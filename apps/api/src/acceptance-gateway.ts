@@ -45,8 +45,12 @@ async function main(): Promise<void> {
   }
 
   const pricing = PricingCatalog.fromJson(process.env.JEV_MODEL_PRICING_JSON);
-  if (!pricing.has(provider, model)) {
-    throw new Error("Verified CHF pricing is required before paid acceptance");
+  // PLT-052: OpenAI and DeepSeek cache automatically, so the cache read rate is mandatory too.
+  const missingRates = pricing.missingRates(provider, model);
+  if (missingRates.length > 0) {
+    throw new Error(
+      "Verified CHF pricing is required before paid acceptance; missing: " + missingRates.join(", ")
+    );
   }
   if (!process.env.JEV_SECRET_ENCRYPTION_KEY) {
     throw new Error("JEV_SECRET_ENCRYPTION_KEY is required");

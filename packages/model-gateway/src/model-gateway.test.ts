@@ -7,6 +7,9 @@ import {
   PricingCatalog,
   ProviderCredentialStore,
   ProviderRegistry,
+  mapDeepSeekUsage,
+  mapOpenAIUsage,
+  plainUsage,
   type ProviderAdapter
 } from "./index.js";
 
@@ -107,12 +110,10 @@ describe("PricingCatalog validation", () => {
       expect(() => PricingCatalog.fromJson(raw)).toThrowError(ModelGatewayError);
     }
     const priced = new PricingCatalog({
-      "openai:*": { inputPerMillionChf: 1_000_000, outputPerMillionChf: 0 }
+      "openai:*": { inputPerMillionChf: 1_000_000, outputPerMillionChf: 0, cacheReadPerMillionChf: 0 }
     });
-    expect(() => priced.estimateChf("openai", "test", {
-      inputTokens: 100_000_000, outputTokens: 0, totalTokens: 100_000_000
-    })).toThrowError(ModelGatewayError);
-    expect(new PricingCatalog({ "openai:*": { inputPerMillionChf: 0, outputPerMillionChf: 0 } })
+    expect(() => priced.estimateChf("openai", "test", plainUsage(100_000_000, 0))).toThrowError(ModelGatewayError);
+    expect(new PricingCatalog({ "openai:*": { inputPerMillionChf: 0, outputPerMillionChf: 0, cacheReadPerMillionChf: 0 } })
       .has("openai", "gpt-test")).toBe(true);
   });
 });
@@ -120,7 +121,7 @@ describe("PricingCatalog validation", () => {
 describe("ModelGateway", () => {
   it("rejects excessive or duplicate targets before contacting a provider", async () => {
     const gateway = new ModelGateway(pool, credentials, new ProviderRegistry(),
-      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 } }));
     const base = {
       organizationId, projectId, orderId, taskId, agentRole: "DEVELOPER",
       prompt: "Do not invoke paid providers"
@@ -151,7 +152,7 @@ describe("ModelGateway", () => {
       async health() { return { ok: true }; }
     });
     const gateway = new ModelGateway(pool, credentials, registry,
-      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 } }));
     await expect(gateway.execute({
       requestId: randomUUID(), organizationId, projectId, orderId, taskId,
       agentRole: "DEVELOPER", prompt: "Bound total retries",
@@ -174,7 +175,7 @@ describe("ModelGateway", () => {
       async health() { return { ok: true }; }
     });
     const gateway = new ModelGateway(pool, credentials, registry,
-      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 } }));
     const requestId = randomUUID();
     await expect(gateway.execute({
       requestId, organizationId, projectId, orderId, taskId,
@@ -198,7 +199,7 @@ describe("ModelGateway", () => {
 
   it("does not lose task order attribution when orderId is omitted", async () => {
     const gateway = new ModelGateway(pool, credentials, new ProviderRegistry(),
-      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 } }));
     await expect(gateway.execute({
       requestId: randomUUID(), organizationId, projectId, taskId,
       agentRole: "DEVELOPER", prompt: "No ambiguous billing",
@@ -222,13 +223,13 @@ describe("ModelGateway", () => {
         }
         return {
           content: "ok",
-          usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 }
+          usage: plainUsage(2, 1)
         };
       },
       async health() { return { ok: true }; }
     });
     const gateway = new ModelGateway(pool, credentials, registry,
-      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 } }));
     const result = await gateway.execute({
       requestId: randomUUID(), organizationId, projectId, orderId, taskId,
       agentRole: "DEVELOPER", prompt: "Retry safely",
@@ -252,7 +253,7 @@ describe("ModelGateway", () => {
       async health() { return { ok: true }; }
     });
     const gateway = new ModelGateway(pool, credentials, registry,
-      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 } }));
     await expect(gateway.execute({
       requestId: randomUUID(), organizationId, projectId, orderId, taskId,
       agentRole: "DEVELOPER", prompt: "Respect provider deadline",
@@ -272,7 +273,7 @@ describe("ModelGateway", () => {
       async health() { return { ok: true }; }
     });
     const gateway = new ModelGateway(pool, credentials, registry,
-      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } }));
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 } }));
     for (const maxOutputTokens of [0, -3, NaN, Infinity, 1.5, 32769]) {
       await expect(gateway.execute({
         requestId: randomUUID(), organizationId, projectId, orderId, taskId,
@@ -295,7 +296,7 @@ describe("ModelGateway", () => {
     });
     const gateway = new ModelGateway(
       pool, credentials, registry,
-      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 } })
+      new PricingCatalog({ "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 } })
     );
     const base = {
       organizationId, projectId, orderId, taskId,
@@ -338,7 +339,7 @@ describe("ModelGateway", () => {
       async execute() {
         return {
           content: "gateway-ok",
-          usage: { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 },
+          usage: plainUsage(1000, 500),
           finishReason: "completed"
         };
       },
@@ -349,8 +350,8 @@ describe("ModelGateway", () => {
 
     const registry = new ProviderRegistry().register(deepseek).register(openai);
     const pricing = new PricingCatalog({
-      "deepseek:*": { inputPerMillionChf: 1, outputPerMillionChf: 2 },
-      "openai:*": { inputPerMillionChf: 2, outputPerMillionChf: 4 }
+      "deepseek:*": { inputPerMillionChf: 1, outputPerMillionChf: 2, cacheReadPerMillionChf: 0 },
+      "openai:*": { inputPerMillionChf: 2, outputPerMillionChf: 4, cacheReadPerMillionChf: 0 }
     });
     const gateway = new ModelGateway(pool, credentials, registry, pricing);
     const requestId = randomUUID();
@@ -423,7 +424,7 @@ describe("ModelGateway", () => {
       async execute() {
         return {
           content: "fallback-after-unregistered",
-          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+          usage: plainUsage(10, 5)
         };
       },
       async health() {
@@ -436,7 +437,7 @@ describe("ModelGateway", () => {
       new ProviderRegistry().register(openai),
       new PricingCatalog({
         "qwen:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 },
-        "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 }
+        "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 }
       })
     );
     const requestId = randomUUID();
@@ -503,7 +504,7 @@ describe("ModelGateway", () => {
         calls += 1;
         return {
           content: "must-not-run",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+          usage: plainUsage(1, 1)
         };
       },
       async health() {
@@ -516,7 +517,7 @@ describe("ModelGateway", () => {
       credentials,
       registry,
       new PricingCatalog({
-        "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1 }
+        "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0 }
       })
     );
 
@@ -564,5 +565,139 @@ describe("ModelGateway", () => {
       prompt: "No unpriced calls",
       targets: [{ provider: "openai", model: "unpriced-model" }]
     })).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+  });
+});
+
+describe("PLT-052 gateway cache accounting", () => {
+  const baseRequest = () => ({
+    requestId: randomUUID(), organizationId, projectId, orderId, taskId,
+    agentRole: "DEVELOPER", prompt: "Cache accounting"
+  });
+  const adapterReturning = (
+    provider: "openai" | "deepseek", usage: ReturnType<typeof plainUsage>, counter: { calls: number }
+  ): ProviderAdapter => ({
+    provider,
+    async execute() {
+      counter.calls += 1;
+      return { content: "ok", usage };
+    },
+    async health() { return { ok: true }; }
+  });
+  const callRow = async (requestId: string) => (await pool.query(
+    "SELECT * FROM model_provider_calls WHERE request_id = $1", [requestId]
+  )).rows[0];
+
+  it("blocks OpenAI and DeepSeek without a cache read rate before any call", async () => {
+    await credentials.configure(organizationId, "openai", "sk-cache-test-secret-1111", userId);
+    await credentials.configure(organizationId, "deepseek", "ds-cache-test-secret-2222", userId);
+    for (const provider of ["openai", "deepseek"] as const) {
+      const counter = { calls: 0 };
+      const gateway = new ModelGateway(
+        pool, credentials,
+        new ProviderRegistry().register(adapterReturning(provider, plainUsage(1, 1), counter)),
+        new PricingCatalog({ [`${provider}:*`]: { inputPerMillionChf: 1, outputPerMillionChf: 1 } })
+      );
+      const request = { ...baseRequest(), targets: [{ provider, model: "m" }] };
+      await expect(gateway.execute(request)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+      expect(counter.calls).toBe(0);
+      expect(await callRow(request.requestId)).toMatchObject({
+        outcome: "BLOCKED", error_code: "PRICING_REQUIRED", attempt_count: 0
+      });
+    }
+  });
+
+  it("persists cache tokens, status, cost without cache and savings", async () => {
+    await credentials.configure(organizationId, "deepseek", "ds-cache-test-secret-2222", userId);
+    const usage = mapDeepSeekUsage({
+      prompt_tokens: 1_000_000, completion_tokens: 0, total_tokens: 1_000_000,
+      prompt_cache_hit_tokens: 600_000, prompt_cache_miss_tokens: 400_000
+    });
+    const counter = { calls: 0 };
+    const gateway = new ModelGateway(
+      pool, credentials,
+      new ProviderRegistry().register(adapterReturning("deepseek", usage, counter)),
+      new PricingCatalog({
+        "deepseek:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 }
+      })
+    );
+    const request = { ...baseRequest(), targets: [{ provider: "deepseek" as const, model: "m" }] };
+    const result = await gateway.execute(request);
+    expect(result.estimatedCostChf).toBeCloseTo(0.46, 9);
+    const row = await callRow(request.requestId);
+    expect(row).toMatchObject({
+      outcome: "SUCCESS", cache_status: "PARTIAL", cache_write_tokens: "0",
+      prefix_project_sha256: null, prefix_task_sha256: null, error_code: null
+    });
+    expect(row.cache_read_tokens).toBe("600000");
+    expect(Number(row.estimated_cost_chf)).toBeCloseTo(0.46, 6);
+    expect(Number(row.estimated_cost_without_cache_chf)).toBeCloseTo(1, 6);
+    expect(Number(row.estimated_cache_savings_chf)).toBeCloseTo(0.54, 6);
+    const cost = await pool.query(
+      "SELECT usage FROM cost_events WHERE usage->>'requestId' = $1", [request.requestId]
+    );
+    expect(cost.rows[0].usage).toMatchObject({
+      inputTokens: 400_000, cacheReadTokens: 600_000, cacheWriteTokens: 0, totalInputTokens: 1_000_000
+    });
+  });
+
+  it("records a NOT_ESTIMABLE response with reason and alert, without a cost event or substitute price", async () => {
+    await credentials.configure(organizationId, "openai", "sk-cache-test-secret-1111", userId);
+    // Cache write reported by a model whose catalog entry has no write rate.
+    const usage = mapOpenAIUsage({
+      input_tokens: 100, output_tokens: 1,
+      input_tokens_details: { cache_write_tokens: 40 },
+      cache_write_tokens_details: { ttl_30m_tokens: 40 }
+    });
+    const alerts: unknown[] = [];
+    const gateway = new ModelGateway(
+      pool, credentials,
+      new ProviderRegistry().register(adapterReturning("openai", usage, { calls: 0 })),
+      new PricingCatalog({
+        "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 }
+      }),
+      3, 30_000, alert => alerts.push(alert)
+    );
+    const request = { ...baseRequest(), targets: [{ provider: "openai" as const, model: "m" }] };
+    const result = await gateway.execute(request);
+    expect(result.estimatedCostChf).toBeNull();
+    expect(result.costNotEstimableReason).toMatch(/30m write rate/);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ code: "COST_NOT_ESTIMABLE", requestId: request.requestId });
+    const row = await callRow(request.requestId);
+    expect(row).toMatchObject({
+      outcome: "SUCCESS", error_code: "NOT_ESTIMABLE", estimated_cost_chf: null, cache_status: "WRITE"
+    });
+    expect(row.cache_reason).toMatch(/not estimable/);
+    expect(row.cache_write_tokens).toBe("40");
+    const cost = await pool.query(
+      "SELECT 1 FROM cost_events WHERE usage->>'requestId' = $1", [request.requestId]
+    );
+    expect(cost.rowCount).toBe(0);
+  });
+
+  it("blocks with PROMPT_TOO_LARGE_FOR_TIER before calling when the prompt exceeds the tier", async () => {
+    await credentials.configure(organizationId, "openai", "sk-cache-test-secret-1111", userId);
+    const counter = { calls: 0 };
+    const gateway = new ModelGateway(
+      pool, credentials,
+      new ProviderRegistry().register(adapterReturning("openai", plainUsage(1, 1), counter)),
+      new PricingCatalog({
+        "openai:tier": {
+          inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1,
+          maxPromptTokens: 1_000
+        }
+      })
+    );
+    const big = { ...baseRequest(), prompt: "x".repeat(2_001),
+      targets: [{ provider: "openai" as const, model: "tier" }] };
+    await expect(gateway.execute(big)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(counter.calls).toBe(0);
+    expect(await callRow(big.requestId)).toMatchObject({
+      outcome: "BLOCKED", error_code: "PROMPT_TOO_LARGE_FOR_TIER"
+    });
+    const small = { ...baseRequest(), prompt: "x".repeat(2_000),
+      targets: [{ provider: "openai" as const, model: "tier" }] };
+    await expect(gateway.execute(small)).resolves.toMatchObject({ provider: "openai" });
+    expect(counter.calls).toBe(1);
   });
 });

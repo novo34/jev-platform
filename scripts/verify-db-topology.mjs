@@ -485,7 +485,17 @@ async function validateCheckConstraintSurface(pool) {
     "provider_credentials:provider_credentials_provider_check",
     "model_provider_calls:model_provider_calls_provider_check",
     "model_provider_calls:model_provider_calls_outcome_check",
-    "model_provider_calls:model_provider_calls_attempt_count_check"
+    "model_provider_calls:model_provider_calls_attempt_count_check",
+    // PLT-052 migration 0029 (prompt-cache accounting).
+    "model_provider_calls:model_provider_calls_cache_read_tokens_check",
+    "model_provider_calls:model_provider_calls_cache_write_tokens_check",
+    "model_provider_calls:model_provider_calls_cache_write_5m_tokens_check",
+    "model_provider_calls:model_provider_calls_cache_write_1h_tokens_check",
+    "model_provider_calls:model_provider_calls_cache_status_check",
+    "model_provider_calls:model_provider_calls_prefix_project_sha256_check",
+    "model_provider_calls:model_provider_calls_prefix_task_sha256_check",
+    "model_provider_calls:model_provider_calls_estimated_cost_without_cache_chf_check",
+    "model_provider_calls:model_provider_calls_cache_write_ttl_check"
   ]);
   const checks = await pool.query(`
     SELECT c.oid, table_object.relname AS table_name,

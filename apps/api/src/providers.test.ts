@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabasePool, migrate } from "@jev/db";
 import { hashPassword } from "@jev/auth";
-import { ProviderRegistry } from "@jev/model-gateway";
+import { ProviderRegistry, plainUsage } from "@jev/model-gateway";
 import { buildApi } from "./app.js";
 
 const pool = createDatabasePool();
@@ -18,7 +18,7 @@ const registry = new ProviderRegistry()
     async execute() {
       return {
         content: "ok",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+        usage: plainUsage(1, 1)
       };
     },
     async health(apiKey) {
@@ -30,7 +30,7 @@ const registry = new ProviderRegistry()
     async execute() {
       return {
         content: "ok",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+        usage: plainUsage(1, 1)
       };
     },
     async health() {

@@ -5,6 +5,7 @@ import {
   type ProviderAdapter,
   type ProviderHealth
 } from "./types.js";
+import { mapDeepSeekUsage, mapOpenAIUsage } from "./usage.js";
 
 type FetchLike = typeof fetch;
 
@@ -110,31 +111,14 @@ function textFromOpenAIResponse(body: any): string {
   );
 }
 
-function normalizedUsage(
-  inputValue: unknown,
-  outputValue: unknown,
-  totalValue: unknown,
-  provider: string
-) {
-  const inputTokens = inputValue;
-  const outputTokens = outputValue;
-  const totalTokens = totalValue;
-
-  if (
-    !Number.isSafeInteger(inputTokens) ||
-    !Number.isSafeInteger(outputTokens) ||
-    !Number.isSafeInteger(totalTokens) ||
-    (inputTokens as number) < 0 ||
-    (outputTokens as number) < 0 ||
-    (totalTokens as number) < 0
-  ) {
+// Providers must still report a valid grand total, as before PLT-052.
+function assertReportedTotal(value: unknown, provider: string): void {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
     throw new ModelGatewayError(
       "PROVIDER_RESPONSE_INVALID",
       `${provider} response contained invalid usage`
     );
   }
-
-  return { inputTokens: inputTokens as number, outputTokens: outputTokens as number, totalTokens: totalTokens as number };
 }
 
 abstract class BaseHttpAdapter implements ProviderAdapter {
@@ -222,14 +206,10 @@ export class OpenAIAdapter extends BaseHttpAdapter {
       );
     }
 
+    assertReportedTotal(usage.total_tokens, "OpenAI");
     return {
       content: textFromOpenAIResponse(body),
-      usage: normalizedUsage(
-        usage.input_tokens,
-        usage.output_tokens,
-        usage.total_tokens,
-        "OpenAI"
-      ),
+      usage: mapOpenAIUsage(usage),
       finishReason: typeof body?.status === "string" ? body.status : undefined,
       rawMetadata: {
         responseId: typeof body?.id === "string" ? body.id : undefined
@@ -287,14 +267,10 @@ export class DeepSeekAdapter extends BaseHttpAdapter {
       );
     }
 
+    assertReportedTotal(usage.total_tokens, "DeepSeek");
     return {
       content,
-      usage: normalizedUsage(
-        usage.prompt_tokens,
-        usage.completion_tokens,
-        usage.total_tokens,
-        "DeepSeek"
-      ),
+      usage: mapDeepSeekUsage(usage),
       finishReason:
         typeof body?.choices?.[0]?.finish_reason === "string"
           ? body.choices[0].finish_reason

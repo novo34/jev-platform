@@ -36,7 +36,7 @@ PLT-032 expands this baseline with the full secrets-management UI, additional se
 
 Each gateway request declares an ordered list of provider/model targets. The gateway verifies pricing before a paid provider call, loads the organization-scoped credential, enforces timeout, retries retryable failures, falls back when allowed, applies a circuit breaker, and persists attempts, latency, fallback provenance, normalized usage and estimated CHF cost.
 
-Pricing is configuration, not hard-coded provider truth. Runtime pricing is supplied through `JEV_MODEL_PRICING_JSON`, keyed by `provider:model` or `provider:*`, with `inputPerMillionChf` and `outputPerMillionChf`.
+Pricing is configuration, not hard-coded provider truth. Runtime pricing is supplied through `JEV_MODEL_PRICING_JSON`, keyed by `provider:model` or `provider:*`, with `inputPerMillionChf` and `outputPerMillionChf`. Optional cache fields (PLT-052, all CHF per million tokens, same bounds): `cacheReadPerMillionChf`, `cacheWrite5mPerMillionChf`, `cacheWrite1hPerMillionChf`, `cacheWrite30mPerMillionChf`, `cacheWrite12hPerMillionChf`, `cacheWriteBilledAs: "input"` (explicit declaration that writes are billed at the input rate; never assumed) and `maxPromptTokens` (pricing-tier ceiling, e.g. Haiku 5.5 at 100000).
 
 Missing pricing blocks a paid call instead of silently recording an incorrect cost.
 
@@ -54,15 +54,18 @@ organization must match exactly for cost attribution.
 
 <a id="prompt-caching"></a>
 
-## Prompt caching: NOT_IMPLEMENTED (diseño aprobado, sin implementar)
+## Prompt caching: parcialmente implementado (PLT-052, PR 2/6)
 
-Estado: **NOT_IMPLEMENTED**; diseño aprobado por el operador el 2026-11-18, sin implementar: [PLT-052-PROMPT-CACHING.md](architecture/PLT-052-PROMPT-CACHING.md). Hoy solo existen los adaptadores OpenAI y DeepSeek, y ninguno marca caché de prompts ni registra tokens de escritura o lectura de caché. El operador adelantó esta capacidad en el roadmap el 2026-11-17 por el coste de tokens (ver [ROADMAP](product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17)); el cambio de prioridad ya está reflejado en Foundation (novo34/base-skills_klever#28) como PLT-052, que es la siguiente tarea según NEXT_TASK.
+Estado: diseño aprobado el 2026-11-18 ([PLT-052-PROMPT-CACHING.md](architecture/PLT-052-PROMPT-CACHING.md)); implementación por PR, cada una autorizada aparte (R3). **Todavía no se marca caché con ningún proveedor, no existe el adaptador Anthropic y `anthropic` no está en `MODEL_PROVIDERS`.** Hecho hasta la PR 2/6:
 
-Diseño planificado (REQ-CACHE-001..007 en la [SPEC](product-specs/SPEC.md)):
+- Modelo de uso normalizado común (`NormalizedUsage`: entrada ordinaria, salida, lectura, escritura total y por TTL, `totalInputTokens`, `totalTokens`) y mapeo puro de Anthropic, OpenAI y DeepSeek (`usage.ts`). OpenAI y DeepSeek ya lo usan; el mapeo de Anthropic solo tiene pruebas, sin adaptador. Una respuesta con contadores de caché inconsistentes se rechaza como `PROVIDER_RESPONSE_INVALID`.
+- Precios de caché en `JEV_MODEL_PRICING_JSON` y validación previa: si falta una tarifa aplicable, la llamada queda `BLOCKED` con `PRICING_REQUIRED` antes de ejecutarse. **Cambio intencional:** OpenAI y DeepSeek exigen ya `cacheReadPerMillionChf` (cachean de forma automática y no se puede apagar); solo afecta al harness de desarrollo `accept:gateway`, único llamador. `NOT_ESTIMABLE` solo para respuestas inesperadas ya recibidas (por ejemplo, tokens de caché sin tarifa): se registra la llamada con `error_code=NOT_ESTIMABLE`, el motivo en `cache_reason` y una alerta, sin evento de coste y sin sustituir por la tarifa de entrada; `ModelGatewayResult.estimatedCostChf` es `null` en ese caso. Con `maxPromptTokens` configurado (tramo ≤ 100.000 tokens de Haiku 5.5) un prompt mayor queda `BLOCKED` con `PROMPT_TOO_LARGE_FOR_TIER` antes de llamar, con una estimación conservadora (2 bytes UTF-8 por token); si tras la respuesta `totalInputTokens` lo supera, el coste es `NOT_ESTIMABLE`.
+- Migración `0029` (columnas de caché y `anthropic` en los `CHECK` de proveedor). Cada llamada registra tokens de lectura/escritura, `cache_status` observable (`HIT`, `PARTIAL` o `WRITE`; vacío si no hay tokens de caché), coste sin caché y ahorro. Los hashes de prefijo siguen en `NULL` hasta integrar el constructor de prompts.
+
+Pendiente (PR 3 a 6): interruptor `JEV_PROMPT_CACHE` y reintento sin caché, adaptador Anthropic con `cache_control`, vistas de métricas y harness de aceptación de 2 llamadas. Principios del diseño (REQ-CACHE-001..007 en la [SPEC](product-specs/SPEC.md)):
 
 - Prefijo estable al inicio de la petición: instrucciones del sistema, reglas, skills y especificación. Contenido variable (tarea, ContextPack específico, historial) al final. El prefijo debe ser determinista byte a byte.
 - El futuro adaptador Anthropic debe nacer con caché (`cache_control`); no se añadirá primero sin caché.
-- Cada llamada registra tokens de entrada, salida, escritura de caché y lectura de caché, y se agregan por llamada, tarea y proyecto. El precio de escritura y lectura de caché se configura aparte en `JEV_MODEL_PRICING_JSON`. Antes de una llamada pagada se comprueban todas las tarifas aplicables (entrada, salida, escritura y lectura de caché, si el proveedor cobra la caché) y, si falta alguna, la llamada se bloquea. El estado «no estimable» queda solo para respuestas inesperadas ya recibidas (por ejemplo, un campo de uso de caché sin precio previsto), que se registran con motivo y se alertan.
 - Se expone la tasa de acierto de caché para medir el ahorro real.
 - Un fallo de caché no bloquea la llamada: se ejecuta sin caché y se registra el motivo.
 

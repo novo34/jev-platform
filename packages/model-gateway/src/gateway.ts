@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { ProviderCredentialStore } from "./credentials.js";
 import { PricingCatalog } from "./pricing.js";
 import { ProviderRegistry } from "./adapters.js";
+import { observedCacheStatus } from "./usage.js";
 import {
   ModelGatewayError,
   type AdapterResult,
@@ -10,6 +11,23 @@ import {
   type ModelProvider,
   type NormalizedUsage
 } from "./types.js";
+import type { CostEstimate } from "./pricing.js";
+
+export interface GatewayAlert {
+  code: "COST_NOT_ESTIMABLE";
+  requestId: string;
+  organizationId: string;
+  provider: ModelProvider;
+  model: string;
+  reason: string;
+}
+
+// Conservative upper bound of prompt tokens for the pre-call pricing-tier
+// check: at least 2 UTF-8 bytes per token (real text is nearer 3.5-4). It only
+// ever decides tier rejection; it is never used to price a call.
+function estimatePromptTokens(prompt: string): number {
+  return Math.ceil(Buffer.byteLength(prompt, "utf8") / 2);
+}
 
 interface CircuitState {
   failures: number;
@@ -25,7 +43,9 @@ export class ModelGateway {
     private readonly providers: ProviderRegistry,
     private readonly pricing: PricingCatalog,
     private readonly circuitFailureThreshold = 3,
-    private readonly circuitCooldownMs = 30_000
+    private readonly circuitCooldownMs = 30_000,
+    private readonly onAlert: (alert: GatewayAlert) => void = (alert) =>
+      console.error(JSON.stringify({ level: "alert", ...alert }))
   ) {}
 
   private async assertOwnership(request: ModelGatewayRequest): Promise<void> {
@@ -167,7 +187,9 @@ export class ModelGateway {
 
     for (const target of request.targets) {
       if (remainingProviderAttempts === 0) break;
-      if (!this.pricing.has(target.provider, target.model)) {
+      // Every applicable rate (input, output, and cache read for providers that
+      // cache automatically) must exist BEFORE any call; never defaulted.
+      if (this.pricing.missingRates(target.provider, target.model).length > 0) {
         await this.recordFailure(
           request,
           target.provider,
@@ -181,6 +203,27 @@ export class ModelGateway {
         lastError = new ModelGatewayError(
           "PRICING_REQUIRED",
           `pricing is required for ${target.provider}/${target.model}`
+        );
+        previousProvider = target.provider;
+        continue;
+      }
+
+      if (this.pricing.exceedsTier(
+        target.provider, target.model, estimatePromptTokens(request.prompt)
+      )) {
+        await this.recordFailure(
+          request,
+          target.provider,
+          target.model,
+          "BLOCKED",
+          0,
+          0,
+          previousProvider,
+          "PROMPT_TOO_LARGE_FOR_TIER"
+        );
+        lastError = new ModelGatewayError(
+          "PROMPT_TOO_LARGE_FOR_TIER",
+          `prompt is too large for the configured pricing tier of ${target.provider}/${target.model}`
         );
         previousProvider = target.provider;
         continue;
@@ -323,11 +366,30 @@ export class ModelGateway {
       }
 
       const latencyMs = Date.now() - started;
-      const estimatedCostChf = this.pricing.estimateChf(
-        target.provider,
-        target.model,
-        response.usage
-      );
+      // NOT_ESTIMABLE only exists after a response: the paid call already
+      // happened, so it is recorded with a reason and an alert, never priced
+      // with a substitute rate. Any other estimate failure still throws.
+      let estimate: CostEstimate | undefined;
+      let notEstimableReason: string | undefined;
+      try {
+        estimate = this.pricing.estimate(target.provider, target.model, response.usage);
+      } catch (error) {
+        if (!(error instanceof ModelGatewayError) || error.code !== "NOT_ESTIMABLE") throw error;
+        notEstimableReason = error.message;
+        try {
+          this.onAlert({
+            code: "COST_NOT_ESTIMABLE",
+            requestId: request.requestId,
+            organizationId: request.organizationId,
+            provider: target.provider,
+            model: target.model,
+            reason: error.message
+          });
+        } catch {
+          // An alert sink failure must not lose the record of a paid call.
+        }
+      }
+      const estimatedCostChf = estimate?.estimatedCostChf ?? null;
 
       // Persistence is intentionally outside the provider retry block.
       // A database failure must never cause a second paid provider call.
@@ -339,7 +401,8 @@ export class ModelGateway {
         latencyMs,
         previousProvider,
         response.usage,
-        estimatedCostChf
+        estimate,
+        notEstimableReason
       );
       this.success(
         request.organizationId,
@@ -355,7 +418,8 @@ export class ModelGateway {
         attempts,
         latencyMs,
         fallbackFrom: previousProvider,
-        estimatedCostChf
+        estimatedCostChf,
+        ...(notEstimableReason ? { costNotEstimableReason: notEstimableReason } : {})
       };
     }
 
@@ -373,7 +437,8 @@ export class ModelGateway {
     latencyMs: number,
     fallbackFrom: ModelProvider | undefined,
     usage: NormalizedUsage,
-    estimatedCostChf: number
+    estimate: CostEstimate | undefined,
+    notEstimableReason: string | undefined
   ): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -382,8 +447,12 @@ export class ModelGateway {
         `INSERT INTO model_provider_calls (
            request_id, organization_id, project_id, order_id, task_id,
            provider, model, outcome, attempt_count, latency_ms, fallback_from,
-           usage, estimated_cost_chf
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'SUCCESS', $8, $9, $10, $11::jsonb, $12)`,
+           usage, estimated_cost_chf, error_code,
+           cache_read_tokens, cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens,
+           cache_status, cache_reason,
+           estimated_cost_without_cache_chf, estimated_cache_savings_chf
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'SUCCESS', $8, $9, $10, $11::jsonb, $12, $13,
+                   $14, $15, $16, $17, $18, $19, $20, $21)`,
         [
           request.requestId,
           request.organizationId,
@@ -396,10 +465,21 @@ export class ModelGateway {
           latencyMs,
           fallbackFrom ?? null,
           JSON.stringify(usage),
-          estimatedCostChf
+          estimate?.estimatedCostChf ?? null,
+          notEstimableReason ? "NOT_ESTIMABLE" : null,
+          usage.cacheReadTokens,
+          usage.cacheWriteTokens,
+          usage.cacheWrite5mTokens,
+          usage.cacheWrite1hTokens,
+          observedCacheStatus(usage) ?? null,
+          notEstimableReason ?? null,
+          estimate?.estimatedCostWithoutCacheChf ?? null,
+          estimate?.estimatedCacheSavingsChf ?? null
         ]
       );
-      await client.query(
+      // A not-estimable call has no trustworthy amount: it gets no cost event
+      // (recording 0 would understate spend); the call row carries the reason.
+      if (estimate) await client.query(
         `INSERT INTO cost_events (
            organization_id, project_id, order_id, task_id,
            provider, model, currency, amount, usage
@@ -411,7 +491,7 @@ export class ModelGateway {
           request.taskId,
           provider,
           model,
-          estimatedCostChf,
+          estimate.estimatedCostChf,
           JSON.stringify({
             requestId: request.requestId,
             ...usage,
