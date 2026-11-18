@@ -495,7 +495,10 @@ async function validateCheckConstraintSurface(pool) {
     "model_provider_calls:model_provider_calls_prefix_project_sha256_check",
     "model_provider_calls:model_provider_calls_prefix_task_sha256_check",
     "model_provider_calls:model_provider_calls_estimated_cost_without_cache_chf_check",
-    "model_provider_calls:model_provider_calls_cache_write_ttl_check"
+    "model_provider_calls:model_provider_calls_cache_write_ttl_check",
+    // PLT-052 migration 0030 (prefix fingerprint for instability detection).
+    "model_provider_calls:model_provider_calls_prefix_tools_sha256_check",
+    "model_provider_calls:model_provider_calls_prefix_segment_refs_check"
   ]);
   const checks = await pool.query(`
     SELECT c.oid, table_object.relname AS table_name,

@@ -3,7 +3,10 @@ import { ProviderCredentialStore } from "./credentials.js";
 import { PricingCatalog } from "./pricing.js";
 import { ProviderRegistry } from "./adapters.js";
 import { observedCacheStatus } from "./usage.js";
-import { buildPrompt, deriveTenantNamespace, type BuiltPrompt } from "./prompt-builder.js";
+import {
+  buildPrompt, deriveTenantNamespace, detectPrefixInstability,
+  type BuiltPrompt, type PrefixFingerprint
+} from "./prompt-builder.js";
 import { CachePolicy, disabledReason, isCacheAttributableError } from "./cache-policy.js";
 import {
   ModelGatewayError,
@@ -44,6 +47,8 @@ interface CacheOverride {
 interface PrefixHashes {
   project: string;
   task: string;
+  toolsSha256: string;
+  segmentRefs: string[];
 }
 
 interface CircuitState {
@@ -84,6 +89,49 @@ export class ModelGateway {
       request.tools,
       deriveTenantNamespace(this.tenantNamespaceSecret, request.organizationId, request.projectId)
     );
+  }
+
+  // Fingerprint of the previous successful segmented call of the SAME task in
+  // the SAME organization, read from the call view (never the table). Any
+  // failure here is swallowed: measuring never blocks a call (design point 7).
+  private async previousFingerprint(
+    request: ModelGatewayRequest
+  ): Promise<PrefixFingerprint | undefined> {
+    try {
+      const result = await this.pool.query(
+        `SELECT prefix_project_sha256, prefix_task_sha256, prefix_tools_sha256,
+                prefix_segment_refs
+           FROM model_cache_metrics_by_call
+          WHERE organization_id = $1 AND task_id = $2
+            AND outcome = 'SUCCESS'
+            AND prefix_task_sha256 IS NOT NULL AND prefix_tools_sha256 IS NOT NULL
+            AND prefix_segment_refs IS NOT NULL
+          ORDER BY created_at DESC, call_id DESC
+          LIMIT 1`,
+        [request.organizationId, request.taskId]
+      );
+      const row = result.rows[0] as {
+        prefix_project_sha256: string; prefix_task_sha256: string;
+        prefix_tools_sha256: string; prefix_segment_refs: unknown;
+      } | undefined;
+      if (!row || !Array.isArray(row.prefix_segment_refs) ||
+          !row.prefix_segment_refs.every(ref => typeof ref === "string")) return undefined;
+      return {
+        prefix_project_sha256: row.prefix_project_sha256,
+        prefix_task_sha256: row.prefix_task_sha256,
+        toolsSha256: row.prefix_tools_sha256,
+        segmentRefs: row.prefix_segment_refs as string[]
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async prefixInstabilityWarnings(
+    request: ModelGatewayRequest, built: BuiltPrompt
+  ): Promise<ReturnType<typeof detectPrefixInstability>> {
+    const previous = await this.previousFingerprint(request);
+    return detectPrefixInstability(previous, built);
   }
 
   private async assertOwnership(request: ModelGatewayRequest): Promise<void> {
@@ -226,7 +274,8 @@ export class ModelGateway {
     const built = this.buildSegmented(request);
     const promptText = built ? built.text : request.prompt!;
     if (built && !promptText.trim()) throw new ModelGatewayError("INVALID_REQUEST");
-    for (const warning of built?.warnings ?? []) {
+    const instability = built ? await this.prefixInstabilityWarnings(request, built) : [];
+    for (const warning of [...(built?.warnings ?? []), ...instability]) {
       try {
         this.onAlert({
           code: "PROMPT_UNSTABLE_CONTENT", requestId: request.requestId,
@@ -238,7 +287,10 @@ export class ModelGateway {
       }
     }
     const hashes: PrefixHashes | undefined = built
-      ? { project: built.prefix_project_sha256, task: built.prefix_task_sha256 }
+      ? {
+        project: built.prefix_project_sha256, task: built.prefix_task_sha256,
+        toolsSha256: built.toolsSha256, segmentRefs: built.segmentRefs
+      }
       : undefined;
     const timeoutMs = request.timeoutMs ?? 120_000;
     const maxRetries = request.maxRetries ?? 1;
@@ -631,9 +683,10 @@ export class ModelGateway {
            cache_read_tokens, cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens,
            cache_status, cache_reason,
            estimated_cost_without_cache_chf, estimated_cache_savings_chf,
-           prefix_project_sha256, prefix_task_sha256
+           prefix_project_sha256, prefix_task_sha256,
+           prefix_tools_sha256, prefix_segment_refs
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'SUCCESS', $8, $9, $10, $11::jsonb, $12, $13,
-                   $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+                   $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25::jsonb)`,
         [
           request.requestId,
           request.organizationId,
@@ -658,7 +711,9 @@ export class ModelGateway {
           estimate?.estimatedCostWithoutCacheChf ?? null,
           estimate?.estimatedCacheSavingsChf ?? null,
           hashes?.project ?? null,
-          hashes?.task ?? null
+          hashes?.task ?? null,
+          hashes?.toolsSha256 ?? null,
+          hashes ? JSON.stringify(hashes.segmentRefs) : null
         ]
       );
       // A not-estimable call has no trustworthy amount: it gets no cost event

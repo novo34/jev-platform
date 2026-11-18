@@ -141,6 +141,26 @@ GRANT EXECUTE ON FUNCTION jev_create_approval(uuid,uuid,uuid,text,text,text,text
 -- never grant runtime schema ownership or DML on guarded lifecycle tables.
 GRANT INSERT, UPDATE, DELETE ON TABLE provider_credentials TO jev_runtime;
 GRANT INSERT ON TABLE model_provider_calls, cost_events TO jev_runtime;
+-- PLT-052 cache metrics: read-only views (migration 0030). SELECT only, never
+-- DML; each view exposes organization_id and callers must filter by it. The
+-- guard keeps the script usable against a schema older than 0030.
+DO $jev_cache_views$
+DECLARE view_name text;
+BEGIN
+  FOREACH view_name IN ARRAY ARRAY[
+    'model_cache_metrics_by_call', 'model_cache_metrics_by_task',
+    'model_cache_metrics_by_project'
+  ]
+  LOOP
+    IF pg_catalog.to_regclass('public.' || view_name) IS NOT NULL THEN
+      EXECUTE pg_catalog.format(
+        'REVOKE ALL ON TABLE public.%I FROM PUBLIC, jev_runtime', view_name
+      );
+      EXECUTE pg_catalog.format('GRANT SELECT ON TABLE public.%I TO jev_runtime', view_name);
+    END IF;
+  END LOOP;
+END;
+$jev_cache_views$;
 -- GitHub installation state contains only expiring hashes, scope and identifiers.
 GRANT INSERT, UPDATE, DELETE ON TABLE github_installation_requests TO jev_runtime;
 GRANT INSERT, UPDATE ON TABLE github_installations, github_repository_installations TO jev_runtime;
