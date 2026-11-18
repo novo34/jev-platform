@@ -61,14 +61,19 @@ CROSS JOIN LATERAL (
          THEN (c.usage->>'outputTokens')::bigint ELSE 0 END AS output_tokens
 ) m;
 
--- Aggregation of the call view. Sums of cost and savings ignore NULL (calls not
--- estimable); calls_not_estimable counts them so a partial sum is never mistaken
--- for a complete one.
+-- Aggregation of the call view. cost_chf sums the known costs and
+-- calls_not_estimable counts the SUCCESS calls without one. Calls from before
+-- 0029 can have a cost but no cost-without-cache nor savings:
+-- calls_without_cache_baseline counts every SUCCESS call lacking either, and
+-- then cost_without_cache_chf and cache_savings_chf are NULL (unknown) instead
+-- of a partial sum that would pass for a complete one.
 CREATE VIEW model_cache_metrics_by_task WITH (security_barrier = true) AS
 SELECT
   organization_id, project_id, order_id, task_id,
   COUNT(*)::bigint AS calls_total,
   COUNT(*) FILTER (WHERE outcome = 'SUCCESS' AND cost_chf IS NULL)::bigint AS calls_not_estimable,
+  COUNT(*) FILTER (WHERE outcome = 'SUCCESS'
+    AND (cost_without_cache_chf IS NULL OR cache_savings_chf IS NULL))::bigint AS calls_without_cache_baseline,
   COALESCE(SUM(ordinary_input_tokens), 0)::bigint AS ordinary_input_tokens,
   COALESCE(SUM(cache_read_tokens), 0)::bigint AS cache_read_tokens,
   COALESCE(SUM(cache_write_tokens), 0)::bigint AS cache_write_tokens,
@@ -78,8 +83,12 @@ SELECT
        ELSE ROUND(SUM(cache_read_tokens)::numeric / SUM(total_input_tokens), 6)
   END AS cache_hit_rate,
   COALESCE(SUM(cost_chf), 0)::numeric(18,6) AS cost_chf,
-  COALESCE(SUM(cost_without_cache_chf), 0)::numeric(18,6) AS cost_without_cache_chf,
-  COALESCE(SUM(cache_savings_chf), 0)::numeric(18,6) AS cache_savings_chf,
+  CASE WHEN COUNT(*) FILTER (WHERE outcome = 'SUCCESS'
+         AND (cost_without_cache_chf IS NULL OR cache_savings_chf IS NULL)) > 0 THEN NULL
+       ELSE COALESCE(SUM(cost_without_cache_chf), 0)::numeric(18,6) END AS cost_without_cache_chf,
+  CASE WHEN COUNT(*) FILTER (WHERE outcome = 'SUCCESS'
+         AND (cost_without_cache_chf IS NULL OR cache_savings_chf IS NULL)) > 0 THEN NULL
+       ELSE COALESCE(SUM(cache_savings_chf), 0)::numeric(18,6) END AS cache_savings_chf,
   COUNT(*) FILTER (WHERE cache_status = 'HIT')::bigint AS calls_hit,
   COUNT(*) FILTER (WHERE cache_status = 'PARTIAL')::bigint AS calls_partial,
   COUNT(*) FILTER (WHERE cache_status = 'MISS')::bigint AS calls_miss,
@@ -99,6 +108,8 @@ SELECT
   organization_id, project_id,
   COUNT(*)::bigint AS calls_total,
   COUNT(*) FILTER (WHERE outcome = 'SUCCESS' AND cost_chf IS NULL)::bigint AS calls_not_estimable,
+  COUNT(*) FILTER (WHERE outcome = 'SUCCESS'
+    AND (cost_without_cache_chf IS NULL OR cache_savings_chf IS NULL))::bigint AS calls_without_cache_baseline,
   COALESCE(SUM(ordinary_input_tokens), 0)::bigint AS ordinary_input_tokens,
   COALESCE(SUM(cache_read_tokens), 0)::bigint AS cache_read_tokens,
   COALESCE(SUM(cache_write_tokens), 0)::bigint AS cache_write_tokens,
@@ -108,8 +119,12 @@ SELECT
        ELSE ROUND(SUM(cache_read_tokens)::numeric / SUM(total_input_tokens), 6)
   END AS cache_hit_rate,
   COALESCE(SUM(cost_chf), 0)::numeric(18,6) AS cost_chf,
-  COALESCE(SUM(cost_without_cache_chf), 0)::numeric(18,6) AS cost_without_cache_chf,
-  COALESCE(SUM(cache_savings_chf), 0)::numeric(18,6) AS cache_savings_chf,
+  CASE WHEN COUNT(*) FILTER (WHERE outcome = 'SUCCESS'
+         AND (cost_without_cache_chf IS NULL OR cache_savings_chf IS NULL)) > 0 THEN NULL
+       ELSE COALESCE(SUM(cost_without_cache_chf), 0)::numeric(18,6) END AS cost_without_cache_chf,
+  CASE WHEN COUNT(*) FILTER (WHERE outcome = 'SUCCESS'
+         AND (cost_without_cache_chf IS NULL OR cache_savings_chf IS NULL)) > 0 THEN NULL
+       ELSE COALESCE(SUM(cache_savings_chf), 0)::numeric(18,6) END AS cache_savings_chf,
   COUNT(*) FILTER (WHERE cache_status = 'HIT')::bigint AS calls_hit,
   COUNT(*) FILTER (WHERE cache_status = 'PARTIAL')::bigint AS calls_partial,
   COUNT(*) FILTER (WHERE cache_status = 'MISS')::bigint AS calls_miss,

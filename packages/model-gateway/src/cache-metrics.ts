@@ -34,6 +34,8 @@ interface CacheTotals extends CacheStatusCounts {
   projectId: string;
   callsTotal: string;
   callsNotEstimable: string;
+  /** SUCCESS calls lacking cost-without-cache or savings (e.g. pre-0029); then the two sums are null. */
+  callsWithoutCacheBaseline: string;
   ordinaryInputTokens: string;
   cacheReadTokens: string;
   cacheWriteTokens: string;
@@ -42,9 +44,10 @@ interface CacheTotals extends CacheStatusCounts {
   /** read / (read + write + ordinary input); "0" with no input. */
   cacheHitRate: string;
   costChf: string;
-  costWithoutCacheChf: string;
-  /** Estimated; negative when cache writes are not yet amortised. */
-  cacheSavingsChf: string;
+  /** null when any SUCCESS call has no baseline: unknown, never a partial sum. */
+  costWithoutCacheChf: string | null;
+  /** Estimated; negative when cache writes are not yet amortised. null when unknown. */
+  cacheSavingsChf: string | null;
   firstCallAt: Date;
   lastCallAt: Date;
 }
@@ -106,6 +109,7 @@ function totals(row: Row): CacheTotals {
     projectId: row.project_id as string,
     callsTotal: row.calls_total as string,
     callsNotEstimable: row.calls_not_estimable as string,
+    callsWithoutCacheBaseline: row.calls_without_cache_baseline as string,
     ordinaryInputTokens: row.ordinary_input_tokens as string,
     cacheReadTokens: row.cache_read_tokens as string,
     cacheWriteTokens: row.cache_write_tokens as string,
@@ -113,8 +117,8 @@ function totals(row: Row): CacheTotals {
     outputTokens: row.output_tokens as string,
     cacheHitRate: row.cache_hit_rate as string,
     costChf: row.cost_chf as string,
-    costWithoutCacheChf: row.cost_without_cache_chf as string,
-    cacheSavingsChf: row.cache_savings_chf as string,
+    costWithoutCacheChf: (row.cost_without_cache_chf as string | null) ?? null,
+    cacheSavingsChf: (row.cache_savings_chf as string | null) ?? null,
     callsHit: row.calls_hit as string,
     callsPartial: row.calls_partial as string,
     callsMiss: row.calls_miss as string,
@@ -136,6 +140,12 @@ export class CacheMetricsReader {
     organizationId: string, filter: CacheMetricsFilter = {}
   ): Promise<ProjectCacheMetrics[]> {
     const org = requireUuid(organizationId, "organizationId");
+    // The project view has no task dimension: refuse rather than return wider figures.
+    if (filter.taskId !== undefined) {
+      throw new ModelGatewayError(
+        "INVALID_REQUEST", "taskId is not supported at the project level; use the task or call level"
+      );
+    }
     const project = filter.projectId === undefined ? null : requireUuid(filter.projectId, "projectId");
     const result = await this.pool.query(
       `SELECT * FROM model_cache_metrics_by_project

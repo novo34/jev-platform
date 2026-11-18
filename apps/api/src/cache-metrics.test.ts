@@ -41,6 +41,12 @@ beforeAll(async () => {
          '{"inputTokens":100,"outputTokens":1}'::jsonb, $5, 'PARTIAL', 0.001, 0.002, 0.001)`,
       [randomUUID(), org, project, task, org === orgA ? 400 : 9000]);
   }
+  // A pre-0029 call: cost known, no cost-without-cache nor savings.
+  await pool.query(
+    `INSERT INTO model_provider_calls (request_id, organization_id, project_id, task_id, provider, model,
+       outcome, attempt_count, usage, cache_read_tokens, estimated_cost_chf)
+     VALUES ($1, $2, $3, $4, 'anthropic', 'm', 'SUCCESS', 1, '{"inputTokens":100,"outputTokens":1}'::jsonb, 0, 1)`,
+    [randomUUID(), orgA, projectA, taskA]);
 });
 
 afterAll(async () => {
@@ -92,7 +98,12 @@ describe("GET /model-gateway/cache-metrics/:level", () => {
     const own = await app.inject({ method: "GET", url: "/model-gateway/cache-metrics/project", headers });
     expect(own.statusCode).toBe(200);
     expect(own.json().metrics.map((m: { projectId: string }) => m.projectId)).toEqual([projectA]);
-    expect(own.json().metrics[0]).toMatchObject({ cacheReadTokens: "400", callsPartial: "1" });
+    expect(own.json().metrics[0]).toMatchObject({
+      cacheReadTokens: "400", callsPartial: "1", callsWithoutCacheBaseline: "1", callsNotEstimable: "0",
+      costWithoutCacheChf: null, cacheSavingsChf: null
+    });
+    expect(Number(own.json().metrics[0].costChf)).toBeCloseTo(1.001, 6);
+    expect(Number(own.json().metrics[0].cacheHitRate)).toBeCloseTo(400 / 600, 6);
     const tasks = await app.inject({ method: "GET", url: "/model-gateway/cache-metrics/task", headers });
     expect(tasks.json().metrics.map((m: { taskId: string }) => m.taskId)).toEqual([taskA]);
     const calls = await app.inject({
@@ -101,8 +112,26 @@ describe("GET /model-gateway/cache-metrics/:level", () => {
     expect(calls.statusCode).toBe(200);
     expect(calls.json().metrics).toEqual([]);
     const callsOwn = await app.inject({ method: "GET", url: "/model-gateway/cache-metrics/call", headers });
-    expect(callsOwn.json().metrics).toHaveLength(1);
+    expect(callsOwn.json().metrics).toHaveLength(2);
     expect(JSON.stringify(callsOwn.json())).not.toMatch(/sha256|segment/i);
+    // A filter the level cannot apply is rejected, never silently ignored.
+    const ignored = await app.inject({
+      method: "GET", url: `/model-gateway/cache-metrics/project?taskId=${randomUUID()}`, headers
+    });
+    expect(ignored.statusCode).toBe(400);
+    expect(ignored.json()).toMatchObject({ error: "INVALID_REQUEST", message: expect.stringContaining("taskId") });
+    const taskScoped = await app.inject({
+      method: "GET", url: `/model-gateway/cache-metrics/task?projectId=${projectA}&taskId=${taskA}`, headers
+    });
+    expect(taskScoped.json().metrics.map((m: { taskId: string }) => m.taskId)).toEqual([taskA]);
+    const wrongProject = await app.inject({
+      method: "GET", url: `/model-gateway/cache-metrics/task?projectId=${projectB}&taskId=${taskA}`, headers
+    });
+    expect(wrongProject.json().metrics).toEqual([]);
+    const wrongCall = await app.inject({
+      method: "GET", url: `/model-gateway/cache-metrics/call?projectId=${projectB}&taskId=${taskA}`, headers
+    });
+    expect(wrongCall.json().metrics).toEqual([]);
     const bad = await app.inject({ method: "GET", url: "/model-gateway/cache-metrics/call?limit=0", headers });
     expect(bad.statusCode).toBe(400);
     await app.close();

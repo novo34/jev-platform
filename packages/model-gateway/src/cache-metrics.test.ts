@@ -16,6 +16,7 @@ const tenant = (): Tenant => ({
 });
 const A = tenant();
 const B = tenant();
+const C = tenant();
 
 async function seedTenant(t: Tenant, label: string): Promise<void> {
   await pool.query("INSERT INTO organizations (id, name) VALUES ($1, $2)", [t.org, label]);
@@ -62,6 +63,14 @@ beforeAll(async () => {
   await migrate(pool);
   await seedTenant(A, "Metrics Org A");
   await seedTenant(B, "Metrics Org B");
+  await seedTenant(C, "Metrics Org C");
+  // Org C, task 0: one new call with baseline and one pre-0029 call (cost known, no baseline/savings).
+  await seedCall({ t: C, task: 0, status: "PARTIAL", input: 100, read: 300, output: 1,
+    cost: 0.001, without: 0.003, savings: 0.002, at: "2026-01-04T10:00:00Z" });
+  await seedCall({ t: C, task: 0, status: null, input: 100, output: 1, cost: 1, at: "2026-01-04T10:01:00Z" });
+  // Org C, task 1: only complete calls, so a project sum still mixes both kinds.
+  await seedCall({ t: C, task: 1, status: "PARTIAL", input: 100, read: 300, output: 1,
+    cost: 0.001, without: 0.003, savings: 0.002, at: "2026-01-04T10:02:00Z" });
   // Org A, task 0: write (negative savings), hit (positive savings), failed cache ERROR retry.
   await seedCall({ t: A, task: 0, status: "WRITE", input: 1500, write: 20000, output: 800,
     cost: 0.061, without: 0.051, savings: -0.010, at: "2026-01-01T10:00:00Z" });
@@ -80,7 +89,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pool.query("TRUNCATE task_state_history");
-  for (const t of [A, B]) {
+  for (const t of [A, B, C]) {
     await pool.query("DELETE FROM model_provider_calls WHERE organization_id = $1", [t.org]);
     await pool.query("DELETE FROM cost_events WHERE organization_id = $1", [t.org]);
     await pool.query("DELETE FROM provider_credentials WHERE organization_id = $1", [t.org]);
@@ -138,7 +147,45 @@ describe("PLT-052 cache metrics views through CacheMetricsReader", () => {
       callsTotal: "3", cacheReadTokens: "0", cacheHitRate: "0.000000", callsMiss: "1",
       callsDisabled: "1", callsWithoutStatus: "1", callsNotEstimable: "1"
     });
-    expect(Number(task1!.cacheSavingsChf)).toBe(0);
+    // A call without estimable cost also has no baseline: the sums are unknown, not 0.
+    expect(task1).toMatchObject({ callsWithoutCacheBaseline: "1", cacheSavingsChf: null, costWithoutCacheChf: null });
+    expect(Number(task1!.costChf)).toBeCloseTo(0.002, 6);
+  });
+
+  it("an older call with cost but no baseline makes savings unknown (task, project, call levels)", async () => {
+    const [task0] = await reader.byTask(C.org, { taskId: C.tasks[0] });
+    expect(task0).toMatchObject({
+      callsTotal: "2", callsNotEstimable: "0", callsWithoutCacheBaseline: "1",
+      costWithoutCacheChf: null, cacheSavingsChf: null
+    });
+    expect(Number(task0!.costChf)).toBeCloseTo(1.001, 6);
+    expect(Number(task0!.cacheHitRate)).toBeCloseTo(300 / 500, 6);
+    const [task1] = await reader.byTask(C.org, { taskId: C.tasks[1] });
+    expect(task1).toMatchObject({ callsWithoutCacheBaseline: "0", cacheSavingsChf: "0.002000" });
+    const [project] = await reader.byProject(C.org);
+    expect(project).toMatchObject({
+      callsTotal: "3", callsNotEstimable: "0", callsWithoutCacheBaseline: "1",
+      costWithoutCacheChf: null, cacheSavingsChf: null
+    });
+    expect(Number(project!.costChf)).toBeCloseTo(1.002, 6);
+    expect(Number(project!.cacheHitRate)).toBeCloseTo(600 / 900, 6);
+    const old = (await reader.byCall(C.org, { taskId: C.tasks[0] })).find(c => c.cacheStatus === null);
+    expect(old).toMatchObject({ costChf: "1.000000", costWithoutCacheChf: null, cacheSavingsChf: null });
+  });
+
+  it("rejects a filter the level cannot apply instead of ignoring it", async () => {
+    await expect(reader.byProject(A.org, { taskId: A.tasks[0] })).rejects.toMatchObject({
+      code: "INVALID_REQUEST", message: expect.stringContaining("taskId")
+    });
+    // Filters that every other level honours are still applied.
+    expect(await reader.byTask(A.org, { projectId: B.project })).toEqual([]);
+    expect(await reader.byTask(A.org, { projectId: A.project, taskId: A.tasks[0] })).toHaveLength(1);
+    expect(await reader.byTask(A.org, { projectId: randomUUID(), taskId: A.tasks[0] })).toEqual([]);
+    expect(await reader.byCall(A.org, { projectId: A.project, taskId: A.tasks[0] })).toHaveLength(3);
+    expect(await reader.byCall(A.org, { projectId: randomUUID(), taskId: A.tasks[0] })).toEqual([]);
+    expect(await reader.byCall(A.org, { projectId: B.project })).toEqual([]);
+    expect(await reader.byProject(A.org, { projectId: A.project })).toHaveLength(1);
+    expect(await reader.byProject(A.org, { projectId: B.project })).toEqual([]);
   });
 
   it("per project: aggregates all tasks of the project and nothing else", async () => {
@@ -146,9 +193,9 @@ describe("PLT-052 cache metrics views through CacheMetricsReader", () => {
     expect(projects).toHaveLength(1);
     expect(projects[0]).toMatchObject({
       projectId: A.project, callsTotal: "6", callsNotEstimable: "1",
-      cacheReadTokens: "20000", cacheWriteTokens: "20000", ordinaryInputTokens: "3710"
+      cacheReadTokens: "20000", cacheWriteTokens: "20000", ordinaryInputTokens: "3710",
+      callsWithoutCacheBaseline: "1", cacheSavingsChf: null, costWithoutCacheChf: null
     });
-    expect(Number(projects[0]!.cacheSavingsChf)).toBeCloseTo(0.028, 6);
   });
 
   it("isolates organizations: each sees only its own rows at every level", async () => {
