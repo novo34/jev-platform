@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createDatabasePool } from "@jev/db";
 import {
+  CachePolicy,
   ModelGateway,
   PricingCatalog,
   ProviderCredentialStore,
@@ -52,6 +53,8 @@ async function main(): Promise<void> {
       "Verified CHF pricing is required before paid acceptance; missing: " + missingRates.join(", ")
     );
   }
+  // PLT-052: strict JEV_PROMPT_CACHE parsing (default off); an invalid value stops before any call.
+  const cachePolicy = CachePolicy.fromEnv(process.env);
   if (!process.env.JEV_SECRET_ENCRYPTION_KEY) {
     throw new Error("JEV_SECRET_ENCRYPTION_KEY is required");
   }
@@ -63,7 +66,11 @@ async function main(): Promise<void> {
       pool,
       new ProviderCredentialStore(pool, process.env.JEV_SECRET_ENCRYPTION_KEY),
       createDefaultProviderRegistry(),
-      pricing
+      pricing,
+      3,
+      30_000,
+      undefined,
+      cachePolicy
     );
     const requestId = randomUUID();
     const result = await gateway.execute({

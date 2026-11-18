@@ -3,9 +3,11 @@ import { ProviderCredentialStore } from "./credentials.js";
 import { PricingCatalog } from "./pricing.js";
 import { ProviderRegistry } from "./adapters.js";
 import { observedCacheStatus } from "./usage.js";
+import { CachePolicy, disabledReason, isCacheAttributableError } from "./cache-policy.js";
 import {
   ModelGatewayError,
   type AdapterResult,
+  type CacheStatus,
   type ModelGatewayRequest,
   type ModelGatewayResult,
   type ModelProvider,
@@ -29,6 +31,13 @@ function estimatePromptTokens(prompt: string): number {
   return Math.ceil(Buffer.byteLength(prompt, "utf8") / 2);
 }
 
+// Cache state decided by the gateway itself (switch off, or cache failover),
+// as opposed to the state observed from the response.
+interface CacheOverride {
+  status: Extract<CacheStatus, "DISABLED" | "ERROR">;
+  reason: string;
+}
+
 interface CircuitState {
   failures: number;
   openedAt?: number;
@@ -45,7 +54,9 @@ export class ModelGateway {
     private readonly circuitFailureThreshold = 3,
     private readonly circuitCooldownMs = 30_000,
     private readonly onAlert: (alert: GatewayAlert) => void = (alert) =>
-      console.error(JSON.stringify({ level: "alert", ...alert }))
+      console.error(JSON.stringify({ level: "alert", ...alert })),
+    // Injected, never read from the environment here. Default: cache marks off.
+    private readonly cachePolicy: CachePolicy = CachePolicy.disabled()
   ) {}
 
   private async assertOwnership(request: ModelGatewayRequest): Promise<void> {
@@ -189,7 +200,16 @@ export class ModelGateway {
       if (remainingProviderAttempts === 0) break;
       // Every applicable rate (input, output, and cache read for providers that
       // cache automatically) must exist BEFORE any call; never defaulted.
-      if (this.pricing.missingRates(target.provider, target.model).length > 0) {
+      const cacheDecision = this.cachePolicy.decide(target.provider);
+      const registered = this.providers.has(target.provider)
+        ? this.providers.get(target.provider) : undefined;
+      // JEV only marks the cache for adapters with explicit marks. Rates for the
+      // cache of that mode are required before the call, even if the cache
+      // later fails over to a call without it (which needs a subset).
+      const explicitCache = cacheDecision.enabled && registered?.cacheSupport?.mode === "explicit";
+      if (this.pricing.missingRates(
+        target.provider, target.model, { cacheEnabled: explicitCache, cacheWriteTtls: [] }
+      ).length > 0) {
         await this.recordFailure(
           request,
           target.provider,
@@ -301,8 +321,25 @@ export class ModelGateway {
       const started = Date.now();
       let attempts = 0;
       let response: AdapterResult | undefined;
+      // Safe failure (design point 7): ONE retry without cache, only for a
+      // cache-attributable rejection. It does not consume the caller's
+      // maxRetries, but it does consume the shared 8-attempt budget. Once it
+      // has been used, the call without cache is the LAST attempt on this target:
+      // a further failure propagates (no more retries, whatever maxRetries says).
+      // The circuit breaker is evaluated before the first attempt of the target
+      // and records one failure per target when the target finally fails.
+      const disabledOverride: CacheOverride | undefined = !cacheDecision.enabled
+        ? {
+            status: "DISABLED",
+            reason: disabledReason(cacheDecision, registered?.cacheSupport?.mode === "automatic")
+          }
+        : undefined;
+      let cacheActive = explicitCache;
+      let cacheFallbackUsed = false;
+      let cacheErrorReason: string | undefined;
+      let allowedRetries = maxRetries;
 
-      while (attempts <= maxRetries && remainingProviderAttempts > 0) {
+      while (attempts <= allowedRetries && remainingProviderAttempts > 0) {
         attempts += 1;
         remainingProviderAttempts -= 1;
         try {
@@ -310,7 +347,8 @@ export class ModelGateway {
             model: target.model,
             prompt: request.prompt,
             maxOutputTokens: request.maxOutputTokens,
-            timeoutMs
+            timeoutMs,
+            ...(explicitCache ? { cache: { enabled: cacheActive } } : {})
           });
           break;
         } catch (error) {
@@ -324,7 +362,24 @@ export class ModelGateway {
                 );
           lastError = typed;
 
-          if (typed.retryable && attempts <= maxRetries && remainingProviderAttempts > 0) {
+          if (cacheActive && !cacheFallbackUsed && remainingProviderAttempts > 0 &&
+              isCacheAttributableError(typed)) {
+            cacheFallbackUsed = true;
+            cacheActive = false;
+            allowedRetries += 1;
+            cacheErrorReason =
+              `provider rejected the cache marks (HTTP ${typed.status}); retried once without cache: ${typed.message}`.slice(0, 500);
+            // Conservative accounting: the rejected attempt is recorded as its
+            // own FAILED row with no cost (a rejected request is not billed).
+            await this.recordFailure(
+              request, target.provider, target.model, "FAILED", attempts,
+              Date.now() - started, previousProvider, typed.code,
+              { status: "ERROR", reason: cacheErrorReason }
+            );
+            continue;
+          }
+
+          if (typed.retryable && !cacheFallbackUsed && attempts <= allowedRetries && remainingProviderAttempts > 0) {
             const retryAfterMs = (typed as ModelGatewayError & {
               retryAfterMs?: number;
             }).retryAfterMs;
@@ -349,7 +404,10 @@ export class ModelGateway {
             attempts,
             latencyMs,
             previousProvider,
-            typed.code
+            typed.code,
+            cacheErrorReason
+              ? { status: "ERROR", reason: cacheErrorReason }
+              : disabledOverride
           );
           this.failure(
             request.organizationId,
@@ -402,7 +460,10 @@ export class ModelGateway {
         previousProvider,
         response.usage,
         estimate,
-        notEstimableReason
+        notEstimableReason,
+        cacheErrorReason
+          ? { status: "ERROR", reason: cacheErrorReason }
+          : disabledOverride
       );
       this.success(
         request.organizationId,
@@ -438,7 +499,8 @@ export class ModelGateway {
     fallbackFrom: ModelProvider | undefined,
     usage: NormalizedUsage,
     estimate: CostEstimate | undefined,
-    notEstimableReason: string | undefined
+    notEstimableReason: string | undefined,
+    cacheOverride?: CacheOverride
   ): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -471,8 +533,9 @@ export class ModelGateway {
           usage.cacheWriteTokens,
           usage.cacheWrite5mTokens,
           usage.cacheWrite1hTokens,
-          observedCacheStatus(usage) ?? null,
-          notEstimableReason ?? null,
+          cacheOverride?.status ?? observedCacheStatus(usage) ?? null,
+          // NOT_ESTIMABLE keeps its reason; the cache reason is appended.
+          [notEstimableReason, cacheOverride?.reason].filter(Boolean).join(" | ") || null,
           estimate?.estimatedCostWithoutCacheChf ?? null,
           estimate?.estimatedCacheSavingsChf ?? null
         ]
@@ -517,14 +580,15 @@ export class ModelGateway {
     attempts: number,
     latencyMs: number,
     fallbackFrom: ModelProvider | undefined,
-    errorCode: string
+    errorCode: string,
+    cacheOverride?: CacheOverride
   ): Promise<void> {
     await this.pool.query(
       `INSERT INTO model_provider_calls (
          request_id, organization_id, project_id, order_id, task_id,
          provider, model, outcome, attempt_count, latency_ms, fallback_from,
-         error_code
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+         error_code, cache_status, cache_reason
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         request.requestId,
         request.organizationId,
@@ -537,7 +601,9 @@ export class ModelGateway {
         attempts,
         latencyMs,
         fallbackFrom ?? null,
-        errorCode
+        errorCode,
+        cacheOverride?.status ?? null,
+        cacheOverride?.reason ?? null
       ]
     );
   }

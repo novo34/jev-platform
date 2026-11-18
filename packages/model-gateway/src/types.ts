@@ -42,9 +42,9 @@ export interface NormalizedUsage {
   totalInputTokens: number;
 }
 
-// Only the cache state that can be observed from a response. DISABLED, MISS,
-// BELOW_MINIMUM and ERROR need the cache switch and the Anthropic adapter
-// (later PRs of PLT-052) and are never produced here.
+// Written so far: HIT/PARTIAL/WRITE (observed), DISABLED (switch off) and ERROR
+// (cache-attributable rejection retried without cache). MISS, BELOW_MINIMUM and
+// UNSUPPORTED need the Anthropic adapter (PR 4/6).
 export type CacheStatus =
   | "HIT" | "PARTIAL" | "MISS" | "WRITE" | "DISABLED"
   | "BELOW_MINIMUM" | "ERROR" | "UNSUPPORTED";
@@ -62,13 +62,30 @@ export interface ProviderHealth {
   latencyMs?: number;
 }
 
+// Capability declared by each adapter (PLT-052 design point 2). Optional so
+// adapters that do not declare it keep working: they are treated as "none".
+export interface CacheSupport {
+  mode: "explicit" | "automatic" | "none";
+  ttls: string[];
+  minPrefixTokens: (model: string) => number | undefined;
+  billsWrite: boolean;
+}
+
+// Cache marking requested by the gateway for one provider call. Adapters that
+// support explicit marks send them only when enabled is true.
+export interface AdapterCacheOptions {
+  enabled: boolean;
+}
+
 export interface ProviderAdapter {
   readonly provider: ModelProvider;
+  readonly cacheSupport?: CacheSupport;
   execute(apiKey: string, input: {
     model: string;
     prompt: string;
     maxOutputTokens?: number;
     timeoutMs: number;
+    cache?: AdapterCacheOptions;
   }): Promise<AdapterResult>;
   health(apiKey: string, timeoutMs?: number): Promise<ProviderHealth>;
 }
@@ -121,6 +138,7 @@ export class ModelGatewayError extends Error {
       | "PROVIDER_RESPONSE_INVALID"
       | "PRICING_REQUIRED"
       | "PROMPT_TOO_LARGE_FOR_TIER"
+      | "CACHE_CONFIG_INVALID"
       | "NOT_ESTIMABLE"
       | "ALL_PROVIDERS_FAILED"
       | "PROVIDER_CIRCUIT_OPEN",
