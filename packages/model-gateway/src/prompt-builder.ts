@@ -88,7 +88,7 @@ export interface BuiltPrompt {
   prefix_project_sha256: string;
   prefix_task_sha256: string;
   toolsSha256: string;
-  /** id@version de cada segmento de estabilidad project/task, en orden de envío. */
+  /** JSON canónico de [kind, id, version] de cada segmento project/task, en orden de envío (sin ambigüedad aunque id/version contengan separadores). */
   segmentRefs: string[];
   warnings: PromptWarning[];
 }
@@ -296,7 +296,7 @@ export function buildPrompt(
     prefix_project_sha256: sha256Hex(projectPrefixText),
     prefix_task_sha256: sha256Hex(taskPrefixText),
     toolsSha256: sha256Hex(toolsText),
-    segmentRefs: blocks.filter(b => b.stability !== "volatile").map(b => `${b.kind}:${b.id}@${b.version}`),
+    segmentRefs: blocks.filter(b => b.stability !== "volatile").map(b => canonicalJson([b.kind, b.id, b.version])),
     warnings
   };
 }
@@ -320,8 +320,8 @@ export function fingerprintOf(built: BuiltPrompt): PrefixFingerprint {
 
 /**
  * Alerta de prefijo inestable: un hash de prefijo cambió dentro de la misma tarea sin que cambiaran
- * las tools ni el par kind:id@version de ningún segmento declarado. Si cambian tools o algún par
- * id@version, el cambio está declarado y no hay alerta. No bloquea: devuelve avisos.
+ * las tools ni la tripla [kind,id,version] de ningún segmento declarado. Si cambian tools o alguna tripla
+ * [kind,id,version], el cambio está declarado y no hay alerta. No bloquea: devuelve avisos.
  */
 export function detectPrefixInstability(previous: PrefixFingerprint | undefined, current: BuiltPrompt): PromptWarning[] {
   if (!previous) return [];

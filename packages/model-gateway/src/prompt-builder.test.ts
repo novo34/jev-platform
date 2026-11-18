@@ -205,6 +205,16 @@ describe("PLT-052 buildPrompt", () => {
     expect(detectPrefixInstability(fingerprintOf(withTools), noTools)).toEqual([]);
   });
 
+  it("segmentRefs distingue ids y versiones que contienen '@' (sin falsos UNSTABLE_PREFIX)", () => {
+    const mk = (id: string, version: string) => buildPrompt([{ kind: "rules", id, version, content: "x" }], undefined, T1);
+    const a = mk("a@b", "c");
+    const b = mk("a", "b@c");
+    expect(a.segmentRefs).not.toEqual(b.segmentRefs);
+    expect(a.prefix_project_sha256).not.toBe(b.prefix_project_sha256);
+    expect(detectPrefixInstability(fingerprintOf(a), b)).toEqual([]);
+    expect(detectPrefixInstability(fingerprintOf(b), a)).toEqual([]);
+  });
+
   it("canonicalJson serializa los huecos de un array como null, igual que JSON.stringify", () => {
     // eslint-disable-next-line no-sparse-arrays
     const sparse = [1, , 3];
