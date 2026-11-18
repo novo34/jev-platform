@@ -123,7 +123,10 @@ export function canonicalJson(value: unknown): string {
       if (!Number.isFinite(value)) invalid("Canonical JSON does not accept non-finite numbers");
       return JSON.stringify(value);
     case "object": {
-      if (Array.isArray(value)) return `[${value.map(item => canonicalJson(item === undefined ? null : item)).join(",")}]`;
+      if (Array.isArray(value)) {
+        // Array.from visita también los huecos (como undefined); JSON.stringify los serializa como null.
+        return `[${Array.from(value, (item: unknown) => canonicalJson(item === undefined ? null : item)).join(",")}]`;
+      }
       const entries = Object.entries(value as Record<string, unknown>)
         .filter(([, v]) => v !== undefined)
         .sort(([a], [b]) => compareBytes(a, b));
@@ -169,7 +172,7 @@ function resolveSegments(segments: readonly PromptSegment[]): ResolvedSegment[] 
   const positions = new Map<SegmentKind, number>();
   const resolved: ResolvedSegment[] = [];
   for (const segment of segments) {
-    if (!segment || !(segment.kind in KIND_STABILITY)) invalid(`Unknown segment kind: ${String(segment?.kind)}`);
+    if (!segment || !Object.hasOwn(KIND_STABILITY, segment.kind)) invalid(`Unknown segment kind: ${String(segment?.kind)}`);
     if (typeof segment.content !== "string") invalid(`Segment ${segment.kind} requires string content`);
     requireWellFormed(segment.content, `Segment ${segment.kind} content`);
     const position = (positions.get(segment.kind) ?? 0) + 1;

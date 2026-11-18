@@ -205,6 +205,27 @@ describe("PLT-052 buildPrompt", () => {
     expect(detectPrefixInstability(fingerprintOf(withTools), noTools)).toEqual([]);
   });
 
+  it("canonicalJson serializa los huecos de un array como null, igual que JSON.stringify", () => {
+    // eslint-disable-next-line no-sparse-arrays
+    const sparse = [1, , 3];
+    expect(canonicalJson(sparse)).toBe("[1,null,3]");
+    expect(canonicalJson(sparse)).toBe(JSON.stringify(sparse));
+    expect(canonicalJson({ a: new Array(2) })).toBe('{"a":[null,null]}');
+  });
+
+  it("rechaza kinds heredados del prototipo con INVALID_REQUEST", () => {
+    for (const kind of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+      const segments = [{ kind: "system" as const, content: "s" }, { kind: kind as never, content: "a" }];
+      expect(() => buildPrompt(segments, undefined, T1), kind).toThrow(ModelGatewayError);
+      try {
+        buildPrompt(segments, undefined, T1);
+      } catch (error) {
+        expect((error as ModelGatewayError).code).toBe("INVALID_REQUEST");
+        expect((error as ModelGatewayError).message).toContain("Unknown segment kind");
+      }
+    }
+  });
+
   it("rechaza kinds desconocidos y UTF-16 mal formado", () => {
     expect(() => buildPrompt([{ kind: "x" as never, content: "a" }], undefined, T1)).toThrow(ModelGatewayError);
     expect(() => buildPrompt([{ kind: "system", content: "\ud800" }], undefined, T1)).toThrow(ModelGatewayError);
