@@ -2,7 +2,7 @@
 
 Harness de desarrollo de la PR 6/6: `apps/api/src/acceptance-gateway.ts` sigue siendo la aceptación de una llamada de PLT-009; este es su hermano para la caché (`apps/api/src/acceptance-cache.ts`, núcleo en `cache-acceptance.ts`). Diseño: [PLT-052-PROMPT-CACHING.md](architecture/PLT-052-PROMPT-CACHING.md), punto 8. Reglas de gasto heredadas de [PLT-009-PAID-CALL-HARNESS.md](PLT-009-PAID-CALL-HARNESS.md).
 
-La PR 6/6 no ejecuta ninguna llamada real. La ejecución pagada (una sola, tope total CHF 0,10, sin reintentos de pago) la autorizó el operador. Se ejecutó el 2026-11-18 solo con OpenAI y dio PASS (ver [Resultado de la prueba real con OpenAI](#resultado-de-la-prueba-real-con-openai-2026-11-18)); Anthropic y DeepSeek NO se han verificado con tráfico real.
+La PR 6/6 no ejecuta ninguna llamada real. La ejecución pagada (una sola, tope total CHF 0,10, sin reintentos de pago) la autorizó el operador. Se ejecutó el 2026-11-18 con OpenAI y con Anthropic y ambas dieron PASS (ver [OpenAI](#resultado-de-la-prueba-real-con-openai-2026-11-18) y [Anthropic](#resultado-de-la-prueba-real-con-anthropic-2026-11-18)); DeepSeek NO se ha verificado con tráfico real.
 
 ## Modo por defecto: dry-run
 
@@ -64,7 +64,9 @@ Código de salida: 1 si hay un `FAIL` o un error de configuración; 0 si no (con
 
 Solo por el formulario seguro del entorno del operador, guardadas cifradas en la base local con el camino de credenciales por organización (`ProviderCredentialStore`, ver [MODEL_GATEWAY.md](MODEL_GATEWAY.md)). Nunca por chat, nunca en el repositorio, en tickets, en logs ni en archivos `.env` versionados. Tras la prueba, revocar o rotar las claves del entorno local. Solo se registran en PROGRESO.md el resultado saneado, el proveedor y modelo, los tokens y el coste CHF.
 
-## Ejecución en local por el operador
+## Ejecución en local por el operador (realizada para Anthropic el 2026-11-18)
+
+La ejecución con Anthropic se hizo así el 2026-11-18 (ver su resultado más abajo). Requisitos generales, para repetirla solo si el operador lo decide:
 
 Requisitos:
 
@@ -88,7 +90,7 @@ NODE_ENV=development JEV_LIVE_CACHE_ACCEPTANCE=I_AUTHORIZE_CACHE_PAID_CALLS JEV_
 
 ## Pruebas (sin red ni claves)
 
-`apps/api/src/cache-acceptance.test.ts` (guardas, dry-run con `fetch` envenenado, adaptadores simulados con escritura y lectura (`PASS`), lectura cruzada (`FAIL`), parada por tope, no reintento) y `cache-acceptance.gateway.test.ts` (`ModelGateway` y adaptadores reales con PostgreSQL y una red simulada). La PLT-052 no se marca DONE (decisión del operador) mientras falten Anthropic y DeepSeek.
+`apps/api/src/cache-acceptance.test.ts` (guardas, dry-run con `fetch` envenenado, adaptadores simulados con escritura y lectura (`PASS`), lectura cruzada (`FAIL`), parada por tope, no reintento) y `cache-acceptance.gateway.test.ts` (`ModelGateway` y adaptadores reales con PostgreSQL y una red simulada). PLT-052 no se marca DONE (decisión del operador).
 
 ## Resultado de la prueba real con OpenAI (2026-11-18)
 
@@ -106,4 +108,21 @@ Resultado global PASS, una única ejecución con OpenAI `gpt-6.1-terra`, lanzada
 - El único aviso en stderr fue el experimental UNDICI-EHPA de Node (inocuo).
 - El informe completo (JSON y texto) quedó solo en el scratchpad de la sesión, sin claves ni prompt; no se versiona.
 
-Sin verificar con tráfico real: Anthropic (caché explícita con TTL 1h/5m, `cache_control`, errores reales y la heurística `isCacheAttributableError`) y DeepSeek. La clave de Anthropic no puede guardarse como secreto de red (solo variable de entorno) y queda para la ejecución local del operador. Tampoco se observó el caso null frente a ausente en `input_tokens_details` de OpenAI, ni se comprobó el coste real en el panel de OpenAI.
+Al registrar esta ejecución Anthropic y DeepSeek seguían sin verificar; Anthropic se verificó después (sección siguiente). Sigue sin verificar: DeepSeek; el caso null frente a ausente en `input_tokens_details` de OpenAI; el coste real en el panel de OpenAI.
+
+## Resultado de la prueba real con Anthropic (2026-11-18)
+
+Resultado global PASS, una única ejecución con Anthropic `claude-sonnet-5-5` el 2026-11-18 a las 20:50 (hora local del operador), hecha por el operador en su ordenador (Windows, base PostgreSQL local desechable, con el script `run-cache-test-anthropic.ps1` de la sesión), tope CHF 0,10, sin reintentos de pago, `max_tokens` 128 y TTL híbrido (1 h proyecto, 5 min tarea). Comprobaciones PASS: write_first_call, read_second_call, tenant_isolation, usage_mapping, ttl_attribution, read_saves_cost y no_paid_retry. NOT_RUN: anthropic_error_format («no HTTP error occurred»). Una llamada de red por llamada lógica; 0 reintentos bloqueados. La autorización de esa ejecución está consumida.
+
+| Llamada | Ordinarios | Lectura | Escritura 5m | Escritura 1h | Salida | cache_status | Coste CHF | Ahorro CHF | requestId |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A-1 (cliente A) | 51 | 0 | 328 | 2327 | 5 | WRITE (database) | 0,008637 | -0,004048 | `0783d1a8-354e-4fa9-9f57-4b7e75a6377f` |
+| A-2 (A, mismo prefijo) | 51 | 2655 | 0 | 0 | 5 | PARTIAL (database) | 0,000351 | +0,004238 | `a5c3b0b0-650a-4b45-bf50-9f005335e95e` |
+| B-1 (otro cliente) | 51 | 0 | 328 | 2329 | 5 | WRITE (database) | 0,008644 | -0,004051 | `d4c32e95-4ea3-4823-9828-74ec1ac3cfc8` |
+
+- Aislamiento entre clientes confirmado: B no leyó la caché de A.
+- Coste acumulado según el harness con las tarifas configuradas de Sonnet 5.5 (verificadas el 2026-11-18): CHF 0,017632 frente al tope de 0,10. NO es factura y no se comprobó en la consola de Anthropic. Peor caso previo: CHF 0,036367 (USD 0,043284 a 0,8402).
+- Forma real del `usage` (solo tipos): `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `cache_creation` {`ephemeral_5m_input_tokens`, `ephemeral_1h_input_tokens`}, `output_tokens`, `output_tokens_details` {`thinking_tokens`}, `service_tier`, `inference_geo`, `speed`; todos números salvo los tres últimos, que son strings.
+- Confirmado con la API real: `cache_control` explícito aceptado, TTL híbrido 1h/5m atribuido correctamente por TTL, aislamiento por tenant, mapeo de `usage` y ahorro positivo en la lectura.
+
+Estado: la caché está verificada con tráfico real en OpenAI y en Anthropic. Sigue SIN verificar con tráfico real: DeepSeek; el formato real de los errores de caché de Anthropic y la heurística `isCacheAttributableError` (anthropic_error_format NOT_RUN: no hubo error HTTP); el coste real en los paneles de OpenAI y Anthropic; el caso null/ausente en `input_tokens_details` de OpenAI. PLT-052 sigue sin marcarse DONE (decisión del operador).
