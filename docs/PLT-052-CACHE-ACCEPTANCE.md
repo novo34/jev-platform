@@ -2,7 +2,7 @@
 
 Harness de desarrollo de la PR 6/6: `apps/api/src/acceptance-gateway.ts` sigue siendo la aceptación de una llamada de PLT-009; este es su hermano para la caché (`apps/api/src/acceptance-cache.ts`, núcleo en `cache-acceptance.ts`). Diseño: [PLT-052-PROMPT-CACHING.md](architecture/PLT-052-PROMPT-CACHING.md), punto 8. Reglas de gasto heredadas de [PLT-009-PAID-CALL-HARNESS.md](PLT-009-PAID-CALL-HARNESS.md).
 
-La PR 6/6 no ejecuta ninguna llamada real. La ejecución pagada (una sola, tres proveedores, tope total CHF 0,10, sin reintentos de pago) la autorizó el operador y se hace aparte, después de fusionar la PR.
+La PR 6/6 no ejecuta ninguna llamada real. La ejecución pagada (una sola, tope total CHF 0,10, sin reintentos de pago) la autorizó el operador. Se ejecutó el 2026-11-18 solo con OpenAI y dio PASS (ver [Resultado de la prueba real con OpenAI](#resultado-de-la-prueba-real-con-openai-2026-11-18)); Anthropic y DeepSeek NO se han verificado con tráfico real.
 
 ## Modo por defecto: dry-run
 
@@ -79,7 +79,7 @@ Comando exacto (el de arriba, con `JEV_MODEL_PRICING_JSON` y el resto de variabl
 NODE_ENV=development JEV_LIVE_CACHE_ACCEPTANCE=I_AUTHORIZE_CACHE_PAID_CALLS JEV_LIVE_CACHE_MAX_CHF=0.10 JEV_ACCEPT_CACHE_MAX_OUTPUT_TOKENS=128 npm run accept:cache -w @jev/api
 ```
 
-- No se usa `NODE_USE_ENV_PROXY`. Solo hace falta en el entorno cloud, donde el `fetch` de Node debe salir por un proxy; sin esa variable no lo usa y la petición falla con 401 (intento del 2026-11-18). En un equipo local con conexión directa no se define.
+- `NODE_USE_ENV_PROXY=1` solo hace falta en el entorno cloud, donde el `fetch` de Node debe salir por un proxy; sin esa variable no lo usa y la petición falla con 401 (primer intento del 2026-11-18, conservado como contexto; la ejecución con la variable pasó). En un equipo local con conexión directa no se define.
 - Tope CHF 0,10 (`JEV_LIVE_CACHE_MAX_CHF`; mayor se rechaza). Fija además un tope en la cuenta de cada proveedor.
 - Se recomienda `JEV_ACCEPT_CACHE_MAX_OUTPUT_TOKENS=128`: con 16 un modelo con razonamiento puede agotar la salida y dar una respuesta sin texto ya pagada.
 - No se reintenta. Si una ejecución falla, no se repite el pago sin que el operador lo decida; se revisa el informe.
@@ -88,4 +88,22 @@ NODE_ENV=development JEV_LIVE_CACHE_ACCEPTANCE=I_AUTHORIZE_CACHE_PAID_CALLS JEV_
 
 ## Pruebas (sin red ni claves)
 
-`apps/api/src/cache-acceptance.test.ts` (guardas, dry-run con `fetch` envenenado, adaptadores simulados con escritura y lectura (`PASS`), lectura cruzada (`FAIL`), parada por tope, no reintento) y `cache-acceptance.gateway.test.ts` (`ModelGateway` y adaptadores reales con PostgreSQL y una red simulada). La PLT-052 no se da por cerrada hasta ejecutar la prueba pagada y registrar su evidencia.
+`apps/api/src/cache-acceptance.test.ts` (guardas, dry-run con `fetch` envenenado, adaptadores simulados con escritura y lectura (`PASS`), lectura cruzada (`FAIL`), parada por tope, no reintento) y `cache-acceptance.gateway.test.ts` (`ModelGateway` y adaptadores reales con PostgreSQL y una red simulada). La PLT-052 no se marca DONE (decisión del operador) mientras falten Anthropic y DeepSeek.
+
+## Resultado de la prueba real con OpenAI (2026-11-18)
+
+Resultado global PASS, una única ejecución con OpenAI `gpt-6.1-terra`, lanzada desde el hilo principal del coordinador con autorización directa del operador, `NODE_USE_ENV_PROXY=1`, tope CHF 0,10, sin reintentos de pago, `max_tokens` 128 y harness en `f05bc50` (código de `f21b767`). Las 7 comprobaciones dan PASS: write_first_call, read_second_call, tenant_isolation, usage_mapping, openai_usage_details_shape, read_saves_cost y no_paid_retry. Una llamada de red por llamada lógica; 0 reintentos bloqueados. La autorización de esa ejecución está consumida.
+
+| Llamada | Ordinarios | Lectura | Escritura 30m | Salida | cache_status | Coste CHF | Ahorro CHF | requestId |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A-1 (cliente A) | 3 | 0 | 1341 | 5 | WRITE (database) | 0,001432 | -0,000282 | `c646edec-e7d0-44ae-a31e-1346a8c4b3ba` |
+| A-2 (A, mismo prefijo) | 3 | 1341 | 0 | 5 | PARTIAL (database) | 0,000080 | +0,001070 | `fe33f195-3992-4131-9206-4743b304a86f` |
+| B-1 (otro cliente) | 3 | 0 | 1346 | 5 | WRITE (database) | 0,001437 | -0,000283 | `c0e1a76f-16bf-4588-9682-3981cd720e75` |
+
+- Aislamiento entre clientes confirmado: B no leyó la caché de A.
+- Coste acumulado según el harness con las tarifas configuradas: CHF 0,002949 frente al tope de 0,10 (NO es factura; no se comprobó en el panel de OpenAI). Peor caso previo: CHF 0,022326 (USD 0,026572 a 0,8402).
+- Forma real del `usage` (solo tipos): `input_tokens`, `input_tokens_details` {`cached_tokens`, `cache_write_tokens`, `cache_write_tokens_details` {`ttl_30m_tokens`, `ttl_12h_tokens`}}, `output_tokens`, `output_tokens_details` {`reasoning_tokens`}, `total_tokens`; todos números (no se observó null ni ausente). `cache_write_tokens_details` va anidado dentro de `input_tokens_details`, una de las dos ubicaciones que acepta `mapOpenAIUsage`.
+- El único aviso en stderr fue el experimental UNDICI-EHPA de Node (inocuo).
+- El informe completo (JSON y texto) quedó solo en el scratchpad de la sesión, sin claves ni prompt; no se versiona.
+
+Sin verificar con tráfico real: Anthropic (caché explícita con TTL 1h/5m, `cache_control`, errores reales y la heurística `isCacheAttributableError`) y DeepSeek. La clave de Anthropic no puede guardarse como secreto de red (solo variable de entorno) y queda para la ejecución local del operador. Tampoco se observó el caso null frente a ausente en `input_tokens_details` de OpenAI, ni se comprobó el coste real en el panel de OpenAI.

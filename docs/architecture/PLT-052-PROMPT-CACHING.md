@@ -4,6 +4,9 @@
 
 Este documento fija el diseño de PLT-052 (caché de prompts del Model Gateway, con un adaptador Anthropic que nace con caché). Riesgo: **R3** para el cambio del gateway (contratos de coste, aislamiento entre organizaciones, esquema de BD) y **R4** para cualquier llamada de pago real, que requiere una autorización aparte y un tope de gasto (ver punto 8, fase 2). Que el CI pase demostrará el diseño contra proveedores simulados, **no** un ahorro real en producción.
 
+> Nota de verificación (2026-11-18): la caché de OpenAI se verificó con una prueba real (`gpt-6.1-terra`, una ejecución, PASS 7/7; detalle en [PLT-052-CACHE-ACCEPTANCE.md](../PLT-052-CACHE-ACCEPTANCE.md)). Anthropic (caché explícita 1h/5m, `cache_control`, errores reales, `isCacheAttributableError`) y DeepSeek siguen verificados solo con proveedores simulados, sin tráfico real. PLT-052 no está marcada DONE.
+
+
 Este documento es solo documentación: no cambia código, no llama a proveedores y no implica gasto.
 
 ## Objetivo y criterios
