@@ -21,3 +21,5 @@ A failed run remains **FAILED**. Do not mark PLT-009 DONE from CI-only adapters,
 ## Never commit secrets
 
 Do not add API keys, encryption material, database passwords or filled environment files to GitHub. The operator executes this harness locally with credentials; the GitHub CI only verifies code without making paid provider calls.
+
+La aceptación pagada de la caché de PLT-052 (tres llamadas por proveedor, tope CHF 0,10, sin reintentos) tiene su propio harness y variable de autorización distinta (`JEV_LIVE_CACHE_ACCEPTANCE`): ver [PLT-052-CACHE-ACCEPTANCE.md](PLT-052-CACHE-ACCEPTANCE.md). Estas reglas de este documento no se relajan en él.

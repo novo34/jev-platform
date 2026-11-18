@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --exclude '**/dist/**'",
     "seed:dev": "tsx src/seed-dev.ts",
-    "accept:gateway": "tsx src/acceptance-gateway.ts"
+    "accept:gateway": "tsx src/acceptance-gateway.ts",
+    "accept:cache": "tsx src/acceptance-cache.ts"
   },
   "dependencies": {
     "@jev/auth": "0.1.0",
