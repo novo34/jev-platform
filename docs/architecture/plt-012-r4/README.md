@@ -8,10 +8,10 @@ Conserva el script y la evidencia de la ejecución real R4 de PLT-012 (Permanent
 | --- | --- |
 | `run-r4.mjs` | Script de la ejecución R4 manual. Prepara fixtures en la BD local, construye la configuración y ejecuta el `StagingOrchestrator` (6 etapas) con `DokployClient`. |
 | `run-r4-dry-getpass.mjs` | Variante del dry-run con GET reales a Dokploy (solo lectura; ningún POST). |
-| `exec1.log` | Primera ejecución (`--execute`): `deploy` pasó, `verifyDatabase` falló con `compose_missing` (sufijo de `appName`). Resultado `FAILED`. |
-| `exec2.log` | Segunda ejecución (`--execute`) tras la corrección: las 6 etapas pasan. Resultado `READY`. |
 
-Revisión de secretos: los cuatro archivos se revisaron; no contienen claves ni contraseñas reales. La clave de Dokploy en el script es el valor de relleno `proxy-injected`; la BD local usa el rol `jev_runtime` sin contraseña (trust). Los UUID de los logs son fixtures locales.
+Registros de ejecución: `exec1.log` (primera ejecución `--execute`: `deploy` pasó, `verifyDatabase` falló con `compose_missing` por el sufijo de `appName`; resultado `FAILED`) y `exec2.log` (segunda ejecución tras la corrección: las 6 etapas pasan; resultado `READY`) **no están versionados**: `.gitignore` ignora `*.log` y los archivos no se conservaron en el disco de esta sesión. Se generaron en la carpeta temporal original de la ejecución (donde también estaban los scripts) y no hay copia en el repositorio; el resumen de resultados está en [PLT-012-PERMANENT-STAGING.md](../PLT-012-PERMANENT-STAGING.md). Para versionar registros futuros, revisarlos sin secretos y añadir la excepción `!docs/architecture/plt-012-r4/*.log` en `.gitignore`.
+
+Revisión de secretos: se revisaron los dos scripts (no los registros, que no están aquí); no contienen claves ni contraseñas reales. La clave de Dokploy en los scripts es el valor de relleno `proxy-injected`; la BD local usa el rol `jev_runtime` sin contraseña (trust).
 
 ## Cómo se ejecuta
 

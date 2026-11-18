@@ -129,7 +129,8 @@ function makeDryRunFetch(recorded) {
       if ((path === "compose.one" && url.searchParams.get("composeId") !== "dry-run-compose") || (path === "domain.byComposeId" && url.searchParams.get("composeId") !== "dry-run-compose")) {
         const real = await fetch(input, init); // read-only GET of the real existing compose
         const text = await real.text();
-        if (path === "compose.one") { try { const o = JSON.parse(text); state.composeFile ||= o.composeFile ?? ""; state.env ||= o.env ?? ""; state.appName ||= o.appName ?? ""; recorded.realCompose = { composeId: o.composeId, name: o.name, appName: o.appName, composeStatus: o.composeStatus }; } catch {} }
+        if (path === "compose.one") { try { const o = JSON.parse(text); state.composeFile ||= o.composeFile ?? ""; state.env ||= o.env ?? ""; state.appName ||= o.appName ?? ""; recorded.realComposeFile ||= o.composeFile ?? ""; recorded.realEnv ||= o.env ?? ""; recorded.realCompose = { composeId: o.composeId, name: o.name, appName: o.appName, composeStatus: o.composeStatus }; } catch {} }
+        if (path === "domain.byComposeId") { try { recorded.realDomains = JSON.parse(text); } catch {} }
         return new Response(text, { status: real.status, headers: { "content-type": "application/json" } });
       }
       if (path === "compose.one") return json({ composeId: "dry-run-compose", name: state.appName, appName: state.appName, composeStatus: "done", composeFile: state.composeFile, env: state.env });
@@ -189,8 +190,12 @@ try {
         line(`  - ${p.path} ${JSON.stringify(rest)} (composeFile below)`);
       } else line(`  - ${p.path} ${JSON.stringify(p.body)}`);
     }
-    const create = recorded.posts.find((p) => p.path === "compose.create");
-    const file = create?.body.composeFile ?? "";
+    // Last compose written (create/update); for a reused compose with no write, the real composeFile read from Dokploy.
+    const written = recorded.posts.filter((p) => p.path === "compose.create" || p.path === "compose.update").at(-1);
+    const file = written?.body.composeFile ?? recorded.realComposeFile ?? "";
+    const envWrite = recorded.posts.filter((p) => p.path === "compose.saveEnvironment").at(-1);
+    const envText = envWrite?.body.env ?? recorded.realEnv ?? "";
+    const domainOk = (d) => d.host === "demo.staging.nuvurent.com" && d.serviceName === "app" && d.port === 3000 && d.https === true && d.certificateType === "letsencrypt";
     line("\n===== compose that would be sent (secrets are ${VAR} references only) =====");
     line(file.trimEnd());
     line("===== end compose =====");
@@ -201,10 +206,10 @@ try {
       "migrate service uses node src/migrate.js": file.includes('"node src/migrate.js"'),
       "seed service uses node src/seed.js": file.includes('"node src/seed.js"'),
       "app joins dokploy-network": file.includes("networks: [internal, dokploy-network]"),
-      "domain demo.staging.nuvurent.com -> app:3000 https letsencrypt": recorded.posts.some((p) => p.path === "domain.create" && p.body.host === "demo.staging.nuvurent.com" && p.body.serviceName === "app" && p.body.port === 3000 && p.body.https === true && p.body.certificateType === "letsencrypt"),
-      "target environment id": recorded.posts.some((p) => p.path === "compose.create" && p.body.environmentId === SETTINGS.dokployEnvironmentId),
+      "domain demo.staging.nuvurent.com -> app:3000 https letsencrypt": recorded.posts.some((p) => p.path === "domain.create" && domainOk(p.body)) || (Array.isArray(recorded.realDomains) && recorded.realDomains.some(domainOk)),
+      "target environment id": recorded.posts.some((p) => p.path === "compose.create" && p.body.environmentId === SETTINGS.dokployEnvironmentId) || !recorded.posts.some((p) => p.path === "compose.create"),
       "no serverId sent": !recorded.posts.some((p) => "serverId" in p.body),
-      "revision env == sha": recorded.posts.some((p) => p.path === "compose.saveEnvironment" && S.parseEnv(p.body.env).JEV_STAGING_REVISION === REVISION)
+      "revision env == sha": (() => { try { return S.parseEnv(envText).JEV_STAGING_REVISION === REVISION; } catch { return false; } })()
     };
     line("\nvalidations:");
     let bad = 0; for (const [k, v] of Object.entries(checks)) { line(`  [${v ? "PASS" : "FAIL"}] ${k}`); if (!v) bad += 1; }

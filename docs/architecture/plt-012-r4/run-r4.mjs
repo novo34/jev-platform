@@ -126,6 +126,12 @@ function makeDryRunFetch(recorded) {
         recorded.environmentOne = { status: real.status, text };
         return new Response(text, { status: real.status, headers: { "content-type": "application/json" } });
       }
+      if ((path === "compose.one" || path === "domain.byComposeId") && url.searchParams.get("composeId") !== "dry-run-compose") {
+        const real = await fetch(input, init); // read-only GET of the real existing compose
+        const text = await real.text();
+        if (path === "compose.one") { try { const o = JSON.parse(text); state.composeFile ||= o.composeFile ?? ""; state.env ||= o.env ?? ""; state.appName ||= o.appName ?? ""; } catch {} }
+        return new Response(text, { status: real.status, headers: { "content-type": "application/json" } });
+      }
       if (path === "compose.one") return json({ composeId: "dry-run-compose", name: state.appName, appName: state.appName, composeStatus: "done", composeFile: state.composeFile, env: state.env });
       if (path === "domain.byComposeId") return json([]);
       throw new Error(`dry-run: unexpected GET ${path}`);
@@ -133,6 +139,7 @@ function makeDryRunFetch(recorded) {
     const body = JSON.parse(init.body ?? "{}");
     recorded.posts.push({ path, body });
     if (path === "compose.create") { state.composeFile = body.composeFile; state.appName = body.appName; return json({ composeId: "dry-run-compose" }); }
+    if (path === "compose.update") { state.composeFile = body.composeFile; return json({}); }
     if (path === "compose.saveEnvironment") { state.env = body.env; return json({}); }
     return json({});
   };
