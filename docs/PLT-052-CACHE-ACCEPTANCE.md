@@ -64,6 +64,28 @@ Código de salida: 1 si hay un `FAIL` o un error de configuración; 0 si no (con
 
 Solo por el formulario seguro del entorno del operador, guardadas cifradas en la base local con el camino de credenciales por organización (`ProviderCredentialStore`, ver [MODEL_GATEWAY.md](MODEL_GATEWAY.md)). Nunca por chat, nunca en el repositorio, en tickets, en logs ni en archivos `.env` versionados. Tras la prueba, revocar o rotar las claves del entorno local. Solo se registran en PROGRESO.md el resultado saneado, el proveedor y modelo, los tokens y el coste CHF.
 
+## Ejecución en local por el operador
+
+Requisitos:
+
+- Node y las dependencias del repositorio instaladas (`npm ci`).
+- PostgreSQL local aislado (loopback) con las migraciones aplicadas, y `DATABASE_URL` apuntando a él.
+- Las claves de cada proveedor guardadas con `ProviderCredentialStore` en la organización de prueba, con `JEV_SECRET_ENCRYPTION_KEY`.
+- Datos de prueba A y B distintos: organización, proyecto y tarea de A, y otro proyecto y otra tarea de B (ver la tabla de variables).
+
+Comando exacto (el de arriba, con `JEV_MODEL_PRICING_JSON` y el resto de variables ya definidas en el entorno de la sesión):
+
+```
+NODE_ENV=development JEV_LIVE_CACHE_ACCEPTANCE=I_AUTHORIZE_CACHE_PAID_CALLS JEV_LIVE_CACHE_MAX_CHF=0.10 JEV_ACCEPT_CACHE_MAX_OUTPUT_TOKENS=128 npm run accept:cache -w @jev/api
+```
+
+- No se usa `NODE_USE_ENV_PROXY`. Solo hace falta en el entorno cloud, donde el `fetch` de Node debe salir por un proxy; sin esa variable no lo usa y la petición falla con 401 (intento del 2026-11-18). En un equipo local con conexión directa no se define.
+- Tope CHF 0,10 (`JEV_LIVE_CACHE_MAX_CHF`; mayor se rechaza). Fija además un tope en la cuenta de cada proveedor.
+- Se recomienda `JEV_ACCEPT_CACHE_MAX_OUTPUT_TOKENS=128`: con 16 un modelo con razonamiento puede agotar la salida y dar una respuesta sin texto ya pagada.
+- No se reintenta. Si una ejecución falla, no se repite el pago sin que el operador lo decida; se revisa el informe.
+- Interpretación por comprobación: `PASS` cumple lo esperado; `INCONCLUSIVE` no hay datos suficientes (por ejemplo DeepSeek sin lectura, o `cache_status` no disponible) y deja el resultado `INCOMPLETE`, no es un fallo; `FAIL` incumple lo esperado (por ejemplo lectura cruzada entre tenants) y el código de salida es 1; `NOT_RUN` no se ejecutó.
+- No pegues claves en chats ni en issues. Pega solo el informe saneado (proveedor, modelo, tokens y coste CHF), y rota las claves al terminar.
+
 ## Pruebas (sin red ni claves)
 
 `apps/api/src/cache-acceptance.test.ts` (guardas, dry-run con `fetch` envenenado, adaptadores simulados con escritura y lectura (`PASS`), lectura cruzada (`FAIL`), parada por tope, no reintento) y `cache-acceptance.gateway.test.ts` (`ModelGateway` y adaptadores reales con PostgreSQL y una red simulada). La PLT-052 no se da por cerrada hasta ejecutar la prueba pagada y registrar su evidencia.
