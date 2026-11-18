@@ -45,15 +45,15 @@ Verificado en `packages/model-gateway/src/`:
 
 ## Resumen de decisiones
 
-1. Petición por segmentos con orden canónico impuesto por el gateway y un constructor determinista; `prefix_sha256` por nivel.
+1. Petición por segmentos con orden canónico impuesto por el gateway y un constructor determinista; un hash de prefijo por nivel (`prefix_project_sha256` y `prefix_task_sha256`).
 2. Adaptador Anthropic nuevo con `cache_control` explícito; OpenAI y DeepSeek automáticos; modelo de uso normalizado común y capacidad `cacheSupport` declarada por adaptador.
-3. Precios de caché en `JEV_MODEL_PRICING_JSON`; validación previa; `NOT_ESTIMABLE` solo tras la respuesta.
+3. Precios de caché en `JEV_MODEL_PRICING_JSON` (siempre en CHF; el USD es solo referencia); validación previa; `NOT_ESTIMABLE` solo tras la respuesta.
 4. Columnas y vistas de medición (tasa de acierto, ahorro) con aislamiento por organización.
 5. TTL híbrido: 1 h para el bloque estable de proyecto y 5 min para tarea e historial (a medir).
-6. Aislamiento entre organizaciones con un `tenant_namespace` (HMAC) como primer segmento.
+6. Aislamiento entre organizaciones con un `tenant_namespace` (HMAC), parámetro de `buildPrompt` que el constructor antepone al contenido enviado.
 7. Fallo seguro: reintento sin caché; la caché nunca bloquea.
 8. Pruebas en dos fases: simuladas (sin gasto) y aceptación pagada mínima autorizada aparte.
-9. Interruptor de apagado global y por proveedor.
+9. Interruptor de apagado global y por proveedor, por defecto `off` hasta superar la aceptación de la fase 2.
 
 ## Diseño
 
@@ -66,29 +66,49 @@ Verificado en `packages/model-gateway/src/`:
 ```ts
 type SegmentKind = 'system' | 'rules' | 'skills' | 'spec'
   | 'project_context' | 'task_context' | 'history' | 'input';
-type Stability = 'project' | 'task' | 'volatile';
-interface PromptSegment { kind: SegmentKind; id?: string; version?: string; content: string; stability: Stability }
+type Stability = 'project' | 'task' | 'volatile'; // derivada del kind (tabla siguiente); el llamador no la envía
+interface PromptSegment { kind: SegmentKind; id?: string; version?: string; content: string }
+interface ToolDefinition { name: string; description?: string; input_schema: unknown }
 // id obligatorio en 'rules' | 'skills' | 'spec'; opcional en el resto (por defecto `${kind}#${posición}`, p. ej. `history#3`).
-// version opcional, por defecto "1". Se usan para trazabilidad y prefix_sha256; solo ordenan en los kind reordenables.
-// ModelGatewayRequest: prompt?: string; segments?: PromptSegment[]  (exactamente uno de los dos)
+// version opcional, por defecto "1". Se usan para trazabilidad y los hashes de prefijo; solo ordenan en los kind reordenables.
+// ModelGatewayRequest: prompt?: string; segments?: PromptSegment[]  (exactamente uno de los dos); tools?: ToolDefinition[] (solo con segments)
+// buildPrompt(segments, tools, tenant): `tenant` es un parámetro obligatorio, no un segmento.
 ```
 
-Orden canónico: `tenant_namespace` → `system` → `rules` → `skills` → `spec` → `project_context` | `task_context` → `history` → `input`. Niveles de estabilidad: `project` (estable entre tareas del proyecto), `task` (estable durante la tarea) y `volatile`.
+**Orden canónico** (el de los bytes enviados): `tools` → `system` → `rules` → `skills` → `spec` → `project_context` → `task_context` → `history` → `input`. Es el orden `tools → system → messages` de Anthropic, que fija dónde puede ir cada breakpoint. `project_context` y `task_context` son opcionales.
 
-El constructor `buildPrompt(segments, tenant)` garantiza el determinismo:
+**`tenant_namespace`** no es un segmento ni un `kind`: es el HMAC del tenant (punto 6), calculado por el gateway y pasado a `buildPrompt` como parámetro `tenant`. El constructor lo antepone, como primera línea con cabecera fija, al contenido del primer bloque no vacío tras `tools` (normalmente `system`), de modo que es el inicio del texto del prompt y entra en todos los hashes de prefijo. Un `tenant` ausente se rechaza.
+
+**`tools`** no es un segmento: es el campo `tools` de la petición (definiciones de herramientas, p. ej. las de Anthropic). Ocupa la primera posición porque Anthropic cachea en la jerarquía tools → system → messages y cambiar una tool invalida todo lo posterior. Tratamiento: estabilidad `project`; el constructor las ordena por `name` (bytes UTF-8, sin locale) y serializa cada esquema en JSON canónico (claves ordenadas), sin tocar el contenido de las descripciones; `name` duplicado se rechaza. Sin tools, la posición queda vacía. No lleva `tenant_namespace` (son definiciones de la plataforma, idénticas para todos los tenants y sin datos de cliente; una prueba exige que no contengan datos de tenant). No lleva breakpoint propio: el del bloque de proyecto las cubre.
+
+**Estabilidad por `kind` y hashes de prefijo.** La estabilidad la deriva el constructor del `kind`; el llamador no la elige:
+
+| Posición / kind | Estabilidad | Entra en `prefix_project_sha256` | Entra en `prefix_task_sha256` |
+| --- | --- | --- | --- |
+| `tenant_namespace` (parámetro) | project | sí | sí |
+| `tools` (campo) | project | sí | sí |
+| `system`, `rules`, `skills`, `spec` | project | sí | sí |
+| `project_context` | project | sí | sí |
+| `task_context` | task | no | sí |
+| `history` | volatile | no | no |
+| `input` | volatile | no | no |
+
+`prefix_project_sha256` = SHA-256 de los bytes exactos del bloque `tenant_namespace` + `tools` + `system` + `rules` + `skills` + `spec` + `project_context`. `prefix_task_sha256` = SHA-256 de los bytes del bloque de proyecto seguidos de `task_context` (si no hay `task_context`, ambos coinciden). `history` e `input` no tienen hash: cambian en cada llamada por diseño. Cada hash es su nivel de breakpoint de la caché (punto 2).
+
+El constructor `buildPrompt(segments, tools, tenant)` garantiza el determinismo:
 
 * `content` se conserva literalmente, byte a byte: el constructor no recorta espacios finales ni normaliza saltos de línea (dos espacios al final de una línea en Markdown y CRLF pueden tener significado). La normalización solo se aplica a la estructura que añade el constructor: separadores, cabeceras de segmento y serialización JSON canónica de metadatos y tools, con las claves ordenadas. El determinismo viene de un orden y un ensamblado deterministas, no de reescribir el contenido;
 * orden entre `kind`: siempre el canónico, sin cambios;
 * orden dentro de un `kind`: solo los conjuntos reordenables (`rules`, `skills` y `spec`) se ordenan por `id` y luego `version`, comparando por bytes UTF-8 y sin depender del locale. `id` es obligatorio en ellos y único dentro de su `kind` (un id duplicado o ausente se rechaza con error). `system`, `project_context`, `task_context`, `history` e `input` conservan el orden en que los envía el llamador. En particular `history` conserva estrictamente la secuencia cronológica y el gateway nunca la reordena: ordenar por bytes alteraría el orden de `msg-2` y `msg-10`;
-* `id` y `version` en los `kind` no reordenables: `id` es opcional y, si falta, vale el nombre del `kind` más su posición (`history#3`); `version` es opcional y vale `"1"` por defecto. Se usan solo para trazabilidad y `prefix_sha256`, nunca para ordenar, y no se exige unicidad de `id` en ellos;
-* el cambio de versión que justifica un cambio de `prefix_sha256` se detecta comparando el par `id`@`version` de cada segmento con el de la llamada anterior de la misma tarea;
-* prohibición de `Date`, UUID aleatorios, timestamps o IDs de request en segmentos estables: si se detecta un patrón de fecha o UUID en un segmento `project` o `task`, se emite un aviso y se registra (no bloquea, ver punto 7);
+* `id` y `version` en los `kind` no reordenables: `id` es opcional y, si falta, vale el nombre del `kind` más su posición (`history#3`); `version` es opcional y vale `"1"` por defecto. Se usan solo para trazabilidad y los hashes de prefijo, nunca para ordenar, y no se exige unicidad de `id` en ellos;
+* el cambio de versión que justifica un cambio de hash de prefijo se detecta comparando el par `id`@`version` de cada segmento con el de la llamada anterior de la misma tarea;
+* prohibición de `Date`, UUID aleatorios, timestamps o IDs de request en segmentos estables: si se detecta un patrón de fecha o UUID en un segmento de estabilidad `project` o `task` o en `tools`, se emite un aviso y se registra (no bloquea, ver punto 7);
 * fechas e IDs de la tarea solo en `task_context` o `input`, al final;
-* `prefix_sha256` por nivel (proyecto y tarea) calculado sobre los bytes exactos enviados y registrado en cada llamada. Si cambia dentro de la misma tarea sin un cambio de versión declarado, se emite una alerta de prefijo inestable.
+* `prefix_project_sha256` y `prefix_task_sha256` (tabla anterior) calculados sobre los bytes exactos enviados y registrados en cada llamada. Si cualquiera cambia dentro de la misma tarea sin un cambio de versión declarado (o sin un cambio de `tools`), se emite una alerta de prefijo inestable.
 
-En Anthropic la caché sigue la jerarquía **tools → system → messages**: cambiar las definiciones de tools invalida toda la caché. Las tools deben ir en orden canónico y estable (ordenadas por nombre, esquemas serializados canónicamente).
+En Anthropic la caché sigue la jerarquía **tools → system → messages**: cambiar las definiciones de tools invalida toda la caché; por eso `tools` va primero y ordenado por nombre con esquemas canónicos (ver arriba).
 
-**Pruebas.** Orden y determinismo byte a byte (mismo contenido, distinto orden de entrada → mismos bytes); detección de fecha/UUID en segmentos estables; alerta al cambiar `prefix_sha256` dentro de una tarea; compatibilidad de `prompt` con el llamador actual; orden de `rules`, `skills` y `spec` por `id` y `version` en bytes UTF-8 independiente del locale (mismo contenido, distinto orden de entrada → mismos bytes solo en estos conjuntos); varios mensajes de `history` con ids no cronológicos (`msg-10` antes que `msg-2`) que se conservan en el orden enviado, igual que `system`, `project_context`, `task_context` e `input`; `id` por defecto `history#3` y `version` `"1"` en los `kind` no reordenables, sin influir en el orden; rechazo de `id` duplicado dentro de un `kind` reordenable y de `id` ausente en `rules`, `skills` y `spec`; detección de cambio de versión por el par `id`@`version`; `content` con espacios finales significativos y CRLF que se conserva literalmente y prefijo idéntico byte a byte entre dos ejecuciones.
+**Pruebas.** Orden y determinismo byte a byte (mismo contenido, distinto orden de entrada → mismos bytes); detección de fecha/UUID en segmentos estables y en `tools`; alerta al cambiar `prefix_project_sha256` o `prefix_task_sha256` dentro de una tarea; `tools` en orden por `name` y JSON canónico, `name` duplicado rechazado, mismas tools en distinto orden de entrada → mismos bytes; tabla kind → estabilidad → hash (qué segmentos entran en cada hash, `history` e `input` en ninguno); `tenant_namespace` como parámetro (ausente → rechazo, no aparece como segmento) y primer texto del prompt; compatibilidad de `prompt` con el llamador actual; orden de `rules`, `skills` y `spec` por `id` y `version` en bytes UTF-8 independiente del locale (mismo contenido, distinto orden de entrada → mismos bytes solo en estos conjuntos); varios mensajes de `history` con ids no cronológicos (`msg-10` antes que `msg-2`) que se conservan en el orden enviado, igual que `system`, `project_context`, `task_context` e `input`; `id` por defecto `history#3` y `version` `"1"` en los `kind` no reordenables, sin influir en el orden; rechazo de `id` duplicado dentro de un `kind` reordenable y de `id` ausente en `rules`, `skills` y `spec`; detección de cambio de versión por el par `id`@`version`; `content` con espacios finales significativos y CRLF que se conserva literalmente y prefijo idéntico byte a byte entre dos ejecuciones.
 
 ### 2. Todos los proveedores
 
@@ -106,10 +126,11 @@ cacheSupport: {
 **Anthropic** (adaptador nuevo sobre la Messages API; `adapters.ts` o `adapter-anthropic.ts`):
 
 * `cache_control` explícito: `{ type: 'ephemeral' }` y `ttl` según el punto 5.
-* Máximo 4 breakpoints. Colocación: al final del bloque estable de proyecto (system); al final de `task_context`; y en el último mensaje del historial (o el `cache_control` automático de nivel superior). Los de 1 h van siempre antes que los de 5 min, como exige la documentación («cache entries with longer TTL must appear before shorter TTLs»).
+* **Un único modo: breakpoints explícitos por bloque.** El adaptador nunca usa el `cache_control` automático de nivel superior de la petición. Máximo 4 breakpoints; se usan hasta 3: (1) al final del bloque de proyecto (último bloque de `system`, que cubre `tools`, `tenant_namespace`, reglas, skills, spec y `project_context`), TTL de proyecto; (2) al final de `task_context`, TTL de tarea (se omite si no hay `task_context`); (3) en el último bloque del último mensaje del historial, TTL de tarea. El cuarto queda libre. Los de 1 h van siempre antes que los de 5 min, como exige la documentación («cache entries with longer TTL must appear before shorter TTLs»).
 * Lookback de 20 bloques: la documentación indica que si un historial crece 20 o más bloques por encima de la última escritura, la lectura no acierta; el breakpoint de `task_context` cubre ese caso.
-* Mínimo cacheable por modelo (tabla de la documentación): 512 tokens para Claude Opus 5.5, Sonnet 5.5 y Haiku 5.5 (y otros 5.x); 1.024 para Sonnet 5, Sonnet 4.6/4.5 y Opus 4.8; 2.048 para Opus 4.7; 4.096 para Opus 4.6/4.5 y Haiku 4.5. Por debajo del mínimo no se marca y queda `cache_status=BELOW_MINIMUM` (la API no devuelve error; con ambos contadores en 0 no se cachea).
-* Hay un dato de la documentación que condiciona la implementación: un `cache_control` automático de nivel superior con un TTL distinto del de un `cache_control` explícito en el último bloque devuelve 400. El adaptador usará breakpoints explícitos y no mezclará ambos modos.
+* Mínimo cacheable por modelo (tabla de la documentación): 512 tokens para Claude Opus 5.5, Sonnet 5.5 y Haiku 5.5 (y otros 5.x); 1.024 para Sonnet 5, Sonnet 4.6/4.5 y Opus 4.8; 2.048 para Opus 4.7; 4.096 para Opus 4.6/4.5 y Haiku 4.5. Por debajo del mínimo la API no devuelve error: simplemente no cachea y ambos contadores (`cache_creation_input_tokens` y `cache_read_input_tokens`) llegan a 0.
+* **`BELOW_MINIMUM` se determina después de la respuesta**: con la caché activa y breakpoints enviados, si ambos contadores son 0 y `totalInputTokens` es menor que el mínimo del modelo, el estado es `BELOW_MINIMUM`; si es igual o mayor, es `MISS` con `cache_reason` explicativo. Antes de llamar solo puede haber una estimación del tamaño del prefijo, meramente orientativa (para un aviso en el registro): nunca decide ni bloquea, y se envía el `cache_control` igualmente.
+* Motivo de usar solo breakpoints explícitos: la documentación indica que un `cache_control` automático de nivel superior con un TTL distinto del de un `cache_control` explícito en el último bloque devuelve 400. Al no usar nunca el automático, esa combinación no puede darse.
 
 **OpenAI** (Responses API):
 
@@ -143,7 +164,7 @@ cacheSupport: {
 | `outputTokens` | `output_tokens` | `output_tokens` | `completion_tokens` |
 | `totalInputTokens` | `input + read + creation` (fórmula de la documentación) | `input_tokens` | `hit + miss` |
 
-En OpenAI anterior a 5.6 (p. ej. `gpt-4.1-nano`) solo llega `cached_tokens`; `cache_write_tokens` se toma como 0. Una respuesta cuyos campos de caché sean inconsistentes (p. ej. `cached + write > input_tokens`) se rechaza como `PROVIDER_RESPONSE_INVALID`, igual que hoy con un `usage` inválido.
+En OpenAI anterior a 5.6 (p. ej. `gpt-4.1`) solo llega `cached_tokens`; `cache_write_tokens` se toma como 0. Una respuesta cuyos campos de caché sean inconsistentes (p. ej. `cached + write > input_tokens`) se rechaza como `PROVIDER_RESPONSE_INVALID`, igual que hoy con un `usage` inválido.
 
 **Pruebas.** Mapeo de usage de los 3 proveedores con respuestas simuladas con la forma real de cada uno; fórmula de ordinarios de OpenAI; breakpoints de Anthropic (máximo 4, 1 h antes que 5 min, mínimo por modelo, `BELOW_MINIMUM`); `cacheSupport` declarado por adaptador.
 
@@ -154,7 +175,9 @@ En OpenAI anterior a 5.6 (p. ej. `gpt-4.1-nano`) solo llega `cached_tokens`; `ca
 * `cacheReadPerMillionChf`;
 * `cacheWrite5mPerMillionChf` y `cacheWrite1hPerMillionChf` (Anthropic);
 * `cacheWrite30mPerMillionChf` y `cacheWrite12hPerMillionChf` (OpenAI 5.6+);
-* `cacheWriteBilledAs: 'input'` para los modelos sin cargo de escritura aparte, declarado de forma explícita (nunca se asume).
+* `cacheWriteBilledAs: 'input'` para los modelos sin cargo de escritura aparte, declarado de forma explícita (nunca se asume). Aplica a **DeepSeek** (siempre: no hay escritura facturada aparte) y a los modelos de **OpenAI anteriores a 5.6** que solo informan `cached_tokens` y no publican tarifa de escritura. No aplica a Anthropic ni a OpenAI 5.6+, donde la escritura tiene tarifa propia y es obligatoria.
+
+**Unidades y tipo de cambio.** Todas las tarifas de `JEV_MODEL_PRICING_JSON` están en **CHF por millón de tokens**; el gateway no convierte monedas ni lee ninguna variable de tipo de cambio. El USD de las tablas de este documento es **solo referencia** (los proveedores publican en USD). Para convertir se usa el tipo de cambio de referencia anotado aquí: **1 USD = 0,8402 CHF** (BCE, 2026-11-17: EUR/USD 1,0989 y EUR/CHF 0,9233; consultado el 2026-11-18). Es una nota con fecha, no una variable: el operador la actualiza en este documento y, al configurar el JSON, anota en su registro de despliegue el tipo y la fecha usados. Los topes en CHF (fase 2) se comparan con las tarifas ya en CHF.
 
 `validRate` en `pricing.ts` acepta los campos nuevos con las mismas cotas (finitos, no negativos, tope CHF 1.000.000 por millón y por categoría).
 
@@ -181,6 +204,7 @@ En OpenAI anterior a 5.6 (p. ej. `gpt-4.1-nano`) solo llega `cached_tokens`; `ca
 | --- | --- | --- | --- | --- | --- | --- |
 | gpt-6.2-sol (Standard) | 2 | 2,50 | 5 | 0,10 | 10 | OpenAI pricing |
 | gpt-6.1-sol (Standard) | 2 | 2,50 | 5 | 0,10 | 10 | OpenAI pricing |
+| gpt-6.1-terra (Standard, contexto corto) — candidato para la aceptación | 1 | 1,25 | 2,50 | 0,05 | 5 | OpenAI pricing (consultada con `curl` a `https://developers.openai.com/api/docs/pricing.md` el 2026-11-18) |
 
 | Modelo (DeepSeek) | Lectura (hit) | Entrada (miss) | Salida |
 | --- | --- | --- | --- |
@@ -189,9 +213,9 @@ En OpenAI anterior a 5.6 (p. ej. `gpt-4.1-nano`) solo llega `cached_tokens`; `ca
 
 Notas sobre la tabla:
 
-* Haiku 5.5 tiene precio por longitud de prompt: un prompt de más de 100.000 tokens (incluidas lecturas y escrituras de caché) paga la segunda tarifa. El catálogo por modelo de JEV no distingue tramos; se propone configurar la tarifa del tramo ≤ 100.000 y que el gateway limite o rechace prompts mayores con ese modelo, o ampliar el catálogo con tramos (pregunta abierta).
-* Las lecturas de Sonnet 5.5 y Opus 5.5 valen 0,05× la entrada (no 0,1×); otros modelos usan 0,1×. Las escrituras valen 1,25× (5 min) y 2× (1 h) la entrada en Anthropic, y 1,25× (30 min) y 2,5× (12 h) en OpenAI 5.6+. Estos precios aplican a la tarifa estándar; los modificadores (Batch, `inference_geo: us` ×1,1, fast mode) quedan fuera de alcance.
-* **No se encontró el precio de caché de `gpt-4.1-nano`** en la página de precios consultada (tampoco la fila del modelo). El modelo usado en la aceptación de PLT-009 es ese; el operador debe configurar su tarifa de lectura o la llamada queda bloqueada con `PRICING_REQUIRED` (o se usa otro modelo de OpenAI con precio publicado).
+* Haiku 5.5 tiene precio por longitud de prompt: un prompt de más de 100.000 tokens (incluidas lecturas y escrituras de caché) paga la segunda tarifa. **DECIDIDA 2026-11-18:** se configura solo la tarifa del tramo ≤ 100.000 tokens y el gateway rechaza (`BLOCKED`, motivo `PROMPT_TOO_LARGE_FOR_TIER`, antes de llamar) los prompts mayores con ese modelo, con una estimación previa conservadora del tamaño; el catálogo no se amplía con tramos. Si tras la respuesta `totalInputTokens` supera 100.000, el coste queda `NOT_ESTIMABLE` con motivo y alerta (la estimación previa falló). Sonnet 5.5 es el modelo de Anthropic por defecto (DECIDIDA 2026-11-18).
+* Las lecturas valen 0,05× la entrada en Sonnet 5.5, Opus 5.5 (Anthropic) y `gpt-6.2-sol`, `gpt-6.1-sol` y `gpt-6.1-terra` (OpenAI); en Haiku 5.5, `gpt-6-luna` y otros modelos usan 0,1×. Las escrituras valen 1,25× (5 min) y 2× (1 h) la entrada en Anthropic, y 1,25× (30 min) y 2,5× (12 h) en OpenAI 5.6+. Estos precios aplican a la tarifa estándar; los modificadores (Batch, `inference_geo: us` ×1,1, fast mode) quedan fuera de alcance.
+* **`gpt-4.1-nano` queda descartado (DECIDIDA 2026-11-18).** No se encontró su fila ni su precio de caché en la página de precios (aunque PLT-009 lo usó en su aceptación). Para la aceptación de PLT-052 se propone **`gpt-6.1-terra`**, modelo intermedio de la línea 6.x, ni caro ni de gama mínima. Su tarifa Standard de contexto corto está publicada en la fuente oficial citada (consulta del 2026-11-18): entrada $1,00, salida $5,00, entrada cacheada $0,05, escritura 30 m $1,25 y escritura 12 h $2,50 por millón. Es una propuesta pendiente de confirmación del operador y debe revisarse otra vez antes de implementar. Como en Haiku 5.5, la página publica además una tarifa de contexto largo (entrada $2,00, cacheada $0,10); se configura la de contexto corto y la aceptación usa prefijos de ~1.100 tokens. Alternativa más barata publicada: `gpt-6-luna` (entrada $0,10, salida $0,50, cacheada $0,01, escritura 30 m $0,125).
 
 **Pruebas.** Falta de cada tarifa aplicable → `BLOCKED` con `PRICING_REQUIRED` y sin fetch; OpenAI/DeepSeek bloquean sin tarifa de lectura incluso con la caché desactivada; Anthropic con caché desactivada no exige tarifas de caché; `NOT_ESTIMABLE` solo tras la respuesta, con motivo y alerta; `cacheWriteBilledAs` explícito; cotas de `validRate`.
 
@@ -200,7 +224,7 @@ Notas sobre la tabla:
 **Migración nueva** (siguiente número libre, hoy `0029`; se describe, el SQL definitivo se escribe en la implementación):
 
 * Amplía el `CHECK` de `provider` de `provider_credentials` y `model_provider_calls` con `anthropic`.
-* Columnas nuevas en `model_provider_calls`: `cache_read_tokens`, `cache_write_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens` (enteros no negativos, por defecto 0; los tokens 30 m/12 h de OpenAI van en `usage`); `cache_status` con `CHECK` en `HIT | PARTIAL | MISS | WRITE | DISABLED | BELOW_MINIMUM | ERROR | UNSUPPORTED`; `cache_reason`; `prefix_sha256`; `estimated_cost_without_cache_chf` y `estimated_cache_savings_chf` (`NUMERIC(14,6)`, esta última puede ser negativa en una escritura).
+* Columnas nuevas en `model_provider_calls`: `cache_read_tokens`, `cache_write_tokens`, `cache_write_5m_tokens`, `cache_write_1h_tokens` (enteros no negativos, por defecto 0; los tokens 30 m/12 h de OpenAI van en `usage`); `cache_status` con `CHECK` en `HIT | PARTIAL | MISS | WRITE | DISABLED | BELOW_MINIMUM | ERROR | UNSUPPORTED`; `cache_reason`; **una columna por nivel de hash**, `prefix_project_sha256` y `prefix_task_sha256` (texto hexadecimal de 64 caracteres, nulos permitidos: un fallo de medición no bloquea; `prefix_task_sha256` es igual al de proyecto si no hay `task_context`); no existe una columna `prefix_sha256` única; `estimated_cost_without_cache_chf` y `estimated_cache_savings_chf` (`NUMERIC(14,6)`, esta última puede ser negativa en una escritura).
 * `cost_events.usage` incluye los campos nuevos del modelo de uso normalizado (es JSONB: no requiere columnas).
 * Grants: `jev_runtime` solo recibe `INSERT` hoy; los `GRANT` de `provision-runtime-role.sql` se ajustan para que las nuevas columnas queden cubiertas por el `INSERT` y, si el worker o la API leen las vistas, un `SELECT` limitado a las vistas (no a las tablas completas).
 
@@ -252,6 +276,15 @@ Gana 5 min (por $0,030).
 
 Gana 1 h. Dato relevante que no estaba en el planteamiento: con 10 min de separación la caché de 5 min **cuesta más que no usar caché** ($0,30 frente a $0,24), porque cada primera llamada reescribe con recargo y nunca lee. Además, en régimen continuo la caché de 1 h se renueva con cada lectura, así que los $0,09 son el coste de la primera hora y las siguientes cuestan 6 × 0,002 = $0,012.
 
+**Escenario híbrido (1 h proyecto + 5 min tarea/historial), mismos supuestos que A y B más uno nuevo.** El bloque de proyecto es el prefijo de 20.000 tokens de A y B. Nuevo supuesto: `task_context` y el historial estable suman 4.000 tokens, constantes (simplificación). Precios por llamada de ese tramo: sin caché $0,008; escritura 5 min $0,010; escritura 1 h $0,016; lectura $0,0004. Se comparan las cuatro opciones sobre los mismos 24.000 tokens estables:
+
+| Escenario | Sin caché | Todo 5 min | Todo 1 h | **Híbrido** (proyecto 1 h + tarea 5 min) |
+| --- | --- | --- | --- | --- |
+| A (20 turnos en una tarea) | 20 × 0,048 = $0,960 | (0,050 + 19 × 0,002) + (0,010 + 19 × 0,0004) = $0,1056 | (0,080 + 19 × 0,002) + (0,016 + 19 × 0,0004) = $0,1416 | (0,080 + 19 × 0,002) + (0,010 + 19 × 0,0004) = **$0,1356** (−85,9 %) |
+| B (6 tareas en 1 h, primera llamada de cada una) | 6 × 0,048 = $0,288 | 6 × (0,050 + 0,010) = $0,360 | (0,080 + 5 × 0,002) + 6 × 0,016 = $0,186 | (0,080 + 5 × 0,002) + 6 × 0,010 = **$0,150** (−47,9 %) |
+
+En A el híbrido cuesta $0,030 más que usar 5 min en todo (el recargo de 1 h del bloque de proyecto) y $0,006 menos que 1 h en todo; en B es la mejor opción: $0,036 menos que 1 h en todo y $0,210 menos que 5 min en todo, que vuelve a costar más que no cachear. En B el contexto de tarea se reescribe en cada tarea (no se reutiliza entre tareas) y solo se cuenta la primera llamada, por lo que el recargo no llega a amortizarse; en la práctica las llamadas posteriores de la tarea lo leen (como en A).
+
 **Umbral (corregido).** Con las cifras de Sonnet 5.5 la escritura de 1 h cuesta **0,75×** la entrada más que la de 5 min (2× − 1,25×; en el ejemplo: 0,080 − 0,050 = 0,030 = 0,75 × 0,040), no 0,6×. Cada reescritura de 5 min evitada ahorra **1,20×** la entrada (1,25× − 0,05×; en el ejemplo: 0,048 = 1,2 × 0,040), no 1,15×: el 1,15× corresponde a modelos con lectura al 0,1×, no a Sonnet 5.5 ni Opus 5.5 (0,05×). Por tanto la 1 h compensa si, de media, hay al menos 0,75 / 1,20 = **0,625** reutilizaciones por escritura que ocurren después de 5 min y antes de 60 sin aciertos intermedios; «al menos una» es una condición suficiente y algo conservadora. Para comparar con no usar caché, la documentación indica que 1 h ya ahorra tras dos lecturas y 5 min tras una.
 
 **Decisión recomendada (híbrida):**
@@ -267,7 +300,7 @@ La documentación lo permite porque los breakpoints de 1 h van antes que los de 
 * OpenAI 5.6+: 30 min por defecto. 12 h (escritura 2,5×) no se usa salvo que se justifique con mediciones, comparando su recargo con el coste de reescribir al caducar los 30 min.
 * DeepSeek: sin control de TTL.
 
-**Pruebas.** Un test de aritmética que reproduce los escenarios A y B (y el umbral) con los precios de referencia; selección de TTL por variable; orden 1 h antes que 5 min.
+**Pruebas.** Un test de aritmética que reproduce los escenarios A y B, el escenario híbrido (las cifras de la tabla anterior, con los 4.000 tokens de tarea/historial) y el umbral con los precios de referencia; selección de TTL por variable; orden 1 h antes que 5 min.
 
 ### 6. Aislamiento entre organizaciones y clientes
 
@@ -276,13 +309,13 @@ La documentación lo permite porque los breakpoints de 1 h van antes que los de 
 
 Medidas:
 
-* Un segmento `tenant_namespace`, el primero, estable por organización+proyecto: un HMAC-SHA256 con un secreto de JEV (nunca el ID en claro; el secreto sale de la configuración externa, como `JEV_SECRET_ENCRYPTION_KEY`, sin reutilizarla). Así los prefijos de distintos tenants nunca coinciden. Va primero y es estable, de modo que no rompe la caché.
+* Un `tenant_namespace`, estable por organización+proyecto: un HMAC-SHA256 con un secreto de JEV (nunca el ID en claro; el secreto sale de la configuración externa, como `JEV_SECRET_ENCRYPTION_KEY`, sin reutilizarla). No es un segmento: es el parámetro `tenant` de `buildPrompt` (punto 1), que el constructor antepone como primer texto del prompt tras las `tools` (que son iguales para todos y sin datos de cliente). Así los prefijos de distintos tenants nunca coinciden a partir de ahí. Es estable, de modo que no rompe la caché.
 * `prompt_cache_key` de OpenAI = el mismo hash.
 * Prohibido reutilizar un prefijo entre organizaciones: el constructor no admite un `tenant` ausente.
 * Recomendación al operador: una credencial o workspace de Anthropic por cliente cuando sea posible.
-* DeepSeek: aislamiento no documentado; el `tenant_namespace` lo mitiga, pero no se puede demostrar. Se marca como **riesgo aceptado o pendiente** para decisión del operador (ver preguntas abiertas). DeepSeek no tiene `prompt_cache_key`.
+* DeepSeek: aislamiento no documentado; el `tenant_namespace` lo mitiga, pero no se puede demostrar. **RIESGO ACEPTADO (DECIDIDA 2026-11-18):** el aislamiento en DeepSeek depende solo del `tenant_namespace`; DeepSeek no tiene `prompt_cache_key` y no se añade ninguna otra medida.
 
-**Pruebas.** Dos organizaciones con contenido idéntico producen `tenant_namespace`, prefijos y `prefix_sha256` distintos; el mismo tenant produce siempre el mismo; el ID de la organización no aparece en claro en el prefijo; `prompt_cache_key` igual al hash.
+**Pruebas.** Dos organizaciones con contenido idéntico producen `tenant_namespace`, prefijos y `prefix_project_sha256` / `prefix_task_sha256` distintos; el mismo tenant produce siempre el mismo; el ID de la organización no aparece en claro en el prefijo; `prompt_cache_key` igual al hash.
 
 ### 7. Fallo seguro (REQ-CACHE-006)
 
@@ -291,7 +324,7 @@ Medidas:
 * Nunca se bloquea el trabajo por la caché. La única excepción son los precios ausentes del punto 3, que son una política de gasto y no un fallo de caché.
 * Una caché por debajo del mínimo (`BELOW_MINIMUM`), o sin acierto (`MISS`), no es un error.
 * Si el constructor de prompt detecta inestabilidad, avisa pero no bloquea.
-* Un fallo de la medición (p. ej. no poder calcular `prefix_sha256`) tampoco bloquea la llamada.
+* Un fallo de la medición (p. ej. no poder calcular `prefix_project_sha256`) tampoco bloquea la llamada.
 
 **Pruebas.** 400 por caché → reintento sin caché y éxito, con `cache_status=ERROR`; un 400 ajeno a la caché no se reintenta como tal; el reintento respeta el tope de intentos y el circuit breaker; `BELOW_MINIMUM` y `MISS` no son errores; inestabilidad detectada → aviso sin bloqueo.
 
@@ -321,15 +354,17 @@ Medidas:
 | --- | --- | --- |
 | Haiku 5.5 | prefijo ≈ 600 tokens (mínimo 512), 50 de entrada, 16 de salida; escritura 5 min + lectura | ≈ $0,0001 |
 | deepseek-flash (tarifa punta) | prefijo ≈ 650 tokens, 16 de salida; 2 llamadas más una tercera por si el acierto tarda | ≈ $0,0003 |
-| OpenAI configurado | si fuera `gpt-6.2-sol`: prefijo ≈ 1.100 tokens (mínimo 1.024), escritura 30 min + lectura; con `gpt-4.1-nano` no se puede estimar (sin precio de caché) | ≈ $0,0034 |
-| **Total** | | **≈ $0,004** |
+| OpenAI (`gpt-6.1-terra`, candidato) | prefijo ≈ 1.100 tokens (mínimo 1.024), 50 de entrada, 16 de salida; escritura 30 min + lectura | ≈ $0,0017 |
+| **Total** | | **≈ $0,002** |
 
-* Se propone un tope total de **CHF 0,10** que el operador autorizará: unas 25 veces la estimación, para absorber errores de recuento de tokens o un modelo de OpenAI más caro sin permitir un gasto relevante. El tope se compara con la estimación calculada con los precios en CHF configurados.
+**OpenAI entra en la prueba solo si el modelo elegido tiene configuradas sus tarifas de caché** (lectura y, en 5.6+, escritura del TTL usado). Sin ellas no se estima, no se puede validar el tope y OpenAI se excluye de la fase 2 (y la llamada ya quedaría `BLOCKED` con `PRICING_REQUIRED`); no se sustituye por la tarifa de entrada.
+
+* Se propone un tope total de **CHF 0,10** que el operador autorizará: unas 50 veces la estimación (≈ $0,002 son ≈ CHF 0,002 al tipo de referencia del punto 3), para absorber errores de recuento de tokens o un modelo de OpenAI más caro sin permitir un gasto relevante. El tope se compara con la estimación calculada con los precios en CHF configurados.
 * Aceptación de cada proveedor: la segunda llamada debe registrar `cacheReadTokens > 0` (Anthropic, OpenAI) con el coste y el ahorro coherentes. En DeepSeek la caché es de mejor esfuerzo y tarda segundos en construirse: si no hay acierto, se registra `MISS` y se reintenta una vez tras una pausa dentro del tope, sin considerarlo un fallo del gateway.
 
 ### 9. Desactivable
 
-* `JEV_PROMPT_CACHE=on|off` global (por defecto `on` cuando esté implementado).
+* `JEV_PROMPT_CACHE=on|off` global, **por defecto `off`**. Con `off` ningún adaptador marca caché, de modo que registrar `anthropic` no puede causar llamadas con `cache_control` hasta que el operador lo active tras la aceptación de la fase 2 (cambiar el valor por defecto a `on` sería una decisión posterior).
 * `JEV_PROMPT_CACHE_PROVIDERS` para una lista por proveedor (p. ej. `anthropic,openai`).
 * Futuro: ajuste por organización.
 * Con `off`:
@@ -342,33 +377,36 @@ Medidas:
 
 ## Riesgos y preguntas abiertas para el operador
 
-1. **Precio de caché de `gpt-4.1-nano` no encontrado** en la documentación consultada. Hay que configurarlo, usar otro modelo de OpenAI con precio publicado, o aceptar que la llamada quede bloqueada.
-2. **DeepSeek sin aislamiento de caché documentado.** El `tenant_namespace` lo mitiga; ¿riesgo aceptado, o no usar DeepSeek con contenido de varios clientes en una misma cuenta?
-3. **Frecuencia real de llamadas desconocida** (aún no hay agentes): los escenarios de TTL son supuestos y la decisión híbrida es provisional hasta medir.
-4. **Modelo de Anthropic por defecto.** Los precios de referencia sugieren Sonnet 5.5 como equilibrio y Haiku 5.5 para pruebas baratas, pero JEV aún no ha decidido qué modelo usa cada rol. ¿Cuál se configura primero?
-5. **`prompt_cache_key` en DeepSeek:** no existe; ¿se acepta que el aislamiento dependa solo del `tenant_namespace`?
-6. **Haiku 5.5 con precio por tramos** (≤ o > 100.000 tokens de prompt) que el catálogo actual no expresa: ¿se amplía el catálogo o se limita el tamaño del prompt?
-7. **Impacto en PLT-017** (guard de presupuesto): el guard deberá usar la estimación con la tarifa de caché; una escritura cuesta más que la entrada. Se recomienda que el guard reciba el coste estimado máximo previo a la llamada (peor caso: todo escrito a la tarifa de 1 h).
-8. **Secreto del `tenant_namespace`:** ¿variable nueva (`JEV_TENANT_NAMESPACE_SECRET`) o derivación de la clave existente? Se propone una variable nueva, sin reutilizar la de cifrado de credenciales.
-9. **Estimación con tarifa punta de DeepSeek:** sobrestima en horas valle; ¿se acepta?
+Decisiones tomadas por el operador el 2026-11-18 (el documento sigue en «DISEÑO — pendiente de aprobación»; estas decisiones no lo aprueban):
+
+1. **`gpt-4.1-nano` descartado — DECIDIDA 2026-11-18.** Se usa otro modelo de OpenAI ni caro ni malo, con precio de caché publicado. Propuesta: `gpt-6.1-terra` (tarifa verificada en `https://developers.openai.com/api/docs/pricing.md`, consulta del 2026-11-18; ver punto 3). Confirmación del modelo concreto y nueva consulta de precios antes de implementar: pendientes.
+2. **DeepSeek sin aislamiento de caché documentado y sin `prompt_cache_key` — DECIDIDA 2026-11-18: riesgo aceptado.** El aislamiento depende solo del `tenant_namespace`.
+3. **Modelo de Anthropic por defecto — DECIDIDA 2026-11-18:** Sonnet 5.5 por defecto; Haiku 5.5 con la tarifa del tramo ≤ 100.000 tokens de prompt y rechazo (`BLOCKED`) de prompts mayores con ese modelo; sin ampliar el catálogo.
+
+Preguntas que siguen **abiertas** (sin decidir):
+
+4. **Frecuencia real de llamadas desconocida** (aún no hay agentes): los escenarios de TTL (A, B e híbrido) son supuestos y la decisión híbrida es provisional hasta medir.
+5. **Impacto en PLT-017** (guard de presupuesto): el guard deberá usar la estimación con la tarifa de caché; una escritura cuesta más que la entrada. Se recomienda que el guard reciba el coste estimado máximo previo a la llamada (peor caso: todo escrito a la tarifa de 1 h).
+6. **Secreto del `tenant_namespace`:** ¿variable nueva (`JEV_TENANT_NAMESPACE_SECRET`) o derivación de la clave existente? Se propone una variable nueva, sin reutilizar la de cifrado de credenciales.
+7. **Estimación con tarifa punta de DeepSeek:** sobrestima en horas valle; ¿se acepta?
 
 ## Plan de implementación por fases
 
-Una PR pequeña por fase, cada una con sus pruebas y autorización previa del operador (R3):
+Una PR pequeña por fase (6 en total), cada una con sus pruebas y autorización previa del operador (R3). **Ninguna PR intermedia puede romper una llamada ni habilitar `anthropic` sin la migración:** la migración (`CHECK` de `provider`, columnas), el interruptor `JEV_PROMPT_CACHE` (por defecto `off`) y el reintento sin caché llegan antes que el adaptador de Anthropic, y `anthropic` solo entra en `MODEL_PROVIDERS` en la PR que añade el adaptador.
 
-1. **Tipos y constructor:** `PromptSegment` (`id` obligatorio en `rules`, `skills` y `spec`, y por defecto `kind#posición` en el resto; `version` por defecto `"1"`), `buildPrompt` (orden canónico por `kind`; `id` y `version` solo ordenan `rules`, `skills` y `spec`; el resto, incluido `history`, conserva el orden del llamador; `content` literal), `prefix_sha256`, `tenant_namespace` y detección de inestabilidad. Sin cambios de proveedor.
-2. **Adaptador de Anthropic:** `anthropic` en `MODEL_PROVIDERS`, adaptador Messages API con breakpoints y TTL, `cacheSupport`, mínimos por modelo.
-3. **Usage, precios y migración:** modelo de uso normalizado, mapeo de los tres proveedores, precios de caché y validación previa, migración `0029` y grants.
-4. **Métricas y vistas:** ahorro, tasa de acierto, consultas por organización/proyecto/tarea/modelo.
-5. **Interruptor de apagado y fallo seguro:** `JEV_PROMPT_CACHE`, lista por proveedor, reintento sin caché.
-6. **Harness de aceptación:** modo de 2 llamadas por proveedor con tope; ejecución real solo tras la autorización aparte del operador.
+1. **Tipos y constructor:** `PromptSegment` (`id` obligatorio en `rules`, `skills` y `spec`, y por defecto `kind#posición` en el resto; `version` por defecto `"1"`), `buildPrompt(segments, tools, tenant)` (orden canónico por `kind`; `id` y `version` solo ordenan `rules`, `skills` y `spec`; el resto, incluido `history`, conserva el orden del llamador; `content` literal), `tools` (orden por `name`, JSON canónico), tabla kind → estabilidad, `prefix_project_sha256` y `prefix_task_sha256`, el parámetro `tenant` (`tenant_namespace`) y detección de inestabilidad. Sin cambios de proveedor ni de BD; `prompt` sigue funcionando.
+2. **Usage, precios y migración:** modelo de uso normalizado, mapeo de OpenAI y DeepSeek, precios de caché y validación previa, migración `0029` (ampliación del `CHECK` de `provider` con `anthropic`, columnas de caché con un hash por nivel) y grants. `anthropic` **aún no** se añade a `MODEL_PROVIDERS`: la migración se despliega antes que cualquier código que pueda usarlo. Cambio de comportamiento documentado: OpenAI y DeepSeek exigen ya tarifa de lectura (una llamada sin ella queda `BLOCKED` con `PRICING_REQUIRED`, como política de gasto); el único llamador es el harness de desarrollo y su configuración de ejemplo se actualiza en la misma PR.
+3. **Interruptor de apagado y fallo seguro:** `JEV_PROMPT_CACHE` (por defecto `off`), lista por proveedor, `cache_status` `DISABLED` y `ERROR`, y reintento una vez sin caché respetando el tope de intentos y el circuit breaker. Se prueba con proveedores simulados; no hay aún `cache_control` que enviar.
+4. **Adaptador de Anthropic:** `anthropic` en `MODEL_PROVIDERS` (la migración de la PR 2 ya está), adaptador Messages API con breakpoints explícitos por bloque y TTL, `cacheSupport`, mínimos por modelo, `BELOW_MINIMUM` tras la respuesta y rechazo `PROMPT_TOO_LARGE_FOR_TIER` en Haiku 5.5. Solo envía `cache_control` con el interruptor en `on`; con `off` funciona sin caché. Una prueba falla si `MODEL_PROVIDERS` contiene un proveedor que el `CHECK` de la migración no admite.
+5. **Métricas y vistas:** ahorro, tasa de acierto, consultas por organización/proyecto/tarea/modelo.
+6. **Harness de aceptación:** modo de 2 llamadas por proveedor con tope; ejecución real solo tras la autorización aparte del operador (OpenAI solo si el modelo elegido tiene tarifas de caché configuradas).
 
 ## Criterios de aceptación
 
 | Requisito | Punto | Criterio |
 | --- | --- | --- |
 | REQ-CACHE-001 | 1, 2 | El prefijo estable va primero y el contenido variable al final, con el orden canónico impuesto por el gateway; `prompt` sigue funcionando. |
-| REQ-CACHE-002 | 1, 6 | Mismo contenido → mismos bytes (`content` conservado literalmente, sin reescribirlo; orden canónico por `kind`; `rules`, `skills` y `spec` ordenados por `id` y `version`; `history` y demás `kind` no reordenables en el orden del llamador; ids duplicados o ausentes rechazados donde corresponde); fechas, UUID e IDs fuera de los segmentos estables (aviso si aparecen); `prefix_sha256` registrado; prefijos distintos entre organizaciones. |
+| REQ-CACHE-002 | 1, 6 | Mismo contenido → mismos bytes (`content` conservado literalmente, sin reescribirlo; orden canónico por `kind`; `rules`, `skills` y `spec` ordenados por `id` y `version`; `history` y demás `kind` no reordenables en el orden del llamador; ids duplicados o ausentes rechazados donde corresponde); fechas, UUID e IDs fuera de los segmentos estables (aviso si aparecen); `prefix_project_sha256` y `prefix_task_sha256` registrados; prefijos distintos entre organizaciones. |
 | REQ-CACHE-003 | 2 | Cada adaptador declara `cacheSupport`; el adaptador Anthropic nace con `cache_control` (máximo 4 breakpoints, 1 h antes que 5 min, mínimo por modelo). |
 | REQ-CACHE-004 | 2, 4 | Cada llamada registra entrada, salida, escritura (5 min/1 h) y lectura de caché, agregados por llamada, tarea y proyecto, con `cost_events.usage` ampliado. |
 | REQ-CACHE-005 | 4 | Tasa de acierto y ahorro por proveedor/modelo, tarea y proyecto, con aislamiento por organización. |
