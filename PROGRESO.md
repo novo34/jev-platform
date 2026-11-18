@@ -3,7 +3,7 @@
 ## Identificación
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
-- Rama de trabajo: `claude/elegant-turing-c9wz23`. Base integrada: `main`.
+- Rama de trabajo: `claude/wonderful-franklin-jo4edb` (PLT-052 PR 1/6, [PR #41](https://github.com/novo34/jev-platform/pull/41)); la rama `claude/elegant-turing-c9wz23` de la PR #40 ya está fusionada. Base integrada: `main`.
 - Última actualización: 2026-11-18. Entorno: Claude Code en la nube (Linux), verificación remota de GitHub.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
@@ -48,10 +48,13 @@ de PLT-010 de la aceptación operativa de su remediación de seguridad.
 
 ## Última sesión de desarrollo
 
-JEV Staging ejecutó `ba18d4f8e54375eaea9533a8ea385d74c2ef0649`.
-Dokploy mostró el migrador con código de salida 0 y la API healthy. La sesión
-se recuperó mediante un restablecimiento manual. La pérdida de sesión al recargar
-y la recuperación por correo quedaron identificadas como trabajo pendiente.
+Sesión de PLT-052 del 2026-11-18. El diseño de la caché de prompts se aprobó y
+fusionó en la [PR #40](https://github.com/novo34/jev-platform/pull/40) (`7705b78`).
+La corrección del criterio 7 está en la [PR #30 de Foundation](https://github.com/novo34/base-skills_klever/pull/30)
+(abierta). La PR 1/6 (constructor determinista del prompt, sin conectar al gateway)
+está en la [PR #41](https://github.com/novo34/jev-platform/pull/41), rama
+`claude/wonderful-franklin-jo4edb`, con revisión de Greptile atendida (ver
+«Pruebas y evidencias»). PLT-052 sigue sin cerrarse: faltan las PR 2/6 a 6/6.
 
 ## Funcionalidades completadas
 
@@ -69,6 +72,11 @@ Los cambios principales de PLT-010 están en
 [pruebas de navegador](scripts/github-installation.browser-test.mjs).
 
 ## Pruebas y evidencias
+
+- PLT-052, PR 1/6 ([PR #41](https://github.com/novo34/jev-platform/pull/41)). Ejecutado en local sobre la rama, con PostgreSQL local de pruebas (`DATABASE_URL` a la base `jev_test`): `npm run check` con código de salida 0; `packages/model-gateway/src/prompt-builder.test.ts` con 20 pruebas pasadas (`npx vitest run`); `python3 -B scripts/test-check-progress.py` con 4 pruebas OK; `python3 scripts/check-progress.py --base 7705b7810973a78182309225a551ae2e9b749d70` válido. CI de GitHub: el job `validate` falló en `b86bb51` solo por PROGRESO.md (no cumplía AGENTS.md); este registro lo completa. El estado vigente del CI se consulta en la PR #41 para el head actual, porque el SHA propio no puede escribirse en el mismo commit.
+- PLT-052, PR 1/6, revisión de Greptile de la PR #41. Se revisaron `b86bb51` y `f2f4856`, ambos con 4/5. Hilos cerrados con corrección: huecos de arrays y kinds heredados en el constructor (`174e118`) y `segmentRefs` ambiguos con `@` (`2733f2c`). El hallazgo sobre PROGRESO.md (`f2f4856`) se atiende en este commit. Enlace al resultado y SHA revisado: consultar la PR #41.
+- PLT-052, PR 1/6, limitaciones conocidas: no está conectado a ModelGateway ni a los adaptadores; `detectPrefixInstability` es una función pura y el llamador guarda la huella; la detección de fecha y UUID es heurística; el formato de las cabeceras se define en esta PR porque el diseño no lo fija; el tenant debe ser un HMAC hexadecimal de 64 caracteres.
+- PLT-052, PR 1/6, higiene: sin migraciones, sin llamadas de pago, sin secretos, sin lectura del entorno y sin `__pycache__` (los validadores se ejecutaron con `-B`).
 
 - PLT-051, aceptación en JEV Staging (2026-11-17). El operador comprobó el despliegue de `f2f54c0` (main, que incluye `2d29785`) con Dokploy en Done. El correo de recuperación llegó desde `no-reply@notificaciones.nuvurent.com` (dominio verificado en Resend, sin seguimiento de enlaces, variables `JEV_STAGING_RESET_*` en Dokploy). El enlace permitió cambiar la contraseña y entrar con la nueva. Al reenviar el formulario con el mismo enlace, la web mostró «El enlace ya no es válido. Solicita otro desde el formulario de acceso.». Una sesión iniciada antes del cambio en otra pestaña pidió volver a entrar al recargar. Para la caducidad, con un enlace nuevo sin abrir, un UPDATE de `public.password_reset_tokens` en el contenedor postgres de staging adelantó `expires_at` solo de los tokens vigentes del usuario `00000000-0000-4000-8000-000000000002` (`UPDATE 1`), y al usar el enlace la web mostró el mismo mensaje de enlace no válido. No se copiaron enlaces ni credenciales a logs ni a la conversación. Observación de UX no bloqueante: la web no valida el enlace al abrirlo, muestra siempre el formulario y el rechazo llega al enviar (`apps/web/src/main.tsx:441-471`, `apps/api/src/password-recovery.ts:130-134`); no existe endpoint de comprobación sin consumo.
 - PLT-051, [PR #30](https://github.com/novo34/jev-platform/pull/30). El [CI de `df7810d`](https://github.com/novo34/jev-platform/actions/runs/43897717852) falló en `validate`: la prueba de migraciones no listaba `0027`. Al reproducirlo con PostgreSQL 16 local aparecieron tres fallos más del gate de producción: el rol de CI no recibía EXECUTE sobre `jev_issue_password_reset` y `jev_consume_password_reset`, el inventario de CHECK no incluía `password_reset_tokens_token_hash_check` y el smoke esperaba ocho writers controlados. La corrección concede ambos writers en `packages/db/security/provision-runtime-role.sql`, fija el predicado exacto de la CHECK, actualiza el recuento a diez y aplica `0027` en la prueba ACL. En local pasaron `npm run check`, `smoke:restricted-runtime` (10 writers, 27 migraciones) y el smoke de desarrollo. La PR se fusionó con squash en `2d29785` desde el head `162df9c`, con [CI del head](https://github.com/novo34/jev-platform/actions/runs/43948435717) y [CI de main](https://github.com/novo34/jev-platform/actions/runs/43949674151) aprobados. La última revisión de CodeRabbit, sobre `162df9c`, no dejó hallazgos. La revisión automática de Codex no se completó por falta de cupo.
