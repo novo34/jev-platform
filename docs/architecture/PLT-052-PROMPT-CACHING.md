@@ -10,7 +10,7 @@ Este documento es solo documentación: no cambia código, no llama a proveedores
 
 Reducir el coste de tokens de entrada reutilizando el prefijo estable de cada petición (instrucciones del sistema, reglas, skills, especificación), con medición real del ahorro y sin que la caché pueda bloquear nunca el trabajo.
 
-Referencias: SPEC REQ-CACHE-001..007 (`docs/product-specs/SPEC.md`), ROADMAP Fase 17 y la [prioridad adelantada](../product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17), [MODEL_GATEWAY.md](../MODEL_GATEWAY.md#prompt-caching-not_implemented-diseño-en-revisión) y la migración `packages/db/migrations/0020_model_gateway.sql` (con `cost_events` de la `0001`).
+Referencias: SPEC REQ-CACHE-001..007 (`docs/product-specs/SPEC.md`), ROADMAP Fase 17 y la [prioridad adelantada](../product-specs/ROADMAP.md#prioridad-de-ejecución-ajustada-2026-11-17), [MODEL_GATEWAY.md](../MODEL_GATEWAY.md#prompt-caching) y la migración `packages/db/migrations/0020_model_gateway.sql` (con `cost_events` de la `0001`).
 
 ## Fuentes oficiales y fecha de consulta
 
