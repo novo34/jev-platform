@@ -4,7 +4,7 @@
 
 - Platform: `novo34/jev-platform`. Foundation: `novo34/base-skills_klever`.
 - Rama de trabajo: `claude/elegant-turing-c9wz23`. Base integrada: `main`.
-- Última actualización: 2026-11-17. Entorno: Claude Code en la nube (Linux), verificación remota de GitHub.
+- Última actualización: 2026-11-18. Entorno: Claude Code en la nube (Linux), verificación remota de GitHub.
 - Documentación aplicable: [PRD](docs/product-specs/PRD.md), [SPEC](docs/product-specs/SPEC.md),
   [ROADMAP](docs/product-specs/ROADMAP.md) y el [Development Control Gate de Foundation][gate].
 
@@ -30,12 +30,12 @@ en GitHub y se contrasta con sus checks y revisiones, ya que cambia con cada com
     "status": "TODO"
   },
   "requires_operator_authorization": true,
-  "next_action": "Esperar la autorización del operador para PLT-052 (caché de prompts del Model Gateway con adaptador Anthropic con caché desde el primer día) y presentarle un diseño con decisiones antes de implementar."
+  "next_action": "Esperar la autorización del operador para la PR 1 de PLT-052 (caché de prompts del Model Gateway). El diseño está aprobado desde el 2026-11-18; la implementación se autoriza PR a PR (R3)."
 }
 ```
 
 La fase es implementación controlada de Platform. PLT-009 y PLT-010 figuran como
-`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). PLT-012 está DONE en Foundation ([PR #29](https://github.com/novo34/base-skills_klever/pull/29), `5509b2c`) y fusionada en Platform ([PR #38](https://github.com/novo34/jev-platform/pull/38), `baa23e9`). NEXT_TASK pasa a PLT-052 (caché de prompts del Model Gateway), pendiente de autorización del operador. Fase actual: PLT-012 cerrada; sin implementación en curso. Staging aceptó la integración
+`DONE`. PLT-050 y PLT-051 están DONE en Foundation (PLT-051 en el PR #26, `828af46`). PLT-051 está fusionado en Platform ([PR #30](https://github.com/novo34/jev-platform/pull/30)) y aceptado en JEV Staging el 17 de noviembre de 2026. PLT-011 está DONE en Foundation (PR #27, `f145a85`). PLT-012 está DONE en Foundation ([PR #29](https://github.com/novo34/base-skills_klever/pull/29), `5509b2c`) y fusionada en Platform ([PR #38](https://github.com/novo34/jev-platform/pull/38), `baa23e9`). NEXT_TASK pasa a PLT-052 (caché de prompts del Model Gateway), con diseño aprobado por el operador el 2026-11-18 y la PR 1 pendiente de autorización. Fase actual: PLT-012 cerrada; sin implementación en curso. Staging aceptó la integración
 GitHub App el 23 de octubre de 2026 en `0882b4c661a2bd6a92bcf895cb1417981fcd565e`.
 La remediación de [PR #24][audit-pr] se verificó en staging mediante un merge
 autorizado con informe independiente firmado. El alcance de esta aceptación
@@ -212,7 +212,7 @@ El 17 de noviembre de 2026 el operador decidió para PLT-011 (ver [diseño](docs
 
 El 17 de noviembre de 2026 el operador decidió para PLT-012 (ver [diseño](docs/architecture/PLT-012-PERMANENT-STAGING.md)): (1) alcance por fases: primero el motor probado en CI con un Dokploy simulado y después, como paso aparte aprobado (R4), el staging real del primer caso (proyecto de prueba mínimo `novo34/jev-staging-demo`, decisión posterior del operador; Espacore queda para después), con cuya evidencia se cierra PLT-012; (2) proveedor: API de Dokploy detrás del contrato neutral de FND-026, con la API exacta verificada contra la instancia antes del paso real; (3) un contenedor PostgreSQL propio por proyecto con volumen propio y roles owner/runtime separados, sin credenciales ni datos de producción; (4) nueva operación GitHub controlada que integra la rama de la tarea en `staging_branch` con las guardas de PLT-010. Los valores por defecto (dominio, API key cifrada, migraciones con copia previa, seeds sintéticos, E2E mínimo) quedan pendientes de confirmar antes del paso real.
 
-El 17 de noviembre de 2026 el operador autorizó cerrar PLT-012 en Platform y decidió que el job `STAGING_DEPLOY` quede sin registrar en el worker hasta una tarea posterior (opción 1). La autorización para iniciar PLT-052 está pendiente.
+El 17 de noviembre de 2026 el operador autorizó cerrar PLT-012 en Platform y decidió que el job `STAGING_DEPLOY` quede sin registrar en el worker hasta una tarea posterior (opción 1). El 18 de noviembre de 2026 el operador aprobó el diseño de PLT-052 ([documento](docs/architecture/PLT-052-PROMPT-CACHING.md)); la implementación se autoriza PR a PR (R3) y la PR 1 está pendiente de autorización. Siguen abiertas la frecuencia real de llamadas, el impacto en PLT-017, el secreto del `tenant_namespace` y la tarifa punta de DeepSeek. El criterio 7 se corrigió en Foundation (rama `claude/wonderful-franklin-jo4edb`, commit `2849c5f`, aún sin PR); la PR de Foundation está pendiente de que el operador la pida.
 
 ## Higiene del repositorio
 
@@ -227,11 +227,11 @@ dinámicas requieren inspección de sus consumidores antes de proponer borrados.
 
 ## Siguiente paso exacto
 
-PLT-052 (caché de prompts del Model Gateway con un adaptador Anthropic con caché desde el primer día), pendiente de autorización del operador:
+PLT-052 (caché de prompts del Model Gateway con un adaptador Anthropic con caché desde el primer día), diseño aprobado el 2026-11-18, pendiente de autorizar la PR 1:
 
-1. Esperar la autorización del operador para iniciar PLT-052.
-2. Analizarla y presentar un diseño con decisiones antes de implementar.
-3. Implementar con pruebas tras la decisión.
+1. Esperar la autorización del operador para la PR 1 (implementación PR a PR, R3).
+2. Implementar con pruebas cada PR tras su autorización; las preguntas abiertas del diseño no se deciden sin el operador.
+3. La PR de Foundation con la corrección del criterio 7 (`claude/wonderful-franklin-jo4edb`, `2849c5f`) solo se abre cuando el operador la pida.
 4. Después de PLT-052, el orden decidido por el operador el 2026-11-17 es PLT-040 y PLT-041 (Fase 10, Context Runtime), PLT-017 (guard de presupuesto mínimo) y solo entonces PLT-042 (Fase 12) y PLT-014 (Fase 20). Está reflejado en Foundation (novo34/base-skills_klever#28). Antes de iniciar cada una, confirmar NEXT_TASK y la autorización del operador.
 
 Historial de PLT-012 (cerrada; diseño en [docs/architecture/PLT-012-PERMANENT-STAGING.md](docs/architecture/PLT-012-PERMANENT-STAGING.md)):
