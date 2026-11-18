@@ -161,7 +161,7 @@ describe("PLT-052 cache pricing", () => {
 
   it("bills writes at the input rate only when cacheWriteBilledAs is explicit", () => {
     const billed = new PricingCatalog({
-      "openai:old": {
+      "openai:gpt-5.5": {
         inputPerMillionChf: 2, outputPerMillionChf: 0, cacheReadPerMillionChf: 0.5,
         cacheWriteBilledAs: "input"
       }
@@ -171,7 +171,37 @@ describe("PLT-052 cache pricing", () => {
       input_tokens_details: { cached_tokens: 400_000, cache_write_tokens: 100_000 }
     });
     // 500k ordinary * 2 + 100k write at input * 2 + 400k read * 0.5, per million
-    expect(billed.estimateChf("openai", "old", usage)).toBeCloseTo(1 + 0.2 + 0.2, 9);
+    expect(billed.estimateChf("openai", "gpt-5.5", usage)).toBeCloseTo(1 + 0.2 + 0.2, 9);
+  });
+
+  it("limits cacheWriteBilledAs input to DeepSeek and OpenAI before 5.6 (never Anthropic)", () => {
+    const rate = { inputPerMillionChf: 2, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.5, cacheWriteBilledAs: "input" as const };
+    const c = new PricingCatalog({
+      "anthropic:a": rate, "deepseek:d": rate, "openai:gpt-5.5": rate, "openai:gpt-5.6": rate,
+      "openai:gpt-6": rate, "openai:custom": rate
+    });
+    const req = { cacheEnabled: true, cacheWriteTtls: ["5m", "1h"] as const };
+    const ttls = { cacheEnabled: true, cacheWriteTtls: [...req.cacheWriteTtls] };
+    expect(c.missingRates("anthropic", "a", ttls)).toEqual(["cacheWrite5mPerMillionChf", "cacheWrite1hPerMillionChf"]);
+    expect(c.missingRates("deepseek", "d", ttls)).toEqual([]);
+    expect(c.missingRates("openai", "gpt-5.5", ttls)).toEqual([]);
+    expect(c.missingRates("openai", "gpt-5.6", ttls)).toEqual(["cacheWrite5mPerMillionChf", "cacheWrite1hPerMillionChf"]);
+    expect(c.missingRates("openai", "gpt-6", ttls)).toEqual(["cacheWrite5mPerMillionChf", "cacheWrite1hPerMillionChf"]);
+    expect(c.missingRates("openai", "custom", ttls)).toEqual(["cacheWrite5mPerMillionChf", "cacheWrite1hPerMillionChf"]);
+    // estimate never substitutes the input rate for Anthropic writes.
+    const code = (fn: () => unknown) => {
+      try { fn(); } catch (error) { return (error as ModelGatewayError).code; }
+      return "none";
+    };
+    const anthropicWrite = mapAnthropicUsage({
+      input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 5,
+      cache_creation: { ephemeral_5m_input_tokens: 5, ephemeral_1h_input_tokens: 0 }
+    });
+    expect(code(() => c.estimate("anthropic", "a", anthropicWrite))).toBe("NOT_ESTIMABLE");
+    expect(code(() => c.estimate("anthropic", "a", mapAnthropicUsage({
+      input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 5
+    })))).toBe("NOT_ESTIMABLE");
+    expect(code(() => c.estimate("deepseek", "d", anthropicWrite))).toBe("none");
   });
 
   it("makes a response above the Haiku tier ceiling NOT_ESTIMABLE and flags large prompts before the call", () => {

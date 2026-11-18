@@ -343,7 +343,7 @@ export interface AnthropicRequestPlan {
 // Canonical layout (design point 2): tools text -> project blocks -> task_context
 // in `system`; history + input in ONE user message. Explicit per-block breakpoints
 // only (never the top-level automatic cache_control): (1) last project block, project
-// TTL; (2) task_context, task TTL; (3) last history block, task TTL.
+// TTL; (2) last task block, task TTL; (3) last history block, task TTL.
 // `tools` are sent as the canonical text the builder hashed, NOT as the API
 // `tools` parameter: the gateway has no tool loop, and this way the hashed bytes
 // are the bytes sent.
@@ -365,7 +365,10 @@ export function planAnthropicRequest(
   if (built.toolsText) system.push(block(built.toolsText));
   const project = built.blocks.filter(b => b.stability === "project");
   project.forEach((b, i) => system.push(block(b.text, i === project.length - 1 ? projectTtl : undefined)));
-  for (const b of built.blocks.filter(b => b.stability === "task")) system.push(block(b.text, taskTtl));
+  // Only the LAST task block carries the mark (like project and history), so the
+  // plan never exceeds 3 breakpoints however many task_context segments exist.
+  const task = built.blocks.filter(b => b.stability === "task");
+  task.forEach((b, i) => system.push(block(b.text, i === task.length - 1 ? taskTtl : undefined)));
   const history = built.blocks.filter(b => b.kind === "history");
   const inputs = built.blocks.filter(b => b.kind === "input");
   const content: AnthropicTextBlock[] = [];

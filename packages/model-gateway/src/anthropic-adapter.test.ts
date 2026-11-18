@@ -256,4 +256,37 @@ describe("CachePolicy TTL configuration and cache-error heuristic", () => {
     expect(isCacheAttributableError(http(429, "cache rate limit"))).toBe(false);
     expect(isCacheAttributableError(http(400, "You have reached your specified workspace API usage limits"))).toBe(false);
   });
+
+  it("marks only the LAST project, task and history block: at most 3 breakpoints with several of each", async () => {
+    const many: PromptSegment[] = [
+      { kind: "system", content: "sys" },
+      { kind: "rules", id: "r1", content: "rule one" },
+      { kind: "rules", id: "r2", content: "rule two" },
+      { kind: "task_context", content: "task a" },
+      { kind: "task_context", content: "task b" },
+      { kind: "task_context", content: "task c" },
+      { kind: "history", content: "h1" },
+      { kind: "history", content: "h2" },
+      { kind: "input", content: "go" }
+    ];
+    const { calls, adapter } = recorder();
+    const built = buildPrompt(many, tools, TENANT);
+    const result = await adapter.execute("k", { ...baseInput, built, cache: cacheOn });
+    const marks = bps(calls[0]!.json);
+    expect(marks).toHaveLength(3);
+    expect(result.cacheMarks).toBe(3);
+    // Order in the request: project (1h) before task (5m) before history (5m).
+    expect(marks.map(m => m.ttl)).toEqual(["1h", "5m", "5m"]);
+    const system = calls[0]!.json.system;
+    const markedTexts = system.filter((b: any) => b.cache_control).map((b: any) => b.text);
+    expect(markedTexts).toHaveLength(2);
+    expect(system[system.length - 1].cache_control).toBeDefined();
+    expect(system[system.length - 1].text).toContain("task c");
+    expect(system.filter((b: any) => /task [ab]/.test(b.text)).every((b: any) => !b.cache_control)).toBe(true);
+    const content = calls[0]!.json.messages[0].content;
+    expect(content.filter((b: any) => b.cache_control)).toHaveLength(1);
+    expect(content[1].cache_control).toBeDefined();
+    expect(content[0].cache_control).toBeUndefined();
+    expect(adapter.plannedCacheTtls(built, cacheOn)).toEqual(["1h", "5m"]);
+  });
 });

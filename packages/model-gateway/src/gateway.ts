@@ -8,6 +8,7 @@ import { CachePolicy, disabledReason, isCacheAttributableError } from "./cache-p
 import {
   ModelGatewayError,
   type AdapterResult,
+  type CacheTtl,
   type CacheStatus,
   type ModelGatewayRequest,
   type ModelGatewayResult,
@@ -263,8 +264,21 @@ export class ModelGateway {
       // Write rate of every TTL the adapter will actually mark (Anthropic: 1h
       // project, 5m task/history), required before the call. A plain-text prompt
       // has no marks, hence no write TTL.
-      const cacheWriteTtls = explicitCache && registered?.plannedCacheTtls
-        ? registered.plannedCacheTtls(built, cacheOptions) : [];
+      // Planning can throw (a request this adapter cannot send): that is a
+      // blocked target, recorded without a call, and the next target is tried.
+      let cacheWriteTtls: CacheTtl[] = [];
+      try {
+        cacheWriteTtls = explicitCache && registered?.plannedCacheTtls
+          ? registered.plannedCacheTtls(built, cacheOptions) : [];
+      } catch (error) {
+        await this.recordFailure(
+          request, target.provider, target.model, "BLOCKED", 0, 0, previousProvider,
+          error instanceof ModelGatewayError ? error.code : "INVALID_REQUEST"
+        );
+        lastError = error;
+        previousProvider = target.provider;
+        continue;
+      }
       if (this.pricing.missingRates(
         target.provider, target.model, { cacheEnabled: explicitCache, cacheWriteTtls }
       ).length > 0) {

@@ -1131,6 +1131,73 @@ describe("PLT-052 Anthropic adapter through the gateway (simulated fetch, no net
     expect(bodies).toHaveLength(1);
   });
 
+  it("blocks PRICING_REQUIRED before any fetch when write rates are absent even with cacheWriteBilledAs input", async () => {
+    const rate = { inputPerMillionChf: 2, outputPerMillionChf: 10, cacheReadPerMillionChf: 0.1, cacheWriteBilledAs: "input" as const };
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 1, output_tokens: 1 }))], {
+      pricing: { "anthropic:*": rate }
+    });
+    const req = segmented();
+    await expect(gateway.execute(req)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect(bodies).toHaveLength(0);
+    expect((await rows(req.requestId))[0]).toMatchObject({ outcome: "BLOCKED", error_code: "PRICING_REQUIRED" });
+  });
+
+  it("accepts a request with several task_context/project blocks (3 marks, no planning failure)", async () => {
+    await credentials.configure(organizationId, "anthropic", "anthropic-test-secret-1234", userId);
+    const { gateway, bodies } = build([json(okBody({ input_tokens: 5, output_tokens: 1 }))]);
+    const req = { ...segmented(), segments: [
+      { kind: "system" as const, content: "s" },
+      { kind: "rules" as const, id: "r1", content: "r" },
+      { kind: "task_context" as const, content: "t1" },
+      { kind: "task_context" as const, content: "t2" },
+      { kind: "task_context" as const, content: "t3" },
+      { kind: "history" as const, content: "h" },
+      { kind: "input" as const, content: "go" }
+    ] };
+    await gateway.execute(req);
+    expect(bodies).toHaveLength(1);
+    expect(JSON.stringify(bodies[0]).split("cache_control").length - 1).toBe(3);
+  });
+
+  it("treats a planning failure as a failed target and falls back to the next provider", async () => {
+    await credentials.configure(organizationId, "anthropic", "anthropic-test-secret-1234", userId);
+    await credentials.configure(organizationId, "openai", "sk-fallback-test-secret-2222", userId);
+    const anthropicBodies: unknown[] = [];
+    const anthropic = new AnthropicAdapter((async (_u: string, init: RequestInit) => {
+      anthropicBodies.push(init.body);
+      return json(okBody({ input_tokens: 1, output_tokens: 1 }));
+    }) as unknown as typeof fetch, "https://example.test/v1");
+    let openaiCalls = 0;
+    const openai: ProviderAdapter = {
+      provider: "openai",
+      async execute() { openaiCalls++; return { content: "ok", usage: plainUsage(10, 5) }; },
+      async health() { return { ok: true }; }
+    };
+    const pricing = new PricingCatalog({
+      ...rates,
+      "openai:*": { inputPerMillionChf: 1, outputPerMillionChf: 1, cacheReadPerMillionChf: 0.1 }
+    });
+    const registry = new ProviderRegistry().register(anthropic).register(openai);
+    const mk = (targets: Array<{ provider: "anthropic" | "openai"; model: string }>) => new ModelGateway(
+      pool, credentials, registry, pricing, 3, 30_000, () => undefined,
+      CachePolicy.fromEnv({ JEV_PROMPT_CACHE: "on" }), "tenant-namespace-test-secret"
+    );
+    // A system-only prompt passes buildPrompt but Anthropic cannot send it.
+    const req = { ...segmented(), segments: [{ kind: "system" as const, content: "only system" }],
+      targets: [target, { provider: "openai" as const, model: "m" }] };
+    await expect(mk(req.targets).execute(req)).resolves.toMatchObject({ provider: "openai", fallbackFrom: "anthropic" });
+    expect(anthropicBodies).toHaveLength(0);
+    expect(openaiCalls).toBe(1);
+    const recorded = await rows(req.requestId);
+    expect(recorded[0]).toMatchObject({ provider: "anthropic", outcome: "BLOCKED", error_code: "INVALID_REQUEST", attempt_count: 0 });
+    expect(recorded[1]).toMatchObject({ provider: "openai", outcome: "SUCCESS", fallback_from: "anthropic" });
+
+    // No further target: the planning error propagates after being recorded.
+    const only = { ...req, requestId: randomUUID(), targets: [target] };
+    await expect(mk(only.targets).execute(only)).rejects.toMatchObject({ code: "ALL_PROVIDERS_FAILED" });
+    expect((await rows(only.requestId))[0]).toMatchObject({ outcome: "BLOCKED", error_code: "INVALID_REQUEST" });
+  });
+
   it("rejects prompts over the Haiku 5.5 tier with PROMPT_TOO_LARGE_FOR_TIER before any fetch", async () => {
     const haiku = { provider: "anthropic" as const, model: "claude-haiku-5-5" };
     const { gateway, bodies } = build([json(okBody({ input_tokens: 1, output_tokens: 1 }))], {
