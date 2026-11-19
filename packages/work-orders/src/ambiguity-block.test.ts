@@ -71,7 +71,7 @@ describe("createTask material ambiguity gate", () => {
     const intent = await intents.saveIntentBrief(organizationId, { orderId: order, document: intentDoc({ ambiguity_score: 0.5 }) });
     const created = await task(order);
     expect(created.status).toBe("BLOCKED");
-    expect(created.risk).toBe("R0");
+    expect(created.risk).toBe("R2"); // SPEC high_ambiguity_intent: minimum R2
     expect(created.implementationBlock).toMatchObject({
       code: "AMBIGUOUS_INTENT", intentId: intent.id, ambiguityScore: 0.5,
       clarificationRequired: false, threshold: 0.5
@@ -79,6 +79,30 @@ describe("createTask material ambiguity gate", () => {
     const last = created.stateHistory[created.stateHistory.length - 1];
     expect(last).toMatchObject({ fromStatus: "PLANNED", toStatus: "BLOCKED", actorType: "SYSTEM" });
     expect(last.evidence).toMatchObject({ intent_id: intent.id, ambiguity_score: 0.5, clarification_required: false, threshold: 0.5 });
+  });
+
+  it("raises the risk of a blocked task to at least R2 and respects a higher one (R0<R1<R2<R3<R4)", async () => {
+    const order = await newOrder();
+    await intents.saveIntentBrief(organizationId, { orderId: order, document: intentDoc({ ambiguity_score: 0.9 }) });
+    const expected = { R0: "R2", R1: "R2", R2: "R2", R3: "R3", R4: "R4" } as const;
+    for (const [requested, risk] of Object.entries(expected)) {
+      const created = await service.createTask({
+        projectId, orderId: order, title: `Risk ${requested}`, risk: requested as keyof typeof expected
+      });
+      expect(created.status).toBe("BLOCKED");
+      expect(created.risk).toBe(risk);
+    }
+    const defaulted = await task(order);
+    expect(defaulted.risk).toBe("R2");
+  });
+
+  it("does not raise the risk of a task that is not blocked", async () => {
+    const order = await newOrder();
+    await intents.saveIntentBrief(organizationId, { orderId: order, document: intentDoc() });
+    for (const risk of ["R0", "R1"] as const) {
+      const created = await service.createTask({ projectId, orderId: order, title: `Free ${risk}`, risk });
+      expect(created).toMatchObject({ status: "PLANNED", risk });
+    }
   });
 
   it("blocks when clarification is required even with a low score", async () => {

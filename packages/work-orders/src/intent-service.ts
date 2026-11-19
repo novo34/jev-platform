@@ -256,10 +256,18 @@ export class IntentAcceptanceService {
   /**
    * The document's intent_id must be the id of a stored IntentBrief of the same
    * organization; the order link is copied from that brief.
+   *
+   * With `executor` (PLT-040 PR 6; an open transaction, as in saveIntentBrief)
+   * the INSERT runs on it so the caller commits the contract with its order and
+   * brief. The per-order advisory lock is taken first (same lock and order as
+   * saveIntentBrief; re-taking it in the same transaction is a no-op). Inside a
+   * transaction a failed INSERT aborts it, so the version retry is skipped.
+   * Without it behaviour is unchanged.
    */
   async saveAcceptanceContract(
     organizationId: string,
-    input: { document: unknown }
+    input: { document: unknown },
+    executor?: Pick<PoolClient, "query">
   ): Promise<AcceptanceContractRecord> {
     assertOrganization(organizationId);
     organizationId = canon(organizationId);
@@ -269,10 +277,21 @@ export class IntentAcceptanceService {
     }
     // Stored and compared in canonical lowercase, as the database CHECK requires.
     const document = { ...validated, intent_id: canon(validated.intent_id) };
+    const db: Pick<PoolClient, "query"> = executor ?? this.pool;
+
+    if (executor) {
+      // Lock order: the order advisory lock comes before any row lock.
+      const owner = await executor.query(
+        "SELECT order_id FROM intent_briefs WHERE id = $1 AND organization_id = $2",
+        [document.intent_id, organizationId]
+      );
+      const orderId = owner.rows[0]?.order_id as string | null | undefined;
+      if (orderId) await lockOrderIntentVersions(executor, orderId);
+    }
 
     for (let attempt = 1; ; attempt++) {
       try {
-        const result = await this.pool.query(
+        const result = await db.query(
           `INSERT INTO acceptance_contracts (
              organization_id, intent_id, order_id, version, document,
              specification_depth
@@ -296,7 +315,7 @@ export class IntentAcceptanceService {
         }
         return mapContract(result.rows[0]);
       } catch (error) {
-        if (pgCode(error) === "23505" && attempt < MAX_VERSION_ATTEMPTS) continue;
+        if (pgCode(error) === "23505" && !executor && attempt < MAX_VERSION_ATTEMPTS) continue;
         if (pgCode(error) === "23505") {
           throw new IntentAcceptanceError(
             "CONFLICT",

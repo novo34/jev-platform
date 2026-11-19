@@ -7,11 +7,15 @@ import {
   type ProviderTarget,
   type PromptSegment
 } from "@jev/model-gateway";
-import { INTENT_BRIEF_SCHEMA } from "./intent-schemas.js";
-import { validateIntentBriefDocument } from "./intent-validation.js";
+import { ACCEPTANCE_CONTRACT_SCHEMA, INTENT_BRIEF_SCHEMA } from "./intent-schemas.js";
+import {
+  validateAcceptanceContractDocument,
+  validateIntentBriefDocument
+} from "./intent-validation.js";
 import {
   IntentAcceptanceError,
   IntentGenerationError,
+  type AcceptanceContractDocument,
   type IntentBriefDocument
 } from "./types.js";
 
@@ -54,6 +58,26 @@ export interface GeneratedIntent {
   provider: ModelProvider;
   model: string;
 }
+
+export interface GeneratedContract {
+  /** intent_id is CONTRACT_INTENT_ID_PLACEHOLDER: Platform sets the real id when it saves the brief. */
+  document: AcceptanceContractDocument;
+  attempts: number;
+  provider: ModelProvider;
+  model: string;
+}
+
+export interface GenerateContractInput extends GenerateIntentInput {
+  /** FINAL (non blocking) IntentBrief the contract is derived from. */
+  brief: IntentBriefDocument;
+}
+
+/**
+ * The model never knows the Platform-assigned intent id (the UUID exists only
+ * after the brief is saved). It is told to emit this placeholder, which is
+ * forced here and replaced by the real id inside the order transaction.
+ */
+export const CONTRACT_INTENT_ID_PLACEHOLDER = "PENDING_INTENT_ID";
 
 export interface IntentBriefGeneratorOptions {
   gateway: IntentModelGateway;
@@ -198,6 +222,62 @@ export function buildClarifySegments(
   return segments;
 }
 
+const CONTRACT_SYSTEM_TEXT = [
+  "You turn a work order request and its FINAL IntentBrief into an AcceptanceContract JSON document.",
+  "Reply with ONE JSON object and nothing else: no prose, no markdown, no code fences.",
+  "The object MUST validate against this JSON Schema (additionalProperties is false: never add fields, never omit required ones):",
+  JSON.stringify(ACCEPTANCE_CONTRACT_SCHEMA),
+  `Set intent_id to exactly "${CONTRACT_INTENT_ID_PLACEHOLDER}": the platform replaces it with the real id.`
+].join("\n");
+
+const CONTRACT_RULES_TEXT = [
+  "Anti-invention rule: derive everything from the IntentBrief and the work order text below; never invent requirements, constraints or facts.",
+  "- acceptance_criteria: at least one OBSERVABLE criterion, each with the verification that would show it (a test, a command, an observable behaviour).",
+  "- constraints: only those stated in the request or the brief.",
+  "- non_goals: what the brief puts out of scope; nothing else.",
+  "- affected_requirements: only requirement keys that appear in the request.",
+  "- required_evidence: take it from the brief evidence_needed and from the criteria verification.",
+  "- assumptions: only those of the brief.",
+  "- unresolved_decisions: only points the brief leaves undecided; leave empty when there are none.",
+  "- compatibility_requirements: only if the request states them.",
+  "- specification_depth: not lower than the brief documentation_depth."
+].join("\n");
+
+/** Deterministic segments: stable prefix first (system, rules, project), volatile request and brief last. */
+export function buildContractSegments(
+  input: Pick<GenerateContractInput, "objective" | "projectName" | "knownRequirements" | "constraints" | "acceptanceCriteria" | "brief">,
+  retry?: { previousOutput: string; validationError: string }
+): PromptSegment[] {
+  const segments = buildIntentSegments(input);
+  const last = segments.pop()!;
+  // Replace the brief-generation system/rules with the contract ones (same project segment).
+  const kept = segments.filter((s) => s.kind === "project_context");
+  return [
+    { kind: "system", id: "contract-system", version: INTENT_PROMPT_VERSION, content: CONTRACT_SYSTEM_TEXT },
+    { kind: "rules", id: "contract-rules", version: INTENT_PROMPT_VERSION, content: CONTRACT_RULES_TEXT },
+    ...kept,
+    {
+      ...last,
+      id: "contract-input",
+      content: [
+        last.content,
+        "",
+        "Final IntentBrief:",
+        JSON.stringify(input.brief),
+        ...(retry
+          ? [
+              "",
+              "Your previous answer was rejected.",
+              `Previous answer: ${retry.previousOutput}`,
+              `Validation error: ${retry.validationError}`,
+              "Reply again with ONE corrected JSON object."
+            ]
+          : [])
+      ].join("\n")
+    }
+  ];
+}
+
 function parseStrict(content: string): { value?: unknown; error?: string } {
   try {
     return { value: JSON.parse(content.trim()) };
@@ -222,7 +302,26 @@ export class IntentBriefGenerator {
   }
 
   async generate(input: GenerateIntentInput): Promise<GeneratedIntent> {
-    return this.run(input, "intent", (retry) => buildIntentSegments(input, retry));
+    return this.run(input, "intent", (retry) => buildIntentSegments(input, retry), validateIntentBriefDocument);
+  }
+
+  /**
+   * PLT-040 PR 6: AcceptanceContract content from the FINAL brief. Same
+   * infrastructure (injected gateway, strict parse, ajv, one retry, maxRetries 0).
+   * The returned document carries CONTRACT_INTENT_ID_PLACEHOLDER as intent_id.
+   */
+  async generateContract(input: GenerateContractInput): Promise<GeneratedContract> {
+    return this.run(
+      input,
+      "contract",
+      (retry) => buildContractSegments(input, retry),
+      (value) =>
+        validateAcceptanceContractDocument(
+          typeof value === "object" && value !== null && !Array.isArray(value)
+            ? { ...(value as Record<string, unknown>), intent_id: CONTRACT_INTENT_ID_PLACEHOLDER }
+            : value
+        )
+    );
   }
 
   /**
@@ -231,14 +330,15 @@ export class IntentBriefGenerator {
    * decides how many rounds to run; each round is a separate paid attempt pair.
    */
   async clarify(input: ClarifyIntentInput): Promise<GeneratedIntent> {
-    return this.run(input, "clarify", (retry) => buildClarifySegments(input, retry));
+    return this.run(input, "clarify", (retry) => buildClarifySegments(input, retry), validateIntentBriefDocument);
   }
 
-  private async run(
+  private async run<T>(
     input: GenerateIntentInput,
-    label: "intent" | "clarify",
-    segmentsFor: (retry?: { previousOutput: string; validationError: string }) => PromptSegment[]
-  ): Promise<GeneratedIntent> {
+    label: "intent" | "clarify" | "contract",
+    segmentsFor: (retry?: { previousOutput: string; validationError: string }) => PromptSegment[],
+    validate: (value: unknown) => T
+  ): Promise<{ document: T; attempts: number; provider: ModelProvider; model: string }> {
     if (!input.objective?.trim()) {
       throw new IntentGenerationError("INTENT_GENERATION_FAILED", "objective is required");
     }
@@ -257,7 +357,9 @@ export class IntentBriefGenerator {
         projectId: input.projectId,
         orderId: input.orderId,
         taskId: input.taskId,
-        agentRole: label === "intent" ? "intent-brief-generator" : "intent-brief-clarifier",
+        agentRole:
+          label === "intent" ? "intent-brief-generator"
+            : label === "clarify" ? "intent-brief-clarifier" : "acceptance-contract-generator",
         segments: segmentsFor(retry),
         targets,
         maxOutputTokens: this.maxOutputTokens,
@@ -269,7 +371,7 @@ export class IntentBriefGenerator {
       let error = parsed.error;
       if (!error) {
         try {
-          const document = validateIntentBriefDocument(parsed.value);
+          const document = validate(parsed.value);
           return { document, attempts: attempt, provider: result.provider, model: result.model };
         } catch (caught) {
           if (!(caught instanceof IntentAcceptanceError)) throw caught;
@@ -281,7 +383,7 @@ export class IntentBriefGenerator {
     }
     throw new IntentGenerationError(
       "INTENT_GENERATION_FAILED",
-      `the model did not produce a valid IntentBrief (${label}) after one retry`,
+      `the model did not produce a valid ${label === "contract" ? "AcceptanceContract" : "IntentBrief"} (${label}) after one retry`,
       failures
     );
   }
