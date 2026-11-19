@@ -26,10 +26,22 @@ function isUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value);
 }
 
+/** UUIDs are compared case-insensitively by PostgreSQL but stored as lowercase text. */
+function canon(value: string): string {
+  return value.toLowerCase();
+}
+
 function pgCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
     ? (error as { code?: string }).code
     : undefined;
+}
+
+function checkViolation(): IntentAcceptanceError {
+  return new IntentAcceptanceError(
+    "INVALID_DOCUMENT",
+    "the document does not match the stored columns (database CHECK violation)"
+  );
 }
 
 function mapIntent(row: any): IntentBriefRecord {
@@ -73,8 +85,9 @@ export class IntentAcceptanceService {
     input: { orderId?: string | null; document: unknown }
   ): Promise<IntentBriefRecord> {
     assertOrganization(organizationId);
+    organizationId = canon(organizationId);
     const document = validateIntentBriefDocument(input.document);
-    const orderId = input.orderId ?? null;
+    const orderId = input.orderId == null ? null : canon(input.orderId);
 
     if (orderId !== null) {
       // orders carry no organization column: it is that of their project.
@@ -127,6 +140,7 @@ export class IntentAcceptanceService {
             "organization not found"
           );
         }
+        if (pgCode(error) === "23514") throw checkViolation();
         throw error;
       }
     }
@@ -137,10 +151,11 @@ export class IntentAcceptanceService {
     intentId: string
   ): Promise<IntentBriefRecord> {
     assertOrganization(organizationId);
+    organizationId = canon(organizationId);
     const result = isUuid(intentId)
       ? await this.pool.query(
           "SELECT * FROM intent_briefs WHERE id = $1 AND organization_id = $2",
-          [intentId, organizationId]
+          [canon(intentId), organizationId]
         )
       : { rows: [] };
     if (!result.rows.length) {
@@ -155,12 +170,13 @@ export class IntentAcceptanceService {
     orderId: string
   ): Promise<IntentBriefRecord | null> {
     assertOrganization(organizationId);
+    organizationId = canon(organizationId);
     if (!isUuid(orderId)) return null;
     const result = await this.pool.query(
       `SELECT * FROM intent_briefs
         WHERE order_id = $1 AND organization_id = $2
         ORDER BY version DESC LIMIT 1`,
-      [orderId, organizationId]
+      [canon(orderId), organizationId]
     );
     return result.rows.length ? mapIntent(result.rows[0]) : null;
   }
@@ -174,10 +190,13 @@ export class IntentAcceptanceService {
     input: { document: unknown }
   ): Promise<AcceptanceContractRecord> {
     assertOrganization(organizationId);
-    const document = validateAcceptanceContractDocument(input.document);
-    if (!isUuid(document.intent_id)) {
+    organizationId = canon(organizationId);
+    const validated = validateAcceptanceContractDocument(input.document);
+    if (!isUuid(validated.intent_id)) {
       throw new IntentAcceptanceError("INTENT_NOT_FOUND", "intent not found");
     }
+    // Stored and compared in canonical lowercase, as the database CHECK requires.
+    const document = { ...validated, intent_id: canon(validated.intent_id) };
 
     for (let attempt = 1; ; attempt++) {
       try {
@@ -212,6 +231,10 @@ export class IntentAcceptanceService {
             "concurrent AcceptanceContract version conflict"
           );
         }
+        if (pgCode(error) === "23503") {
+          throw new IntentAcceptanceError("INTENT_NOT_FOUND", "intent not found");
+        }
+        if (pgCode(error) === "23514") throw checkViolation();
         throw error;
       }
     }
@@ -222,10 +245,11 @@ export class IntentAcceptanceService {
     contractId: string
   ): Promise<AcceptanceContractRecord> {
     assertOrganization(organizationId);
+    organizationId = canon(organizationId);
     const result = isUuid(contractId)
       ? await this.pool.query(
           "SELECT * FROM acceptance_contracts WHERE id = $1 AND organization_id = $2",
-          [contractId, organizationId]
+          [canon(contractId), organizationId]
         )
       : { rows: [] };
     if (!result.rows.length) {
@@ -240,12 +264,13 @@ export class IntentAcceptanceService {
     intentId: string
   ): Promise<AcceptanceContractRecord | null> {
     assertOrganization(organizationId);
+    organizationId = canon(organizationId);
     if (!isUuid(intentId)) return null;
     const result = await this.pool.query(
       `SELECT * FROM acceptance_contracts
         WHERE intent_id = $1 AND organization_id = $2
         ORDER BY version DESC LIMIT 1`,
-      [intentId, organizationId]
+      [canon(intentId), organizationId]
     );
     return result.rows.length ? mapContract(result.rows[0]) : null;
   }

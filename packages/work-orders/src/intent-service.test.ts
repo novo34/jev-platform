@@ -174,6 +174,36 @@ describe("IntentAcceptanceService", () => {
       [orgA, JSON.stringify(intentDoc())]))).toBe("23514");
   });
 
+  it("normalizes UUID case on save and read, and types database violations", async () => {
+    const intent = await service.saveIntentBrief(orgA, { document: intentDoc() });
+    const upper = intent.id.toUpperCase();
+    const mixed = intent.id.slice(0, 18) + intent.id.slice(18).toUpperCase();
+    expect(await service.getIntentBrief(orgA, upper)).toEqual(intent);
+    expect(await service.getIntentBrief(orgA, mixed)).toEqual(intent);
+    for (const id of [upper, mixed]) {
+      const saved = await service.saveAcceptanceContract(orgA, { document: contractDoc(id) });
+      expect(saved.intentId).toBe(intent.id);
+      expect(saved.document.intent_id).toBe(intent.id);
+      expect(await service.getAcceptanceContract(orgA, saved.id.toUpperCase())).toEqual(saved);
+      expect((await service.getLatestAcceptanceContractForIntent(orgA, id))?.intentId).toBe(intent.id);
+    }
+    expect((await service.getLatestIntentBriefForOrder(orgA, orderA.toUpperCase()))?.orderId).toBe(orderA);
+    expect((await service.saveIntentBrief(orgA.toUpperCase(), { orderId: orderA.toUpperCase(), document: intentDoc() })).organizationId).toBe(orgA);
+
+    // A database CHECK/FK violation becomes a typed error, never a raw pg error.
+    const failing = new IntentAcceptanceService({
+      query: async () => { throw Object.assign(new Error("check"), { code: "23514" }); }
+    } as never);
+    const error = await failing.saveIntentBrief(orgA, { document: intentDoc() }).catch(e => e);
+    expect(error).toBeInstanceOf(IntentAcceptanceError);
+    expect(error.code).toBe("INVALID_DOCUMENT");
+    const fk = new IntentAcceptanceService({
+      query: async () => { throw Object.assign(new Error("fk"), { code: "23503" }); }
+    } as never);
+    expect(await fk.saveAcceptanceContract(orgA, { document: contractDoc(intent.id) }).catch(e => e.code)).toBe("INTENT_NOT_FOUND");
+    expect(await failing.saveAcceptanceContract(orgA, { document: contractDoc(intent.id) }).catch(e => e.code)).toBe("INVALID_DOCUMENT");
+  });
+
   it("marks new orders as not legacy", async () => {
     const row = (await pool.query("SELECT intent_legacy FROM orders WHERE id = $1", [orderA])).rows[0];
     expect(row.intent_legacy).toBe(false);

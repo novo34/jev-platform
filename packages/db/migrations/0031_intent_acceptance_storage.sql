@@ -38,12 +38,19 @@ CREATE TABLE intent_briefs (
     CHECK (change_radius IN ('LOCAL', 'COMPONENT', 'CROSS_LAYER', 'ARCHITECTURAL', 'PRODUCT')),
   CONSTRAINT intent_briefs_documentation_depth_check
     CHECK (documentation_depth IN ('L0', 'L1', 'L2', 'L3', 'L4')),
-  CONSTRAINT intent_briefs_columns_match_document_check CHECK (
-    document -> 'ambiguity_score' = to_jsonb(ambiguity_score)
+  -- Strictly true: a missing key or a wrong JSON type gives NULL/false, and a
+  -- CHECK that evaluates to NULL would otherwise pass. COALESCE makes it fail.
+  CONSTRAINT intent_briefs_columns_match_document_check CHECK (COALESCE(
+    jsonb_typeof(document -> 'ambiguity_score') = 'number'
+    AND jsonb_typeof(document -> 'change_radius') = 'string'
+    AND jsonb_typeof(document -> 'documentation_depth') = 'string'
+    AND jsonb_typeof(document -> 'clarification_required') = 'boolean'
+    AND document -> 'ambiguity_score' = to_jsonb(ambiguity_score)
     AND document ->> 'change_radius' = change_radius
     AND document ->> 'documentation_depth' = documentation_depth
-    AND document -> 'clarification_required' = to_jsonb(clarification_required)
-  ),
+    AND document -> 'clarification_required' = to_jsonb(clarification_required),
+    false
+  )),
   CONSTRAINT intent_briefs_id_organization_key UNIQUE (id, organization_id),
   CONSTRAINT intent_briefs_order_version_key UNIQUE (order_id, version)
 );
@@ -65,10 +72,16 @@ CREATE TABLE acceptance_contracts (
   CONSTRAINT acceptance_contracts_document_check CHECK (jsonb_typeof(document) = 'object'),
   CONSTRAINT acceptance_contracts_specification_depth_check
     CHECK (specification_depth IN ('L0', 'L1', 'L2', 'L3', 'L4')),
-  CONSTRAINT acceptance_contracts_columns_match_document_check CHECK (
-    document ->> 'intent_id' = intent_id::text
-    AND document ->> 'specification_depth' = specification_depth
-  ),
+  -- Strictly true (see intent_briefs_columns_match_document_check). The document's
+  -- intent_id must be the canonical lowercase text of the column (the service
+  -- normalizes it before saving).
+  CONSTRAINT acceptance_contracts_columns_match_document_check CHECK (COALESCE(
+    jsonb_typeof(document -> 'intent_id') = 'string'
+    AND jsonb_typeof(document -> 'specification_depth') = 'string'
+    AND document ->> 'intent_id' = intent_id::text
+    AND document ->> 'specification_depth' = specification_depth,
+    false
+  )),
   CONSTRAINT acceptance_contracts_intent_version_key UNIQUE (intent_id, version)
 );
 CREATE INDEX idx_acceptance_contracts_organization_order
@@ -95,6 +108,8 @@ FOR EACH ROW EXECUTE FUNCTION jev_immutable_intent_record();
 -- those rows without rewriting them (and without firing the order triggers);
 -- the default is then switched so orders created from now on are NOT legacy.
 -- This PR only records the marker; requiring a brief for non-legacy orders is
--- done later (PLT-040 PR 3). The runtime role has no UPDATE on this column.
+-- done later (PLT-040 PR 3). The runtime role can neither UPDATE this column
+-- nor set it on INSERT: both provisioning scripts grant it INSERT on orders by
+-- column, excluding intent_legacy, so a new order can never be born legacy.
 ALTER TABLE orders ADD COLUMN intent_legacy BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE orders ALTER COLUMN intent_legacy SET DEFAULT FALSE;

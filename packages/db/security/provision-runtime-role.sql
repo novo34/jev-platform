@@ -126,8 +126,26 @@ GRANT EXECUTE ON FUNCTION jev_set_deployment_status(uuid, uuid[], text)
 GRANT EXECUTE ON FUNCTION jev_transition_task(uuid, text, text, text, text, jsonb)
   TO jev_runtime;
 -- Only non-guarded service tables receive DML permissions.
-GRANT INSERT ON TABLE projects, repositories, orders, requirements, task_requirements,
+GRANT INSERT ON TABLE projects, repositories, requirements, task_requirements,
   order_state_history TO jev_runtime;
+-- orders: INSERT by column, excluding intent_legacy (PLT-040), so the runtime role
+-- cannot create an order marked LEGACY (which would skip the IntentBrief
+-- requirement). REVOKE first: it also clears any earlier table-level INSERT and is
+-- idempotent on every re-run. Columns are listed from the catalog so future
+-- columns keep working.
+DO $jev_orders_insert$
+DECLARE column_list text;
+BEGIN
+  REVOKE INSERT ON TABLE public.orders FROM PUBLIC, jev_runtime;
+  SELECT pg_catalog.string_agg(pg_catalog.quote_ident(a.attname), ', ' ORDER BY a.attnum)
+    INTO column_list
+    FROM pg_catalog.pg_attribute a
+   WHERE a.attrelid = 'public.orders'::pg_catalog.regclass
+     AND a.attnum > 0 AND NOT a.attisdropped AND a.attname <> 'intent_legacy';
+  EXECUTE pg_catalog.format(
+    'GRANT INSERT (%s) ON TABLE public.orders TO jev_runtime', column_list);
+END;
+$jev_orders_insert$;
 GRANT UPDATE (status) ON TABLE orders TO jev_runtime;
 -- API authentication and audit paths; no guarded-table privileges.
 GRANT INSERT ON TABLE auth_sessions, audit_events TO jev_runtime;

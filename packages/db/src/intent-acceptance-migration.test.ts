@@ -72,6 +72,20 @@ describe("PLT-040 migration 0031 (intent and acceptance storage)", () => {
       await expectCode(insertIntent(doc(), [0.2, "LOCAL", "L0", true]), "23514");
       await expectCode(insertIntent([1, 2], [0.2, "LOCAL", "L0", false]), "23514");
 
+      // Missing keys, null values and wrong JSON types never pass (CHECK must be strictly true).
+      const { goal: _g, ...base } = doc();
+      void _g;
+      const without = (key: string) => { const d: Record<string, unknown> = doc(); delete d[key]; return d; };
+      await expectCode(insertIntent({}), "23514");
+      for (const key of ["ambiguity_score", "change_radius", "documentation_depth", "clarification_required"]) {
+        await expectCode(insertIntent(without(key)), "23514");
+        await expectCode(insertIntent(doc({ [key]: null })), "23514");
+      }
+      await expectCode(insertIntent(doc({ ambiguity_score: "0.2" })), "23514");
+      await expectCode(insertIntent(doc({ clarification_required: "false" })), "23514");
+      await expectCode(insertIntent(doc({ change_radius: 1 })), "23514");
+      void base;
+
       const contractDoc = (intent: string, depth = "L1") => ({ intent_id: intent, specification_depth: depth });
       const insertContract = (intent: string, document: unknown, depth: string, organization = org, version = 1) =>
         owner.query(
@@ -82,6 +96,13 @@ describe("PLT-040 migration 0031 (intent and acceptance storage)", () => {
       await expectCode(insertContract(ok, contractDoc(ok, "L9"), "L9"), "23514");
       await expectCode(insertContract(ok, contractDoc(ok, "L2"), "L1"), "23514");
       await expectCode(insertContract(ok, contractDoc(randomUUID()), "L1"), "23514");
+      await expectCode(insertContract(ok, {}, "L1"), "23514");
+      await expectCode(insertContract(ok, { specification_depth: "L1" }, "L1"), "23514");
+      await expectCode(insertContract(ok, { intent_id: ok }, "L1"), "23514");
+      await expectCode(insertContract(ok, { intent_id: null, specification_depth: "L1" }, "L1"), "23514");
+      await expectCode(insertContract(ok, { intent_id: ok, specification_depth: null }, "L1"), "23514");
+      await expectCode(insertContract(ok, { intent_id: 5, specification_depth: "L1" }, "L1"), "23514");
+      await expectCode(insertContract(ok, { intent_id: ok.toUpperCase(), specification_depth: "L1" }, "L1", org, 7), "23514");
       const otherOrg = randomUUID();
       await owner.query("INSERT INTO organizations (id, name) VALUES ($1, 'Other')", [otherOrg]);
       // The composite foreign key rejects a contract that points at another organization's intent.
@@ -112,14 +133,16 @@ describe("PLT-040 migration 0031 (intent and acceptance storage)", () => {
 
       await owner.query(`CREATE ROLE "${role}" NOLOGIN`);
       await owner.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"`);
-      await owner.query(`GRANT SELECT ON TABLE intent_briefs, acceptance_contracts TO "${role}"`);
+      await owner.query(`GRANT SELECT ON TABLE intent_briefs, acceptance_contracts, orders TO "${role}"`);
+      // Order triggers write the status history (granted to the runtime role by the real scripts).
+      await owner.query(`GRANT INSERT, SELECT ON TABLE order_state_history TO "${role}"`);
       // Execute the real PLT-040 statements of both provisioning scripts for the test role.
       for (const file of [
         path.join(DEFAULT_MIGRATIONS_DIR, "..", "security", "provision-runtime-role.sql"),
         path.join(DEFAULT_MIGRATIONS_DIR, "..", "..", "..", "deploy", "staging", "provision-runtime-grants.sql")
       ]) {
         const script = await readFile(file, "utf8");
-        const blocks = ["jev_intent_revoke", "jev_intent_grant"].map(tag => {
+        const blocks = ["jev_intent_revoke", "jev_intent_grant", "jev_orders_insert"].map(tag => {
           const start = script.indexOf(`DO $${tag}$`);
           expect(start).toBeGreaterThanOrEqual(0);
           const end = script.indexOf(`$${tag}$;`, start + 10) + `$${tag}$;`.length;
@@ -128,7 +151,7 @@ describe("PLT-040 migration 0031 (intent and acceptance storage)", () => {
         for (const block of blocks) {
           await owner.query(block.replaceAll("jev_runtime", `"${role}"`).replaceAll("public.", `"${schema}".`));
         }
-        await owner.query(`GRANT SELECT ON TABLE intent_briefs, acceptance_contracts TO "${role}"`);
+        await owner.query(`GRANT SELECT ON TABLE intent_briefs, acceptance_contracts, orders TO "${role}"`);
       }
 
       const privileges = (await owner.query(
@@ -156,8 +179,40 @@ describe("PLT-040 migration 0031 (intent and acceptance storage)", () => {
         `INSERT INTO acceptance_contracts (organization_id, intent_id, document, specification_depth)
          VALUES ($1, $2, $3::jsonb, 'L1')`,
         [orgB, inserted, JSON.stringify({ intent_id: inserted, specification_depth: "L1" })]), "23503");
-      // It cannot flip the LEGACY marker either.
+      // It cannot flip the LEGACY marker, and cannot create a new order born LEGACY.
       await expectCode(owner.query("UPDATE orders SET intent_legacy = TRUE"), "42501");
+      await expectCode(owner.query("UPDATE orders SET intent_legacy = FALSE"), "42501");
+      await expectCode(owner.query(
+        "INSERT INTO orders (project_id, objective, intent_legacy) VALUES ($1, 'forged', TRUE)", [projectA]), "42501");
+      await expectCode(owner.query(
+        "INSERT INTO orders (project_id, objective, intent_legacy) VALUES ($1, 'explicit', FALSE)", [projectA]), "42501");
+      // A normal order still works and is not legacy.
+      const normal = (await owner.query(
+        "INSERT INTO orders (project_id, objective) VALUES ($1, 'normal') RETURNING intent_legacy", [projectA])).rows[0];
+      expect(normal.intent_legacy).toBe(false);
+      // Restricted role: documents missing the values of their columns are rejected too.
+      const restrictedIntent = (document: unknown) => owner.query(
+        `INSERT INTO intent_briefs (organization_id, document, ambiguity_score, change_radius, documentation_depth, clarification_required)
+         VALUES ($1, $2::jsonb, 0.2, 'LOCAL', 'L0', false)`, [orgA, JSON.stringify(document)]);
+      await expectCode(restrictedIntent({}), "23514");
+      await expectCode(restrictedIntent(doc({ ambiguity_score: null })), "23514");
+      await expectCode(restrictedIntent(doc({ change_radius: 7 })), "23514");
+      const restrictedContract = (document: unknown) => owner.query(
+        `INSERT INTO acceptance_contracts (organization_id, intent_id, version, document, specification_depth)
+         VALUES ($1, $2, 50, $3::jsonb, 'L1')`, [orgA, inserted, JSON.stringify(document)]);
+      await expectCode(restrictedContract({}), "23514");
+      await expectCode(restrictedContract({ specification_depth: "L1" }), "23514");
+      await expectCode(restrictedContract({ intent_id: inserted, specification_depth: null }), "23514");
+      await expectCode(restrictedContract({ intent_id: String(inserted).toUpperCase(), specification_depth: "L1" }), "23514");
+      await owner.query("RESET ROLE");
+      // Provisioning is idempotent (staging re-runs it on every deploy).
+      const script = await readFile(path.join(DEFAULT_MIGRATIONS_DIR, "..", "security", "provision-runtime-role.sql"), "utf8");
+      const start = script.indexOf("DO $jev_orders_insert$");
+      const end = script.indexOf("$jev_orders_insert$;", start + 10) + "$jev_orders_insert$;".length;
+      await owner.query(script.slice(start, end).replaceAll("jev_runtime", `"${role}"`).replaceAll("public.", `"${schema}".`));
+      await owner.query(`SET ROLE "${role}"`);
+      await expectCode(owner.query(
+        "INSERT INTO orders (project_id, objective, intent_legacy) VALUES ($1, 'again', TRUE)", [projectA]), "42501");
     } finally {
       await owner.query("RESET ROLE").catch(() => undefined);
       await owner.query("RESET search_path");
@@ -178,6 +233,9 @@ describe("PLT-040 migration 0031 (intent and acceptance storage)", () => {
     ]) {
       const sql = await readFile(file, "utf8");
       expect(sql).not.toMatch(/GRANT[^;]*(UPDATE|DELETE|ALL)[^;]*(intent_briefs|acceptance_contracts)/);
+      // orders is no longer granted at table level: INSERT is by column and excludes intent_legacy.
+      expect(sql).not.toMatch(/GRANT INSERT ON TABLE[^;]*\borders\b/);
+      expect(sql).toContain("a.attname <> 'intent_legacy'");
       expect(sql).toMatch(/GRANT INSERT ON TABLE public\.intent_briefs, public\.acceptance_contracts TO jev_runtime;/);
     }
   });
