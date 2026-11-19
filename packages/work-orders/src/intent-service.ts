@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
   validateAcceptanceContractDocument,
   validateIntentBriefDocument
@@ -82,8 +82,17 @@ export class IntentAcceptanceService {
 
   async saveIntentBrief(
     organizationId: string,
-    input: { orderId?: string | null; document: unknown }
+    input: { orderId?: string | null; document: unknown },
+    /**
+     * Optional client with an open transaction (PLT-040 PR 3): the order lookup
+     * and the INSERT run on it, so the caller can commit the IntentBrief
+     * together with its order. Without it, behaviour is unchanged. Inside a
+     * transaction a failed INSERT aborts it, so the version retry is skipped.
+     */
+    executor?: Pick<PoolClient, "query">
   ): Promise<IntentBriefRecord> {
+    const db: Pick<Pool, "query"> = executor ?? this.pool;
+    const maxAttempts = executor ? 1 : MAX_VERSION_ATTEMPTS;
     assertOrganization(organizationId);
     organizationId = canon(organizationId);
     const document = validateIntentBriefDocument(input.document);
@@ -92,7 +101,7 @@ export class IntentAcceptanceService {
     if (orderId !== null) {
       // orders carry no organization column: it is that of their project.
       const order = isUuid(orderId)
-        ? await this.pool.query(
+        ? await db.query(
             `SELECT 1 FROM orders o
                JOIN projects p ON p.id = o.project_id
               WHERE o.id = $1 AND p.organization_id = $2`,
@@ -106,7 +115,7 @@ export class IntentAcceptanceService {
 
     for (let attempt = 1; ; attempt++) {
       try {
-        const result = await this.pool.query(
+        const result = await db.query(
           `INSERT INTO intent_briefs (
              organization_id, order_id, version, document, ambiguity_score,
              change_radius, documentation_depth, clarification_required
@@ -127,7 +136,7 @@ export class IntentAcceptanceService {
         );
         return mapIntent(result.rows[0]);
       } catch (error) {
-        if (pgCode(error) === "23505" && attempt < MAX_VERSION_ATTEMPTS) continue;
+        if (pgCode(error) === "23505" && attempt < maxAttempts) continue;
         if (pgCode(error) === "23505") {
           throw new IntentAcceptanceError(
             "CONFLICT",

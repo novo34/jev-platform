@@ -54,6 +54,11 @@ export interface CreateWorkOrderInput {
   acceptanceCriteria?: string[];
   attachments?: unknown[];
   requirements?: RequirementInput[];
+  /**
+   * IntentBrief document (Foundation schema). Mandatory for new orders when the
+   * service has an IntentAcceptanceService (PLT-040 PR 3); ignored otherwise.
+   */
+  intent?: unknown;
 }
 
 export interface CreateTaskInput {
@@ -123,6 +128,8 @@ export interface WorkOrderRecord {
   requirements: RequirementRecord[];
   tasks: TaskRecord[];
   stateHistory: StateHistoryEntry<OrderStatus>[];
+  /** IntentBrief stored with the order by createOrder; absent otherwise. */
+  intent?: { id: string; version: number; brief: IntentBriefRecord };
 }
 
 export class WorkOrderError extends Error {
@@ -134,8 +141,11 @@ export class WorkOrderError extends Error {
       | "REQUIREMENT_NOT_FOUND"
       | "REPOSITORY_NOT_FOUND"
       | "AMBIGUOUS_REPOSITORY_TARGET"
-      | "ILLEGAL_TRANSITION",
-    message: string = code
+      | "ILLEGAL_TRANSITION"
+      | "INTENT_REQUIRED"
+      | "INVALID_INTENT",
+    message: string = code,
+    public readonly details: string[] = []
   ) {
     super(message);
     this.name = "WorkOrderError";
