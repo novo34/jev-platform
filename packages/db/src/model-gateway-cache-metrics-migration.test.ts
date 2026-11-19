@@ -121,7 +121,7 @@ describe("PLT-052 migration 0030 (cache metrics views)", () => {
       await owner.query(`SET search_path TO "${schema}", public`);
       const files = (await readdir(DEFAULT_MIGRATIONS_DIR)).filter(f => /^\d+_.+\.sql$/.test(f)).sort();
       const index = files.indexOf("0030_model_gateway_cache_metrics.sql");
-      expect(index).toBe(files.length - 1);
+      expect(index).toBeGreaterThanOrEqual(0);
       for (const file of files.slice(0, index)) {
         let sql = await readFile(path.join(DEFAULT_MIGRATIONS_DIR, file), "utf8");
         if (file.startsWith("0001_")) sql = sql.replace("CREATE EXTENSION IF NOT EXISTS pgcrypto;", "");

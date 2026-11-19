@@ -288,7 +288,7 @@ async function validateTriggerInvariants(pool) {
       expected.set(name, { table, functionName, type, updateColumns });
     }
   }
-  assert(expected.size === 18,
+  assert(expected.size === 20,
     "expected trigger inventory changed; review every migration binding");
 
   const query = [
@@ -322,7 +322,7 @@ async function validateTriggerInvariants(pool) {
   for (const trigger of result.rows) {
     const audited = expected.get(trigger.trigger_name);
     const functionConfig = trigger.function_config;
-    const catalogOnly = new Set(["jev_immutable_task_history", "jev_guard_github_identity", "jev_guard_github_operation"]);
+    const catalogOnly = new Set(["jev_immutable_task_history", "jev_guard_github_identity", "jev_guard_github_operation", "jev_immutable_intent_record"]);
     const expectedPath = catalogOnly.has(trigger.function_name)
       ? "search_path=pg_catalog,pg_temp" : "search_path=pg_catalog,public,pg_temp";
     const pinnedPath = Array.isArray(functionConfig) && functionConfig.length === 1 &&
@@ -498,7 +498,18 @@ async function validateCheckConstraintSurface(pool) {
     "model_provider_calls:model_provider_calls_cache_write_ttl_check",
     // PLT-052 migration 0030 (prefix fingerprint for instability detection).
     "model_provider_calls:model_provider_calls_prefix_tools_sha256_check",
-    "model_provider_calls:model_provider_calls_prefix_segment_refs_check"
+    "model_provider_calls:model_provider_calls_prefix_segment_refs_check",
+    // PLT-040 migration 0031 (IntentBrief and AcceptanceContract storage).
+    "intent_briefs:intent_briefs_version_check",
+    "intent_briefs:intent_briefs_document_check",
+    "intent_briefs:intent_briefs_ambiguity_score_check",
+    "intent_briefs:intent_briefs_change_radius_check",
+    "intent_briefs:intent_briefs_documentation_depth_check",
+    "intent_briefs:intent_briefs_columns_match_document_check",
+    "acceptance_contracts:acceptance_contracts_version_check",
+    "acceptance_contracts:acceptance_contracts_document_check",
+    "acceptance_contracts:acceptance_contracts_specification_depth_check",
+    "acceptance_contracts:acceptance_contracts_columns_match_document_check"
   ]);
   const checks = await pool.query(`
     SELECT c.oid, table_object.relname AS table_name,

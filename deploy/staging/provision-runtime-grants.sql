@@ -64,6 +64,16 @@ $jev_revoke_cols$;
 -- is manipulated; deny it both through PUBLIC and directly to the runtime.
 -- Remove stale table and column grants before restoring exact GitHub rights.
 REVOKE ALL ON TABLE task_state_history, github_operations, github_user_identities FROM PUBLIC, jev_runtime;
+-- PLT-040 append-only tables (migration 0031): drop stale rights, then INSERT only
+-- below. Guarded so the script stays usable against a schema older than 0031.
+DO $jev_intent_revoke$
+BEGIN
+  IF pg_catalog.to_regclass('public.intent_briefs') IS NOT NULL THEN
+    REVOKE ALL ON TABLE public.intent_briefs, public.acceptance_contracts
+      FROM PUBLIC, jev_runtime;
+  END IF;
+END;
+$jev_intent_revoke$;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE CREATE ON SCHEMA public FROM jev_runtime;
 GRANT USAGE ON SCHEMA public TO jev_runtime;
@@ -106,8 +116,26 @@ GRANT EXECUTE ON FUNCTION jev_set_deployment_status(uuid, uuid[], text)
 GRANT EXECUTE ON FUNCTION jev_transition_task(uuid, text, text, text, text, jsonb)
   TO jev_runtime;
 -- Only non-guarded service tables receive DML permissions.
-GRANT INSERT ON TABLE projects, repositories, orders, requirements, task_requirements,
+GRANT INSERT ON TABLE projects, repositories, requirements, task_requirements,
   order_state_history TO jev_runtime;
+-- orders: INSERT by column, excluding intent_legacy (PLT-040), so the runtime role
+-- cannot create an order marked LEGACY (which would skip the IntentBrief
+-- requirement). REVOKE first: it also clears any earlier table-level INSERT and is
+-- idempotent on every re-run. Columns are listed from the catalog so future
+-- columns keep working.
+DO $jev_orders_insert$
+DECLARE column_list text;
+BEGIN
+  REVOKE INSERT ON TABLE public.orders FROM PUBLIC, jev_runtime;
+  SELECT pg_catalog.string_agg(pg_catalog.quote_ident(a.attname), ', ' ORDER BY a.attnum)
+    INTO column_list
+    FROM pg_catalog.pg_attribute a
+   WHERE a.attrelid = 'public.orders'::pg_catalog.regclass
+     AND a.attnum > 0 AND NOT a.attisdropped AND a.attname <> 'intent_legacy';
+  EXECUTE pg_catalog.format(
+    'GRANT INSERT (%s) ON TABLE public.orders TO jev_runtime', column_list);
+END;
+$jev_orders_insert$;
 GRANT UPDATE (status) ON TABLE orders TO jev_runtime;
 -- API authentication and audit paths; no guarded-table privileges.
 GRANT INSERT ON TABLE auth_sessions, audit_events TO jev_runtime;
@@ -131,6 +159,15 @@ GRANT EXECUTE ON FUNCTION jev_create_approval(uuid,uuid,uuid,text,text,text,text
 -- never grant runtime schema ownership or DML on guarded lifecycle tables.
 GRANT INSERT, UPDATE, DELETE ON TABLE provider_credentials TO jev_runtime;
 GRANT INSERT ON TABLE model_provider_calls, cost_events TO jev_runtime;
+-- IntentBrief and AcceptanceContract: INSERT only (SELECT comes from the schema-wide
+-- grant). No UPDATE or DELETE: rows are immutable and versioned (PLT-040).
+DO $jev_intent_grant$
+BEGIN
+  IF pg_catalog.to_regclass('public.intent_briefs') IS NOT NULL THEN
+    GRANT INSERT ON TABLE public.intent_briefs, public.acceptance_contracts TO jev_runtime;
+  END IF;
+END;
+$jev_intent_grant$;
 -- GitHub installation state contains only expiring hashes, scope and identifiers.
 GRANT INSERT, UPDATE, DELETE ON TABLE github_installation_requests TO jev_runtime;
 GRANT INSERT, UPDATE ON TABLE github_installations, github_repository_installations TO jev_runtime;
