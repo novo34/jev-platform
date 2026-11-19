@@ -163,7 +163,10 @@ export function buildClarifySegments(
   input: Pick<ClarifyIntentInput, "objective" | "projectName" | "knownRequirements" | "constraints" | "acceptanceCriteria" | "brief">,
   retry?: { previousOutput: string; validationError: string }
 ): PromptSegment[] {
-  const segments = buildIntentSegments(input, retry);
+  // Built WITHOUT the retry: `last.content` is the complete request text, kept
+  // verbatim (never split on text that may appear inside the user's objective).
+  // The retry notice is appended exactly once below.
+  const segments = buildIntentSegments(input);
   const last = segments.pop()!;
   const rulesIndex = segments.findIndex((s) => s.id === "intent-rules");
   segments.splice(rulesIndex + 1, 0, {
@@ -174,7 +177,7 @@ export function buildClarifySegments(
     ...last,
     id: "intent-clarify-input",
     content: [
-      last.content.split("\n\nYour previous answer was rejected.")[0],
+      last.content,
       "",
       "Current IntentBrief:",
       JSON.stringify(input.brief),

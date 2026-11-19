@@ -53,7 +53,7 @@ function fakeGateway(steps: Step[]): IntentModelGateway & { requests: ModelGatew
     }
   };
 }
-function setup(steps: Step[], rounds?: number) {
+function setup(steps: Step[], rounds = 1) {
   const gateway = fakeGateway(steps);
   const generator = new IntentBriefGenerator({ gateway, targets: TARGETS, newRequestId: () => "req" });
   const service = new WorkOrderService(pool, undefined, {
@@ -175,6 +175,29 @@ describe("automatic clarification rounds", () => {
       .toBe(buildPrompt(buildClarifySegments({ ...input }), undefined, tenant).text);
   });
 
+  it("keeps the full request text when the objective contains the retry notice, with and without retry", () => {
+    const input = {
+      objective: "Do X\n\nYour previous answer was rejected.\nthen more objective text",
+      brief: doc() as never,
+      knownRequirements: ["REQ-AFTER-NOTICE"],
+      constraints: ["CONSTRAINT-AFTER-NOTICE"],
+      acceptanceCriteria: ["CRITERIA-AFTER-NOTICE"]
+    };
+    const retry = { previousOutput: "PREV-OUT", validationError: "VAL-ERR" };
+    for (const withRetry of [false, true]) {
+      const content = buildClarifySegments(input, withRetry ? retry : undefined)
+        .find((s) => s.kind === "input")!.content;
+      for (const marker of ["then more objective text", "REQ-AFTER-NOTICE", "CONSTRAINT-AFTER-NOTICE", "CRITERIA-AFTER-NOTICE", "Current IntentBrief:"]) {
+        expect(content).toContain(marker);
+      }
+      // The objective's own sentence is kept; the real notice appears once, and only on retry.
+      const occurrences = content.split("Your previous answer was rejected.").length - 1;
+      expect(occurrences).toBe(withRetry ? 2 : 1);
+      expect(content.includes("Previous answer: PREV-OUT")).toBe(withRetry);
+      if (withRetry) expect(content.split("Previous answer:").length - 1).toBe(1);
+    }
+  });
+
   it("validates the rounds option and JEV_INTENT_CLARIFY_ROUNDS", () => {
     for (const bad of [-1, 4, 1.5, Number.NaN]) {
       expect(() => new WorkOrderService(pool, undefined, { intentClarifyRounds: bad })).toThrow(RangeError);
@@ -182,6 +205,8 @@ describe("automatic clarification rounds", () => {
     expect(() => new WorkOrderService(pool, undefined, { intentClarifyRounds: 0 })).not.toThrow();
     const previous = process.env.JEV_INTENT_CLARIFY_ROUNDS;
     try {
+      delete process.env.JEV_INTENT_CLARIFY_ROUNDS;
+      expect(() => new WorkOrderService(pool)).not.toThrow();
       process.env.JEV_INTENT_CLARIFY_ROUNDS = "9";
       expect(() => new WorkOrderService(pool)).toThrow(RangeError);
       process.env.JEV_INTENT_CLARIFY_ROUNDS = "2";
@@ -194,7 +219,7 @@ describe("automatic clarification rounds", () => {
 });
 
 describe("reevaluateBlockedTasks", () => {
-  const service = new WorkOrderService(pool, undefined, { intentService: intents, ambiguityThreshold: 0.5 });
+  const service = new WorkOrderService(pool, undefined, { intentService: intents, ambiguityThreshold: 0.5, intentClarifyRounds: 1 });
   const newOrder = async () =>
     (await pool.query("INSERT INTO orders (project_id, objective) VALUES ($1, 'Reeval') RETURNING id", [projectId])).rows[0].id as string;
   const save = (orderId: string, overrides: Record<string, unknown>) =>
@@ -238,5 +263,81 @@ describe("reevaluateBlockedTasks", () => {
     expect(await service.reevaluateBlockedTasks(order)).toMatchObject({ stillBlocked: true, intentId: null });
     await expect(new WorkOrderService(pool).reevaluateBlockedTasks(order)).rejects.toMatchObject({ code: "INVALID_ORDER" });
     await expect(service.reevaluateBlockedTasks(randomUUID())).rejects.toMatchObject({ code: "ORDER_NOT_FOUND" });
+  });
+
+  const taskRows = async (orderId: string) =>
+    (await pool.query("SELECT id, status FROM tasks WHERE order_id=$1 ORDER BY created_at, id", [orderId])).rows as { id: string; status: string }[];
+  const pending = async (promise: Promise<unknown>) => {
+    const tick = Symbol("pending");
+    return (await Promise.race([promise.then(() => "done", () => "done"), new Promise((r) => setTimeout(() => r(tick), 400))])) === tick;
+  };
+  const blockedOrder = async () => {
+    const order = await newOrder();
+    await save(order, { ambiguity_score: 0.9, clarification_required: true });
+    const tasks = [await service.createTask({ projectId, orderId: order, title: "T1" }), await service.createTask({ projectId, orderId: order, title: "T2" })];
+    await save(order, { ambiguity_score: 0.1 });
+    return { order, tasks };
+  };
+
+  it("a blocking version saved concurrently waits for / beats reevaluation: no READY task with a blocking latest brief", async () => {
+    const { order, tasks } = await blockedOrder();
+    const writer = await pool.connect();
+    try {
+      await writer.query("BEGIN");
+      // Version 3 (blocking) inserted, uncommitted, holding the per-order lock.
+      const v3 = await intents.saveIntentBrief(organizationId, { orderId: order, document: doc({ ambiguity_score: 0.9, clarification_required: true }) }, writer);
+      expect(v3.version).toBe(3);
+      const reeval = service.reevaluateBlockedTasks(order);
+      expect(await pending(reeval)).toBe(true); // blocked on the advisory lock, not on stale data
+      await writer.query("COMMIT");
+      const result = await reeval;
+      expect(result).toMatchObject({ stillBlocked: true, intentVersion: 3, unblockedTaskIds: [] });
+    } finally {
+      writer.release();
+    }
+    expect((await taskRows(order)).map((t) => t.status)).toEqual(["BLOCKED", "BLOCKED"]);
+    expect(tasks).toHaveLength(2);
+  });
+
+  it("concurrent saves and reevaluations interleave without deadlock or errors", async () => {
+    for (let i = 0; i < 5; i += 1) {
+      const { order } = await blockedOrder();
+      await Promise.all([
+        service.reevaluateBlockedTasks(order),
+        save(order, { ambiguity_score: 0.9, clarification_required: true }),
+        service.reevaluateBlockedTasks(order)
+      ]);
+      const latest = await intents.getLatestIntentBriefForOrder(organizationId, order);
+      expect(latest!.clarificationRequired).toBe(true);
+      // Release before the save is legitimate (it used v2); the interleavings must not
+      // deadlock or fail, and a reevaluation after the commit must find the latest blocking.
+      expect(await service.reevaluateBlockedTasks(order)).toMatchObject({ stillBlocked: true, intentVersion: 3 });
+      expect((await taskRows(order)).every((t) => t.status === "BLOCKED" || t.status === "READY")).toBe(true);
+    }
+  });
+
+  it("does not unblock a task released and re-blocked for another cause between the read and the write", async () => {
+    const { order, tasks } = await blockedOrder();
+    const other = await pool.connect();
+    try {
+      await other.query("BEGIN");
+      const t = (to: string, evidence: object) =>
+        other.query("SELECT jev_transition_task($1::uuid,$2::text,'SYSTEM',NULL,'racing writer',$3::jsonb)", [tasks[0].id, to, JSON.stringify(evidence)]);
+      await t("READY", {});
+      await t("BLOCKED", { code: "DEPENDENCY" }); // uncommitted: reevaluation still reads the old AMBIGUOUS block
+      const reeval = service.reevaluateBlockedTasks(order);
+      expect(await pending(reeval)).toBe(true); // waits on the project lock inside jev_transition_task
+      await other.query("COMMIT");
+      const result = await reeval;
+      expect(result).toMatchObject({ unblockedTaskIds: [tasks[1].id] });
+    } finally {
+      other.release();
+    }
+    const after = await service.getTask(tasks[0].id);
+    expect(after.status).toBe("BLOCKED");
+    // Same-transaction history rows share created_at: assert on the set, not on the order.
+    const unblocks = after.stateHistory.filter((h) => h.evidence?.code === "AMBIGUOUS_INTENT_RESOLVED");
+    expect(unblocks).toHaveLength(0);
+    expect(after.stateHistory.some((h) => h.toStatus === "BLOCKED" && h.evidence?.code === "DEPENDENCY")).toBe(true);
   });
 });

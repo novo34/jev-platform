@@ -31,6 +31,28 @@ function canon(value: string): string {
   return value.toLowerCase();
 }
 
+/**
+ * Per-order lock shared by every writer/reader that must see a consistent
+ * "latest IntentBrief version" (saveIntentBrief, reevaluateBlockedTasks).
+ * Transaction-scoped advisory lock, released on COMMIT/ROLLBACK.
+ *
+ * LOCK ORDER (to avoid deadlocks): this advisory lock is ALWAYS acquired first,
+ * before any row lock (projects/orders/tasks, including the project-first lock
+ * taken inside jev_transition_task / jev_create_task). createOrder creates the
+ * order in its own transaction and saves all its versions there: the order id
+ * is not visible to anyone else yet, so taking the lock there cannot contend.
+ * Never take it after a row lock of the same transaction.
+ */
+export async function lockOrderIntentVersions(
+  db: Pick<PoolClient, "query">,
+  orderId: string
+): Promise<void> {
+  await db.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+    [`jev:intent-order:${canon(orderId)}`]
+  );
+}
+
 function pgCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
     ? (error as { code?: string }).code
@@ -91,14 +113,62 @@ export class IntentAcceptanceService {
      */
     executor?: Pick<PoolClient, "query">
   ): Promise<IntentBriefRecord> {
-    const db: Pick<Pool, "query"> = executor ?? this.pool;
-    const maxAttempts = executor ? 1 : MAX_VERSION_ATTEMPTS;
     assertOrganization(organizationId);
     organizationId = canon(organizationId);
     const document = validateIntentBriefDocument(input.document);
     const orderId = input.orderId == null ? null : canon(input.orderId);
 
+    // With an executor the caller owns the transaction (lock held until its
+    // COMMIT). Without one, a short own transaction wraps lock + INSERT so the
+    // lock is released right after the version is committed.
+    // Briefs without an order have no per-order versions to serialize: one INSERT.
+    if (executor || orderId === null) {
+      const db: Pick<PoolClient, "query"> = executor ?? this.pool;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await this.insertBrief(db, organizationId, orderId, document);
+        } catch (error) {
+          const retry =
+            !executor &&
+            error instanceof IntentAcceptanceError &&
+            error.code === "CONFLICT" &&
+            attempt < MAX_VERSION_ATTEMPTS;
+          if (!retry) throw error;
+        }
+      }
+    }
+    for (let attempt = 1; ; attempt++) {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        const record = await this.insertBrief(client, organizationId, orderId, document);
+        await client.query("COMMIT");
+        return record;
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        if (
+          error instanceof IntentAcceptanceError &&
+          error.code === "CONFLICT" &&
+          attempt < MAX_VERSION_ATTEMPTS
+        ) {
+          continue;
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+  }
+
+  private async insertBrief(
+    db: Pick<PoolClient, "query">,
+    organizationId: string,
+    orderId: string | null,
+    document: ReturnType<typeof validateIntentBriefDocument>
+  ): Promise<IntentBriefRecord> {
     if (orderId !== null) {
+      // Serialize with other versions and with reevaluateBlockedTasks.
+      if (isUuid(orderId)) await lockOrderIntentVersions(db, orderId);
       // orders carry no organization column: it is that of their project.
       const order = isUuid(orderId)
         ? await db.query(
@@ -113,45 +183,36 @@ export class IntentAcceptanceService {
       }
     }
 
-    for (let attempt = 1; ; attempt++) {
-      try {
-        const result = await db.query(
-          `INSERT INTO intent_briefs (
-             organization_id, order_id, version, document, ambiguity_score,
-             change_radius, documentation_depth, clarification_required
-           ) VALUES (
-             $1, $2,
-             COALESCE((SELECT MAX(version) FROM intent_briefs WHERE order_id = $2), 0) + 1,
-             $3::jsonb, $4, $5, $6, $7
-           ) RETURNING *`,
-          [
-            organizationId,
-            orderId,
-            JSON.stringify(document),
-            document.ambiguity_score,
-            document.change_radius,
-            document.documentation_depth,
-            document.clarification_required
-          ]
-        );
-        return mapIntent(result.rows[0]);
-      } catch (error) {
-        if (pgCode(error) === "23505" && attempt < maxAttempts) continue;
-        if (pgCode(error) === "23505") {
-          throw new IntentAcceptanceError(
-            "CONFLICT",
-            "concurrent IntentBrief version conflict"
-          );
-        }
-        if (pgCode(error) === "23503") {
-          throw new IntentAcceptanceError(
-            "INVALID_ORGANIZATION",
-            "organization not found"
-          );
-        }
-        if (pgCode(error) === "23514") throw checkViolation();
-        throw error;
+    try {
+      const result = await db.query(
+        `INSERT INTO intent_briefs (
+           organization_id, order_id, version, document, ambiguity_score,
+           change_radius, documentation_depth, clarification_required
+         ) VALUES (
+           $1, $2,
+           COALESCE((SELECT MAX(version) FROM intent_briefs WHERE order_id = $2), 0) + 1,
+           $3::jsonb, $4, $5, $6, $7
+         ) RETURNING *`,
+        [
+          organizationId,
+          orderId,
+          JSON.stringify(document),
+          document.ambiguity_score,
+          document.change_radius,
+          document.documentation_depth,
+          document.clarification_required
+        ]
+      );
+      return mapIntent(result.rows[0]);
+    } catch (error) {
+      if (pgCode(error) === "23505") {
+        throw new IntentAcceptanceError("CONFLICT", "concurrent IntentBrief version conflict");
       }
+      if (pgCode(error) === "23503") {
+        throw new IntentAcceptanceError("INVALID_ORGANIZATION", "organization not found");
+      }
+      if (pgCode(error) === "23514") throw checkViolation();
+      throw error;
     }
   }
 
@@ -176,12 +237,14 @@ export class IntentAcceptanceService {
   /** Latest version of the IntentBrief of an order, or null when it has none. */
   async getLatestIntentBriefForOrder(
     organizationId: string,
-    orderId: string
+    orderId: string,
+    /** Client of an open transaction to read on (e.g. after lockOrderIntentVersions). */
+    executor?: Pick<PoolClient, "query">
   ): Promise<IntentBriefRecord | null> {
     assertOrganization(organizationId);
     organizationId = canon(organizationId);
     if (!isUuid(orderId)) return null;
-    const result = await this.pool.query(
+    const result = await (executor ?? this.pool).query(
       `SELECT * FROM intent_briefs
         WHERE order_id = $1 AND organization_id = $2
         ORDER BY version DESC LIMIT 1`,
