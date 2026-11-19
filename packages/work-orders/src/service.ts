@@ -6,13 +6,16 @@ import {
 import type { IntentAcceptanceService } from "./intent-service.js";
 import {
   DEFAULT_AMBIGUITY_BLOCK_THRESHOLD,
-  isImplementationBlocked
+  isImplementationBlocked,
+  validateIntentBriefDocument
 } from "./intent-validation.js";
 import {
   WorkOrderError,
   type CreateTaskInput,
   type ImplementationBlock,
   type CreateWorkOrderInput,
+  IntentAcceptanceError,
+  type IntentBriefRecord,
   type OrderStatus,
   type RequirementRecord,
   type StateHistoryEntry,
@@ -194,8 +197,42 @@ export class WorkOrderService {
       requirementKeys.add(requirement.key);
     }
 
+    // PLT-040 PR 3: with an IntentAcceptanceService every new order needs a valid
+    // IntentBrief, checked before anything is written.
+    let organizationId: string | undefined;
+    if (this.intentService) {
+      if (input.intent === undefined || input.intent === null) {
+        throw new WorkOrderError(
+          "INTENT_REQUIRED",
+          "a new order requires an IntentBrief (intent)"
+        );
+      }
+      try {
+        validateIntentBriefDocument(input.intent);
+      } catch (error) {
+        if (error instanceof IntentAcceptanceError) {
+          throw new WorkOrderError(
+            "INVALID_INTENT",
+            `invalid IntentBrief: ${error.message}${error.details.length ? ` (${error.details.join("; ")})` : ""}`,
+            error.details
+          );
+        }
+        throw error;
+      }
+      // orders carry no organization: it is that of their project.
+      const project = await this.pool.query(
+        "SELECT organization_id FROM projects WHERE id = $1",
+        [input.projectId]
+      );
+      if (!project.rows.length) {
+        throw new WorkOrderError("INVALID_ORDER", "project not found");
+      }
+      organizationId = String(project.rows[0].organization_id).toLowerCase();
+    }
+
     const client = await this.pool.connect();
     let orderId: string;
+    let intentBrief: IntentBriefRecord | undefined;
     try {
       await client.query("BEGIN");
       const orderResult = await client.query(
@@ -233,6 +270,26 @@ export class WorkOrderService {
         );
       }
 
+      if (this.intentService && organizationId) {
+        // Same transaction: order and IntentBrief commit or roll back together.
+        try {
+          intentBrief = await this.intentService.saveIntentBrief(
+            organizationId,
+            { orderId, document: input.intent },
+            client
+          );
+        } catch (error) {
+          if (error instanceof IntentAcceptanceError) {
+            throw new WorkOrderError(
+              "INVALID_INTENT",
+              `IntentBrief could not be saved: ${error.message}`,
+              error.details
+            );
+          }
+          throw error;
+        }
+      }
+
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -241,7 +298,15 @@ export class WorkOrderService {
       client.release();
     }
 
-    return this.getOrder(orderId);
+    const order = await this.getOrder(orderId);
+    if (intentBrief) {
+      order.intent = {
+        id: intentBrief.id,
+        version: intentBrief.version,
+        brief: intentBrief
+      };
+    }
+    return order;
   }
 
   async createTask(input: CreateTaskInput): Promise<TaskRecord> {
