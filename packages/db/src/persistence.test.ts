@@ -261,7 +261,8 @@ describe("canonical PostgreSQL persistence", () => {
       "0027_password_recovery.sql",
       "0028_github_integrate_staging_action.sql",
       "0029_model_gateway_prompt_cache.sql",
-      "0030_model_gateway_cache_metrics.sql"
+      "0030_model_gateway_cache_metrics.sql",
+      "0031_intent_acceptance_storage.sql"
     ]);
   });
 });

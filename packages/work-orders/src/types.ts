@@ -130,3 +130,91 @@ export class WorkOrderError extends Error {
     this.name = "WorkOrderError";
   }
 }
+
+export type ChangeRadius =
+  | "LOCAL"
+  | "COMPONENT"
+  | "CROSS_LAYER"
+  | "ARCHITECTURAL"
+  | "PRODUCT";
+
+export type DocumentationDepth = "L0" | "L1" | "L2" | "L3" | "L4";
+
+/** Document shape of Foundation schemas/intent-brief.schema.json. */
+export interface IntentBriefDocument {
+  goal: string;
+  requested_change: string;
+  in_scope: string[];
+  out_of_scope: string[];
+  observed_context: string[];
+  assumptions: string[];
+  open_questions: string[];
+  ambiguity_score: number;
+  change_radius: ChangeRadius;
+  risk_signals: string[];
+  documentation_depth: DocumentationDepth;
+  clarification_required: boolean;
+  evidence_needed: string[];
+}
+
+export interface AcceptanceCriterion {
+  criterion: string;
+  verification: string;
+}
+
+/**
+ * Document shape of Foundation schemas/acceptance-contract.schema.json.
+ * `intent_id` is the Platform-assigned id of the stored IntentBrief.
+ */
+export interface AcceptanceContractDocument {
+  intent_id: string;
+  acceptance_criteria: AcceptanceCriterion[];
+  constraints: string[];
+  assumptions: string[];
+  non_goals: string[];
+  affected_requirements: string[];
+  compatibility_requirements: string[];
+  required_evidence: string[];
+  unresolved_decisions: string[];
+  specification_depth: DocumentationDepth;
+}
+
+export interface IntentBriefRecord {
+  id: string;
+  organizationId: string;
+  orderId: string | null;
+  version: number;
+  document: IntentBriefDocument;
+  ambiguityScore: number;
+  changeRadius: ChangeRadius;
+  documentationDepth: DocumentationDepth;
+  clarificationRequired: boolean;
+  createdAt: string;
+}
+
+export interface AcceptanceContractRecord {
+  id: string;
+  organizationId: string;
+  intentId: string;
+  orderId: string | null;
+  version: number;
+  document: AcceptanceContractDocument;
+  specificationDepth: DocumentationDepth;
+  createdAt: string;
+}
+
+export class IntentAcceptanceError extends Error {
+  constructor(
+    public readonly code:
+      | "INVALID_DOCUMENT"
+      | "INVALID_ORGANIZATION"
+      | "ORDER_NOT_FOUND"
+      | "INTENT_NOT_FOUND"
+      | "CONFLICT",
+    message: string = code,
+    public readonly details: string[] = []
+  ) {
+    super(message);
+    this.name = "IntentAcceptanceError";
+  }
+}
