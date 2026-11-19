@@ -3,9 +3,15 @@ import {
   ProjectRegistryError,
   ProjectRegistryService
 } from "@jev/projects";
+import type { IntentAcceptanceService } from "./intent-service.js";
+import {
+  DEFAULT_AMBIGUITY_BLOCK_THRESHOLD,
+  isImplementationBlocked
+} from "./intent-validation.js";
 import {
   WorkOrderError,
   type CreateTaskInput,
+  type ImplementationBlock,
   type CreateWorkOrderInput,
   type OrderStatus,
   type RequirementRecord,
@@ -97,14 +103,81 @@ function mapRepositoryError(error: unknown): never {
   throw error;
 }
 
+export interface WorkOrderServiceOptions {
+  /**
+   * When set, createTask blocks new tasks of orders whose latest IntentBrief is
+   * materially ambiguous (PLT-040 PR 2). Without it behaviour is unchanged.
+   */
+  intentService?: IntentAcceptanceService;
+  /** Ambiguity threshold in [0,1]; default env JEV_AMBIGUITY_BLOCK_THRESHOLD or 0.5. */
+  ambiguityThreshold?: number;
+}
+
+function resolveAmbiguityThreshold(explicit?: number): number {
+  let value: number = DEFAULT_AMBIGUITY_BLOCK_THRESHOLD;
+  if (explicit !== undefined) {
+    value = explicit;
+  } else {
+    const raw = process.env.JEV_AMBIGUITY_BLOCK_THRESHOLD;
+    if (raw !== undefined && raw.trim() !== "") value = Number(raw);
+  }
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new RangeError("ambiguity threshold must be a number between 0 and 1");
+  }
+  return value;
+}
+
 export class WorkOrderService {
   private readonly projects: ProjectRegistryService;
+  private readonly intentService?: IntentAcceptanceService;
+  private readonly ambiguityThreshold: number;
 
   constructor(
     private readonly pool: Pool,
-    projects?: ProjectRegistryService
+    projects?: ProjectRegistryService,
+    options: WorkOrderServiceOptions = {}
   ) {
     this.projects = projects ?? new ProjectRegistryService(pool);
+    this.intentService = options.intentService;
+    this.ambiguityThreshold = resolveAmbiguityThreshold(options.ambiguityThreshold);
+  }
+
+  /**
+   * Material ambiguity gate. Returns the block description, or null when the
+   * task may proceed: no intent service, unknown order, legacy order (no
+   * behaviour change) or order without IntentBrief (IntentBrief becomes
+   * mandatory for new orders in PLT-040 PR 3). Always uses the latest version,
+   * so a later clarified IntentBrief unblocks new tasks. Read before BEGIN, so
+   * an IntentBrief saved concurrently after this read is not seen.
+   */
+  private async evaluateImplementationBlock(
+    input: CreateTaskInput
+  ): Promise<ImplementationBlock | null> {
+    if (!this.intentService) return null;
+    const scope = await this.pool.query(
+      `SELECT o.intent_legacy, p.organization_id
+         FROM orders o JOIN projects p ON p.id = o.project_id
+        WHERE o.id = $1 AND o.project_id = $2`,
+      [input.orderId, input.projectId]
+    );
+    const row = scope.rows[0];
+    if (!row || row.intent_legacy === true) return null;
+    const intent = await this.intentService.getLatestIntentBriefForOrder(
+      row.organization_id,
+      input.orderId
+    );
+    if (!intent) return null;
+    if (!isImplementationBlocked(intent.document, this.ambiguityThreshold)) {
+      return null;
+    }
+    return {
+      code: "AMBIGUOUS_INTENT",
+      intentId: intent.id,
+      intentVersion: intent.version,
+      ambiguityScore: intent.ambiguityScore,
+      clarificationRequired: intent.clarificationRequired,
+      threshold: this.ambiguityThreshold
+    };
   }
 
   async createOrder(input: CreateWorkOrderInput): Promise<WorkOrderRecord> {
@@ -186,6 +259,7 @@ export class WorkOrderService {
       mapRepositoryError(error);
     }
 
+    const block = await this.evaluateImplementationBlock(input);
     const client = await this.pool.connect();
     let taskId: string;
 
@@ -250,6 +324,31 @@ export class WorkOrderService {
         );
       }
 
+      if (block) {
+        // Same transaction as creation: the task is never observable as PLANNED.
+        // The creation trigger requires PLANNED, so it is moved to BLOCKED here.
+        // Unblocking (BLOCKED -> READY, already legal) requires a newer
+        // IntentBrief version with clarification resolved; not implemented yet.
+        const context: TransitionContext = {
+          actorType: "SYSTEM",
+          cause: "implementation blocked: material ambiguity in IntentBrief",
+          evidence: {
+            code: block.code,
+            intent_id: block.intentId,
+            intent_version: block.intentVersion,
+            ambiguity_score: block.ambiguityScore,
+            clarification_required: block.clarificationRequired,
+            threshold: block.threshold
+          }
+        };
+        await applyTransitionContext(client, context);
+        await client.query(
+          "SELECT jev_transition_task($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::jsonb) AS id",
+          [taskId, "BLOCKED", "SYSTEM", null, context.cause,
+           JSON.stringify(context.evidence)]
+        );
+      }
+
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -258,7 +357,8 @@ export class WorkOrderService {
       client.release();
     }
 
-    return this.getTask(taskId);
+    const task = await this.getTask(taskId);
+    return block ? { ...task, implementationBlock: block } : task;
   }
 
   async transitionOrder(
@@ -411,7 +511,7 @@ export class WorkOrderService {
         `SELECT from_status, to_status, actor_type, actor_id, cause, evidence, created_at
            FROM task_state_history
           WHERE task_id = $1
-          ORDER BY created_at, id`,
+          ORDER BY created_at, (from_status IS NOT NULL), id`,
         [taskId]
       )
     ]);
