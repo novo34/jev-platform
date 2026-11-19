@@ -2,6 +2,7 @@ export * from "./types.js";
 export {
   WorkOrderService,
   DEFAULT_INTENT_CLARIFY_ROUNDS,
+  INTAKE_WORK_TYPE,
   MAX_INTENT_CLARIFY_ROUNDS,
   type ReevaluateBlockedTasksResult,
   type WorkOrderServiceOptions
@@ -22,6 +23,10 @@ export {
   INTENT_PROMPT_VERSION,
   buildIntentSegments,
   buildClarifySegments,
+  buildContractSegments,
+  CONTRACT_INTENT_ID_PLACEHOLDER,
+  type GenerateContractInput,
+  type GeneratedContract,
   type ClarifyIntentInput,
   parseIntentModelTargets,
   type GenerateIntentInput,

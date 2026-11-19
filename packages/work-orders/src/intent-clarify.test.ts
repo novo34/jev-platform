@@ -36,14 +36,30 @@ const ambiguous = (extra: Record<string, unknown> = {}) =>
   JSON.stringify(doc({ ambiguity_score: 0.9, clarification_required: true, open_questions: ["Which page?"], ...extra }));
 const clear = JSON.stringify(doc({ assumptions: ["Page is /home (stated in requirement R1)"] }));
 
+const DEFAULT_CONTRACT = JSON.stringify({
+  intent_id: "PENDING_INTENT_ID",
+  acceptance_criteria: [{ criterion: "Hero image is replaced", verification: "visual check of /home" }],
+  constraints: [], assumptions: [], non_goals: [], affected_requirements: [],
+  compatibility_requirements: [], required_evidence: [], unresolved_decisions: [],
+  specification_depth: "L0"
+});
+
 type Step = string | Error;
-function fakeGateway(steps: Step[]): IntentModelGateway & { requests: ModelGatewayRequest[] } {
+// PR 6: contract calls use their own script (default: one valid contract) and are
+// recorded in `contractRequests`, so the brief/clarify scripts and counts are unchanged.
+function fakeGateway(
+  steps: Step[],
+  contractSteps: Step[] = []
+): IntentModelGateway & { requests: ModelGatewayRequest[]; contractRequests: ModelGatewayRequest[] } {
   const requests: ModelGatewayRequest[] = [];
+  const contractRequests: ModelGatewayRequest[] = [];
   return {
     requests,
+    contractRequests,
     async execute(request) {
-      requests.push(request);
-      const step = steps.shift();
+      const isContract = request.agentRole === "acceptance-contract-generator";
+      (isContract ? contractRequests : requests).push(request);
+      const step = isContract ? (contractSteps.shift() ?? DEFAULT_CONTRACT) : steps.shift();
       if (step === undefined) throw new Error("fake gateway: no more steps");
       if (step instanceof Error) throw step;
       return {

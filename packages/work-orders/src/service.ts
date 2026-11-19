@@ -18,6 +18,8 @@ import {
   type CreateTaskInput,
   type ImplementationBlock,
   type CreateWorkOrderInput,
+  type AcceptanceContractDocument,
+  type AcceptanceContractRecord,
   IntentAcceptanceError,
   type IntentBriefDocument,
   type IntentBriefRecord,
@@ -143,6 +145,32 @@ function resolveAmbiguityThreshold(explicit?: number): number {
   return value;
 }
 
+type Risk = NonNullable<CreateTaskInput["risk"]>;
+const RISK_ORDER: readonly Risk[] = ["R0", "R1", "R2", "R3", "R4"];
+function maxRisk(a: Risk, b: Risk): Risk {
+  return RISK_ORDER.indexOf(a) >= RISK_ORDER.indexOf(b) ? a : b;
+}
+
+/** Marker of the per-project intake order (see ensureIntakeTask). */
+export const INTAKE_WORK_TYPE = "SYSTEM_INTAKE";
+const INTAKE_OBJECTIVE = "[SYSTEM] Intake: billing anchor for IntentBrief generation. Not a real work order; nothing to execute.";
+const INTAKE_TASK_TITLE = "[SYSTEM] Intake task (billing anchor, do not execute)";
+const INTAKE_INTENT_BRIEF: IntentBriefDocument = {
+  goal: "System intake order that anchors Model Gateway calls of the project",
+  requested_change: "None: no code change is requested",
+  in_scope: [],
+  out_of_scope: ["any code or configuration change"],
+  observed_context: ["System-created order (work_type SYSTEM_INTAKE)"],
+  assumptions: [],
+  open_questions: [],
+  ambiguity_score: 0,
+  change_radius: "LOCAL",
+  risk_signals: [],
+  documentation_depth: "L0",
+  clarification_required: false,
+  evidence_needed: []
+};
+
 export const DEFAULT_INTENT_CLARIFY_ROUNDS = 1;
 export const MAX_INTENT_CLARIFY_ROUNDS = 3;
 
@@ -236,7 +264,13 @@ export class WorkOrderService {
    */
   async createOrderWithGeneratedIntent(
     input: Omit<CreateWorkOrderInput, "intent">,
-    gatewayTaskId: string
+    gatewayTaskId: string,
+    /**
+     * Order of the gateway task (PLT-040 PR 6). The gateway requires the order
+     * of the request to be exactly the order of the task, so an intake task that
+     * belongs to an order needs it here. Omit for tasks without order.
+     */
+    gatewayOrderId?: string
   ): Promise<WorkOrderRecord> {
     // Both are needed BEFORE any paid model call: without intentService the
     // generated brief would be silently dropped by createOrder.
@@ -259,6 +293,7 @@ export class WorkOrderService {
       organizationId: String(project.rows[0].organization_id).toLowerCase(),
       projectId: input.projectId,
       taskId: gatewayTaskId,
+      orderId: gatewayOrderId,
       projectName: String(project.rows[0].name),
       knownRequirements: (input.requirements ?? []).map(
         (r) => `${r.key}: ${r.title} - ${r.description}`
@@ -285,10 +320,97 @@ export class WorkOrderService {
       });
       versions.push(clarified.document);
     }
+    // PLT-040 PR 6: the AcceptanceContract is generated HERE, before the
+    // transaction (no network inside a transaction), from the FINAL brief. If
+    // the final brief is still blocking (high ambiguity) NO contract is
+    // generated: a contract over an undecided intent would have to invent
+    // criteria (anti-invention), and it costs a paid call for nothing; the
+    // contract is generated later, once the intent is clarified.
+    const finalBrief = versions[versions.length - 1];
+    let contract: AcceptanceContractDocument | undefined;
+    if (!isImplementationBlocked(finalBrief, this.ambiguityThreshold)) {
+      contract = (
+        await this.intentGenerator.generateContract({ ...generateInput, brief: finalBrief })
+      ).document;
+    }
     return this.insertOrder(
-      { ...input, intent: versions[versions.length - 1] },
-      versions.slice(0, -1)
+      { ...input, intent: finalBrief },
+      versions.slice(0, -1),
+      contract
     );
+  }
+
+  /**
+   * PLT-040 PR 6: the intake (admission) order and task of a project, created
+   * lazily and idempotently. The Model Gateway bills every call to an existing
+   * task of the project, and before the first order there is none, so each
+   * project gets ONE system order (work_type SYSTEM_INTAKE) with a non-ambiguous
+   * system IntentBrief and ONE task that is only a billing anchor: it never
+   * executes anything and spends nothing by itself. Needs a project repository
+   * (createTask resolves it as for any task). Concurrent callers are serialized
+   * with a session advisory lock taken by polling (no connection is held while
+   * waiting, so a small pool cannot deadlock).
+   */
+  async ensureIntakeTask(projectId: string): Promise<{ orderId: string; taskId: string }> {
+    const lookup = async () => {
+      const found = await this.pool.query(
+        `SELECT o.id AS order_id,
+                (SELECT t.id FROM tasks t WHERE t.order_id = o.id ORDER BY t.created_at, t.id LIMIT 1) AS task_id
+           FROM orders o
+          WHERE o.project_id = $1 AND o.work_type = $2
+          ORDER BY o.created_at, o.id LIMIT 1`,
+        [projectId, INTAKE_WORK_TYPE]
+      );
+      return found.rows[0] as { order_id: string; task_id: string | null } | undefined;
+    };
+    const existing = await lookup();
+    if (existing?.task_id) return { orderId: existing.order_id, taskId: existing.task_id };
+
+    const lockKey = `jev:intake:${projectId.toLowerCase()}`;
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const client = await this.pool.connect();
+      let locked = false;
+      try {
+        const got = await client.query(
+          "SELECT pg_try_advisory_lock(hashtextextended($1::text, 0)) AS ok",
+          [lockKey]
+        );
+        locked = got.rows[0].ok === true;
+        if (locked) {
+          const again = await lookup();
+          let orderId = again?.order_id;
+          let taskId = again?.task_id ?? undefined;
+          if (!orderId) {
+            orderId = (
+              await this.createOrder({
+                projectId,
+                objective: INTAKE_OBJECTIVE,
+                workType: INTAKE_WORK_TYPE,
+                intent: INTAKE_INTENT_BRIEF
+              })
+            ).id;
+          }
+          if (!taskId) {
+            taskId = (
+              await this.createTask({ projectId, orderId, title: INTAKE_TASK_TITLE, risk: "R0" })
+            ).id;
+          }
+          return { orderId, taskId };
+        }
+      } finally {
+        if (locked) {
+          await client
+            .query("SELECT pg_advisory_unlock(hashtextextended($1::text, 0))", [lockKey])
+            .catch(() => undefined);
+        }
+        client.release();
+      }
+      if (Date.now() > deadline) {
+        throw new WorkOrderError("INVALID_ORDER", "intake task creation is busy, retry");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 
   /**
@@ -472,10 +594,15 @@ export class WorkOrderService {
     return this.insertOrder(input, []);
   }
 
-  /** `priorIntents`: earlier (clarified-away) versions saved before the final one, same transaction. */
+  /**
+   * `priorIntents`: earlier (clarified-away) versions saved before the final one,
+   * same transaction. `contract`: generated AcceptanceContract content; its
+   * intent_id is set to the id of the final brief right after saving it.
+   */
   private async insertOrder(
     input: CreateWorkOrderInput,
-    priorIntents: IntentBriefDocument[]
+    priorIntents: IntentBriefDocument[],
+    contract?: AcceptanceContractDocument
   ): Promise<WorkOrderRecord> {
     assertNonEmpty(input.objective, "objective");
 
@@ -526,6 +653,7 @@ export class WorkOrderService {
     const client = await this.pool.connect();
     let orderId: string;
     let intentBrief: IntentBriefRecord | undefined;
+    let contractRecord: AcceptanceContractRecord | undefined;
     try {
       await client.query("BEGIN");
       const orderResult = await client.query(
@@ -578,6 +706,14 @@ export class WorkOrderService {
             { orderId, document: input.intent },
             client
           );
+          if (contract) {
+            // Same transaction, same per-order lock: all or nothing.
+            contractRecord = await this.intentService.saveAcceptanceContract(
+              organizationId,
+              { document: { ...contract, intent_id: intentBrief.id } },
+              client
+            );
+          }
         } catch (error) {
           if (error instanceof IntentAcceptanceError) {
             throw new WorkOrderError(
@@ -606,6 +742,7 @@ export class WorkOrderService {
         brief: intentBrief
       };
     }
+    if (contractRecord) order.acceptanceContract = contractRecord;
     return order;
   }
 
@@ -625,6 +762,9 @@ export class WorkOrderService {
     }
 
     const block = await this.evaluateImplementationBlock(input);
+    // SPEC high_ambiguity_intent: a task blocked by AMBIGUOUS_INTENT is at least
+    // R2 (R0<R1<R2<R3<R4); a higher requested risk is respected.
+    const risk = block ? maxRisk(input.risk ?? "R0", "R2") : (input.risk ?? "R0");
     const client = await this.pool.connect();
     let taskId: string;
 
@@ -676,7 +816,7 @@ export class WorkOrderService {
           input.orderId,
           repositoryId,
           input.title.trim(),
-          input.risk ?? "R0",
+          risk,
           JSON.stringify(input.acceptanceCriteria ?? [])
         ]
       );

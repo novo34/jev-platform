@@ -7,6 +7,7 @@ import { registerControlRoutes } from "./control.js";
 import type { ProviderRegistry } from "@jev/model-gateway";
 import { registerProviderRoutes } from "./providers.js";
 import { registerCacheMetricsRoutes } from "./cache-metrics.js";
+import { registerWorkOrderRoutes, type WorkOrderRoutesOptions } from "./work-orders.js";
 import { ControlService, type GitHubInstallationFlow, type GitHubOperations } from "@jev/control";
 
 interface BuildApiOptions {
@@ -16,6 +17,8 @@ interface BuildApiOptions {
   githubInstallation?: GitHubInstallationFlow;
   githubOperations?: GitHubOperations;
   passwordRecovery?: PasswordRecoveryOptions;
+  /** PLT-040 PR 6: injectable intent gateway/targets (tests); default builds the real gateway lazily from env. */
+  workOrders?: WorkOrderRoutesOptions;
 }
 
 export function buildApi(options: BuildApiOptions = {}) {
@@ -46,6 +49,7 @@ export function buildApi(options: BuildApiOptions = {}) {
       registry: options.providerRegistry
     });
     registerCacheMetricsRoutes(app, options.pool);
+    registerWorkOrderRoutes(app, options.pool, { encryptionKey: options.providerEncryptionKey, ...options.workOrders });
   }
 
   return app;

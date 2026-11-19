@@ -130,6 +130,8 @@ export interface WorkOrderRecord {
   stateHistory: StateHistoryEntry<OrderStatus>[];
   /** IntentBrief stored with the order by createOrder; absent otherwise. */
   intent?: { id: string; version: number; brief: IntentBriefRecord };
+  /** AcceptanceContract generated with the brief (PLT-040 PR 6); absent when not generated. */
+  acceptanceContract?: AcceptanceContractRecord;
 }
 
 export class WorkOrderError extends Error {
