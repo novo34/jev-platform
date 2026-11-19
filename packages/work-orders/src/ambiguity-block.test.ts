@@ -5,7 +5,7 @@ import { IntentAcceptanceService, WorkOrderService } from "./index.js";
 
 const pool = createDatabasePool();
 const intents = new IntentAcceptanceService(pool);
-const service = new WorkOrderService(pool, undefined, { intentService: intents });
+const service = new WorkOrderService(pool, undefined, { intentService: intents, ambiguityThreshold: 0.5 });
 const organizationId = randomUUID();
 const projectId = randomUUID();
 const repositoryId = randomUUID();
