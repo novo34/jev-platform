@@ -96,6 +96,17 @@ export interface TaskRecord {
   acceptanceCriteria: string[];
   requirementIds: string[];
   stateHistory: StateHistoryEntry<TaskStatus>[];
+  /** Set only by createTask when the task was born BLOCKED by material ambiguity (PLT-040). */
+  implementationBlock?: ImplementationBlock;
+}
+
+export interface ImplementationBlock {
+  code: "AMBIGUOUS_INTENT";
+  intentId: string;
+  intentVersion: number;
+  ambiguityScore: number;
+  clarificationRequired: boolean;
+  threshold: number;
 }
 
 export interface WorkOrderRecord {
