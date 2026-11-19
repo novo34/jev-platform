@@ -340,4 +340,36 @@ describe("reevaluateBlockedTasks", () => {
     expect(unblocks).toHaveLength(0);
     expect(after.stateHistory.some((h) => h.toStatus === "BLOCKED" && h.evidence?.code === "DEPENDENCY")).toBe(true);
   });
+
+  it("does not unblock when the latest COMMITTED block came from a transaction that began earlier (created_at order == commit order)", async () => {
+    const order = await newOrder();
+    await save(order, { ambiguity_score: 0.9, clarification_required: true });
+    const y = await pool.connect();
+    let raced = "";
+    try {
+      // Y fixes its transaction start (what NOW() would stamp) before anything else happens.
+      await y.query("BEGIN");
+      await y.query("SELECT 1");
+      await new Promise((r) => setTimeout(r, 25));
+      // X: the task is blocked for AMBIGUOUS_INTENT and committed.
+      const task = await service.createTask({ projectId, orderId: order, title: "Raced" });
+      expect(task.status).toBe("BLOCKED");
+      raced = task.id;
+      await save(order, { ambiguity_score: 0.1 });
+      // U: released to READY and committed.
+      await service.transitionTask(task.id, "READY", { actorType: "SYSTEM", cause: "released" });
+      // Y: takes the project lock only now, re-blocks for ANOTHER cause and commits.
+      await y.query(
+        "SELECT jev_transition_task($1::uuid,'BLOCKED','SYSTEM',NULL,'late writer',$2::jsonb)",
+        [task.id, JSON.stringify({ code: "DEPENDENCY" })]
+      );
+      await y.query("COMMIT");
+    } finally {
+      y.release();
+    }
+    const result = await service.reevaluateBlockedTasks(order);
+    expect(result.unblockedTaskIds).toEqual([]);
+    const after = await service.getTask(raced);
+    expect(after.status).toBe("BLOCKED");
+  });
 });

@@ -371,7 +371,10 @@ export class WorkOrderService {
    * every task writer, then updates the row) the latest BLOCKED entry is read
    * again: if it is not the same one (the task was released and re-blocked by
    * someone else in between, with a possibly different cause), the transaction
-   * is rolled back and the newer block is preserved.
+   * is rolled back and the newer block is preserved. The history row count is
+   * also checked (+1 exactly). "Latest" is by created_at, which migration 0032
+   * stamps with clock_timestamp(): every history writer holds the project lock
+   * until commit, so that order equals commit order.
    */
   private async unblockTaskIfStillAmbiguous(
     organizationId: string,
@@ -382,6 +385,11 @@ export class WorkOrderService {
     | { kind: "skipped" }
     | { kind: "order_blocked"; intent: IntentBriefRecord | null }
   > {
+    const historyCount = async (client: PoolClient) =>
+      Number(
+        (await client.query("SELECT count(*) AS n FROM task_state_history WHERE task_id = $1", [taskId]))
+          .rows[0].n
+      );
     const latestBlock = (client: PoolClient) =>
       client.query(
         `SELECT t.status,
@@ -434,6 +442,7 @@ export class WorkOrderService {
           reason: "latest IntentBrief version no longer blocks implementation"
         }
       };
+      const rowsBefore = await historyCount(client);
       await applyTransitionContext(client, context);
       await client.query(
         "SELECT jev_transition_task($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::jsonb) AS id",
@@ -442,7 +451,8 @@ export class WorkOrderService {
       // The project lock is now held: nobody else can write this task. Verify
       // that the block we decided on is still the latest one.
       const after = (await latestBlock(client)).rows[0];
-      if (!after || after.history_id !== before.history_id) {
+      // Defense in depth: exactly our own history row may have been added.
+      if (!after || after.history_id !== before.history_id || (await historyCount(client)) !== rowsBefore + 1) {
         await client.query("ROLLBACK");
         return { kind: "skipped" };
       }
