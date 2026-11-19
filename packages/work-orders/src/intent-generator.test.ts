@@ -65,7 +65,7 @@ function fakeGateway(steps: Step[]): IntentModelGateway & { requests: ModelGatew
 function setup(steps: Step[]) {
   const gateway = fakeGateway(steps);
   const generator = new IntentBriefGenerator({ gateway, targets: TARGETS, newRequestId: () => "req" });
-  const service = new WorkOrderService(pool, undefined, { intentService: intents, intentGenerator: generator, ambiguityThreshold: 0.5 });
+  const service = new WorkOrderService(pool, undefined, { intentService: intents, intentGenerator: generator, ambiguityThreshold: 0.5, intentClarifyRounds: 0 });
   return { gateway, service };
 }
 

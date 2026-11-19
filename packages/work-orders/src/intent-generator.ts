@@ -144,6 +144,60 @@ export function buildIntentSegments(
   return segments;
 }
 
+export interface ClarifyIntentInput extends GenerateIntentInput {
+  /** Current (blocking) brief the model must update. */
+  brief: IntentBriefDocument;
+}
+
+const CLARIFY_RULES_TEXT = [
+  "Clarification task: you receive a CURRENT IntentBrief that is blocked by open questions, plus all the context available for the work order.",
+  "Reply with ONE UPDATED IntentBrief JSON object (same schema, same rules, nothing else).",
+  "Anti-invention rule: you may resolve an open question ONLY with information that is explicitly PRESENT in the work order text, requirements, constraints, acceptance criteria or project name below.",
+  "- If the context answers a question, remove it from open_questions and record the answer in assumptions or observed_context.",
+  "- If the context does NOT answer it, KEEP the question in open_questions and keep ambiguity_score and clarification_required as they are (or higher). Never guess, never invent facts.",
+  "- Lower ambiguity_score or set clarification_required to false ONLY when every question that blocked implementation is answered by the context."
+].join("\n");
+
+/** Stable prefix (system, rules, clarify rules, project); volatile brief and context last. */
+export function buildClarifySegments(
+  input: Pick<ClarifyIntentInput, "objective" | "projectName" | "knownRequirements" | "constraints" | "acceptanceCriteria" | "brief">,
+  retry?: { previousOutput: string; validationError: string }
+): PromptSegment[] {
+  // Built WITHOUT the retry: `last.content` is the complete request text, kept
+  // verbatim (never split on text that may appear inside the user's objective).
+  // The retry notice is appended exactly once below.
+  const segments = buildIntentSegments(input);
+  const last = segments.pop()!;
+  const rulesIndex = segments.findIndex((s) => s.id === "intent-rules");
+  segments.splice(rulesIndex + 1, 0, {
+    kind: "rules", id: "intent-clarify-rules", version: INTENT_PROMPT_VERSION, content: CLARIFY_RULES_TEXT
+  });
+  const open = input.brief.open_questions;
+  segments.push({
+    ...last,
+    id: "intent-clarify-input",
+    content: [
+      last.content,
+      "",
+      "Current IntentBrief:",
+      JSON.stringify(input.brief),
+      "",
+      "Open questions to resolve (only from the context above):",
+      ...(open.length ? open.map((q) => `- ${q}`) : ["- (none listed; ambiguity_score or clarification_required still blocks)"]),
+      ...(retry
+        ? [
+            "",
+            "Your previous answer was rejected.",
+            `Previous answer: ${retry.previousOutput}`,
+            `Validation error: ${retry.validationError}`,
+            "Reply again with ONE corrected JSON object."
+          ]
+        : [])
+    ].join("\n")
+  });
+  return segments;
+}
+
 function parseStrict(content: string): { value?: unknown; error?: string } {
   try {
     return { value: JSON.parse(content.trim()) };
@@ -168,6 +222,23 @@ export class IntentBriefGenerator {
   }
 
   async generate(input: GenerateIntentInput): Promise<GeneratedIntent> {
+    return this.run(input, "intent", (retry) => buildIntentSegments(input, retry));
+  }
+
+  /**
+   * PLT-040 PR 5: one clarification round. Same infrastructure as generate
+   * (injected gateway, strict parse, ajv, one retry, maxRetries 0). The caller
+   * decides how many rounds to run; each round is a separate paid attempt pair.
+   */
+  async clarify(input: ClarifyIntentInput): Promise<GeneratedIntent> {
+    return this.run(input, "clarify", (retry) => buildClarifySegments(input, retry));
+  }
+
+  private async run(
+    input: GenerateIntentInput,
+    label: "intent" | "clarify",
+    segmentsFor: (retry?: { previousOutput: string; validationError: string }) => PromptSegment[]
+  ): Promise<GeneratedIntent> {
     if (!input.objective?.trim()) {
       throw new IntentGenerationError("INTENT_GENERATION_FAILED", "objective is required");
     }
@@ -181,13 +252,13 @@ export class IntentBriefGenerator {
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const result = await this.gateway.execute({
-        requestId: `${baseId}-intent-${attempt}`,
+        requestId: `${baseId}-${label}-${attempt}`,
         organizationId: input.organizationId,
         projectId: input.projectId,
         orderId: input.orderId,
         taskId: input.taskId,
-        agentRole: "intent-brief-generator",
-        segments: buildIntentSegments(input, retry),
+        agentRole: label === "intent" ? "intent-brief-generator" : "intent-brief-clarifier",
+        segments: segmentsFor(retry),
         targets,
         maxOutputTokens: this.maxOutputTokens,
         timeoutMs: this.timeoutMs,
@@ -210,7 +281,7 @@ export class IntentBriefGenerator {
     }
     throw new IntentGenerationError(
       "INTENT_GENERATION_FAILED",
-      "the model did not produce a valid IntentBrief after one retry",
+      `the model did not produce a valid IntentBrief (${label}) after one retry`,
       failures
     );
   }

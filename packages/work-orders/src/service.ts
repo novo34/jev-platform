@@ -3,7 +3,10 @@ import {
   ProjectRegistryError,
   ProjectRegistryService
 } from "@jev/projects";
-import type { IntentAcceptanceService } from "./intent-service.js";
+import {
+  lockOrderIntentVersions,
+  type IntentAcceptanceService
+} from "./intent-service.js";
 import type { IntentBriefGenerator } from "./intent-generator.js";
 import {
   DEFAULT_AMBIGUITY_BLOCK_THRESHOLD,
@@ -16,6 +19,7 @@ import {
   type ImplementationBlock,
   type CreateWorkOrderInput,
   IntentAcceptanceError,
+  type IntentBriefDocument,
   type IntentBriefRecord,
   type OrderStatus,
   type RequirementRecord,
@@ -115,6 +119,12 @@ export interface WorkOrderServiceOptions {
   intentService?: IntentAcceptanceService;
   /** Used by createOrderWithGeneratedIntent (PLT-040 PR 4). */
   intentGenerator?: IntentBriefGenerator;
+  /**
+   * Max automatic clarification rounds in createOrderWithGeneratedIntent
+   * (PLT-040 PR 5), integer 0..3; 0 disables. Default env
+   * JEV_INTENT_CLARIFY_ROUNDS or 1.
+   */
+  intentClarifyRounds?: number;
   /** Ambiguity threshold in [0,1]; default env JEV_AMBIGUITY_BLOCK_THRESHOLD or 0.5. */
   ambiguityThreshold?: number;
 }
@@ -133,11 +143,40 @@ function resolveAmbiguityThreshold(explicit?: number): number {
   return value;
 }
 
+export const DEFAULT_INTENT_CLARIFY_ROUNDS = 1;
+export const MAX_INTENT_CLARIFY_ROUNDS = 3;
+
+function resolveClarifyRounds(explicit?: number): number {
+  let value: number = DEFAULT_INTENT_CLARIFY_ROUNDS;
+  if (explicit !== undefined) {
+    value = explicit;
+  } else {
+    const raw = process.env.JEV_INTENT_CLARIFY_ROUNDS;
+    if (raw !== undefined && raw.trim() !== "") value = Number(raw);
+  }
+  if (!Number.isInteger(value) || value < 0 || value > MAX_INTENT_CLARIFY_ROUNDS) {
+    throw new RangeError(
+      `intent clarify rounds must be an integer between 0 and ${MAX_INTENT_CLARIFY_ROUNDS}`
+    );
+  }
+  return value;
+}
+
+export interface ReevaluateBlockedTasksResult {
+  orderId: string;
+  intentId: string | null;
+  intentVersion: number | null;
+  /** True when the latest IntentBrief still blocks (or there is none): nothing was touched. */
+  stillBlocked: boolean;
+  unblockedTaskIds: string[];
+}
+
 export class WorkOrderService {
   private readonly projects: ProjectRegistryService;
   private readonly intentService?: IntentAcceptanceService;
   private readonly intentGenerator?: IntentBriefGenerator;
   private readonly ambiguityThreshold: number;
+  private readonly clarifyRounds: number;
 
   constructor(
     private readonly pool: Pool,
@@ -148,6 +187,7 @@ export class WorkOrderService {
     this.intentService = options.intentService;
     this.intentGenerator = options.intentGenerator;
     this.ambiguityThreshold = resolveAmbiguityThreshold(options.ambiguityThreshold);
+    this.clarifyRounds = resolveClarifyRounds(options.intentClarifyRounds);
   }
 
   /**
@@ -214,7 +254,7 @@ export class WorkOrderService {
     if (!project.rows.length) {
       throw new WorkOrderError("INVALID_ORDER", "project not found");
     }
-    const generated = await this.intentGenerator.generate({
+    const generateInput = {
       objective: input.objective,
       organizationId: String(project.rows[0].organization_id).toLowerCase(),
       projectId: input.projectId,
@@ -227,11 +267,216 @@ export class WorkOrderService {
         typeof c === "string" ? c : JSON.stringify(c)
       ),
       acceptanceCriteria: input.acceptanceCriteria ?? []
-    });
-    return this.createOrder({ ...input, intent: generated.document });
+    };
+    const generated = await this.intentGenerator.generate(generateInput);
+    // PLT-040 PR 5: bounded automatic clarification. Every version is kept
+    // (append-only) and saved in the SAME transaction as the order; if a round
+    // fails the error propagates before anything is written.
+    const versions: IntentBriefDocument[] = [generated.document];
+    for (
+      let round = 0;
+      round < this.clarifyRounds &&
+      isImplementationBlocked(versions[versions.length - 1], this.ambiguityThreshold);
+      round += 1
+    ) {
+      const clarified = await this.intentGenerator.clarify({
+        ...generateInput,
+        brief: versions[versions.length - 1]
+      });
+      versions.push(clarified.document);
+    }
+    return this.insertOrder(
+      { ...input, intent: versions[versions.length - 1] },
+      versions.slice(0, -1)
+    );
+  }
+
+  /**
+   * PLT-040 PR 5: explicit unblocking. If the LATEST IntentBrief of the order no
+   * longer blocks, moves to READY (SYSTEM actor, evidence with intent id and
+   * previous/new version) ONLY the BLOCKED tasks whose latest BLOCKED history
+   * entry has evidence.code AMBIGUOUS_INTENT. Tasks blocked for other reasons
+   * are untouched. Idempotent: already unblocked tasks are no longer BLOCKED.
+   * Saving a new IntentBrief never calls this; wiring it in API/worker comes later.
+   */
+  async reevaluateBlockedTasks(orderId: string): Promise<ReevaluateBlockedTasksResult> {
+    if (!this.intentService) {
+      throw new WorkOrderError(
+        "INVALID_ORDER",
+        "reevaluateBlockedTasks requires an intentService"
+      );
+    }
+    const scope = await this.pool.query(
+      `SELECT o.intent_legacy, p.organization_id
+         FROM orders o JOIN projects p ON p.id = o.project_id
+        WHERE o.id = $1`,
+      [orderId]
+    );
+    if (!scope.rows[0]) throw new WorkOrderError("ORDER_NOT_FOUND");
+    const intent = await this.intentService.getLatestIntentBriefForOrder(
+      String(scope.rows[0].organization_id).toLowerCase(),
+      orderId
+    );
+    const result: ReevaluateBlockedTasksResult = {
+      orderId,
+      intentId: intent?.id ?? null,
+      intentVersion: intent?.version ?? null,
+      stillBlocked: true,
+      unblockedTaskIds: []
+    };
+    if (!intent || isImplementationBlocked(intent.document, this.ambiguityThreshold)) {
+      return result;
+    }
+    result.stillBlocked = false;
+    // Candidates only: every decision is re-taken inside the per-task transaction.
+    const candidates = await this.pool.query(
+      "SELECT id FROM tasks WHERE order_id = $1 AND status = 'BLOCKED' ORDER BY created_at, id",
+      [orderId]
+    );
+    const organizationId = String(scope.rows[0].organization_id).toLowerCase();
+    for (const row of candidates.rows) {
+      const outcome = await this.unblockTaskIfStillAmbiguous(
+        organizationId,
+        orderId,
+        row.id as string
+      );
+      if (outcome.kind === "order_blocked") {
+        // The latest version (saved after our first read) blocks again: stop.
+        result.intentId = outcome.intent?.id ?? null;
+        result.intentVersion = outcome.intent?.version ?? null;
+        result.stillBlocked = true;
+        break;
+      }
+      if (outcome.kind === "unblocked") {
+        result.intentId = outcome.intent.id;
+        result.intentVersion = outcome.intent.version;
+        result.unblockedTaskIds.push(row.id as string);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * One transaction per task. Lock order (see lockOrderIntentVersions): per-order
+   * advisory lock FIRST, then the project-first row locks that
+   * jev_transition_task takes itself. Under the advisory lock the LATEST
+   * IntentBrief is re-read, so a version saved by saveIntentBrief (which takes
+   * the same lock) either commits before this read (and is honoured) or waits
+   * until this transaction ends.
+   *
+   * Task side: the runtime role has no UPDATE privilege on tasks, so
+   * SELECT ... FOR UPDATE on it is not allowed. Instead the state and the id of
+   * the latest BLOCKED history entry are read first (cheap early exit), and
+   * after jev_transition_task (which takes the project lock that serializes
+   * every task writer, then updates the row) the latest BLOCKED entry is read
+   * again: if it is not the same one (the task was released and re-blocked by
+   * someone else in between, with a possibly different cause), the transaction
+   * is rolled back and the newer block is preserved. The history row count is
+   * also checked (+1 exactly). "Latest" is by created_at, which migration 0032
+   * stamps with clock_timestamp(): every history writer holds the project lock
+   * until commit, so that order equals commit order.
+   */
+  private async unblockTaskIfStillAmbiguous(
+    organizationId: string,
+    orderId: string,
+    taskId: string
+  ): Promise<
+    | { kind: "unblocked"; intent: IntentBriefRecord }
+    | { kind: "skipped" }
+    | { kind: "order_blocked"; intent: IntentBriefRecord | null }
+  > {
+    const historyCount = async (client: PoolClient) =>
+      Number(
+        (await client.query("SELECT count(*) AS n FROM task_state_history WHERE task_id = $1", [taskId]))
+          .rows[0].n
+      );
+    const latestBlock = (client: PoolClient) =>
+      client.query(
+        `SELECT t.status,
+                h.id AS history_id,
+                h.evidence
+           FROM tasks t
+           LEFT JOIN LATERAL (
+             SELECT id, evidence FROM task_state_history
+              WHERE task_id = t.id AND to_status = 'BLOCKED'
+              ORDER BY created_at DESC, id DESC LIMIT 1
+           ) h ON TRUE
+          WHERE t.id = $1 AND t.order_id = $2`,
+        [taskId, orderId]
+      );
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await lockOrderIntentVersions(client, orderId);
+      const intent = await this.intentService!.getLatestIntentBriefForOrder(
+        organizationId,
+        orderId,
+        client
+      );
+      if (!intent || isImplementationBlocked(intent.document, this.ambiguityThreshold)) {
+        await client.query("ROLLBACK");
+        return { kind: "order_blocked", intent };
+      }
+      const before = (await latestBlock(client)).rows[0];
+      const evidence = (before?.evidence ?? {}) as Record<string, unknown>;
+      if (
+        !before ||
+        before.status !== "BLOCKED" ||
+        evidence.code !== "AMBIGUOUS_INTENT"
+      ) {
+        await client.query("ROLLBACK");
+        return { kind: "skipped" };
+      }
+      const context: TransitionContext = {
+        actorType: "SYSTEM",
+        cause: "implementation unblocked: IntentBrief ambiguity resolved",
+        evidence: {
+          code: "AMBIGUOUS_INTENT_RESOLVED",
+          intent_id: intent.id,
+          previous_intent_id: evidence.intent_id ?? null,
+          previous_intent_version: evidence.intent_version ?? null,
+          intent_version: intent.version,
+          ambiguity_score: intent.ambiguityScore,
+          clarification_required: intent.clarificationRequired,
+          threshold: this.ambiguityThreshold,
+          reason: "latest IntentBrief version no longer blocks implementation"
+        }
+      };
+      const rowsBefore = await historyCount(client);
+      await applyTransitionContext(client, context);
+      await client.query(
+        "SELECT jev_transition_task($1::uuid,$2::text,$3::text,$4::text,$5::text,$6::jsonb) AS id",
+        [taskId, "READY", "SYSTEM", null, context.cause, JSON.stringify(context.evidence)]
+      );
+      // The project lock is now held: nobody else can write this task. Verify
+      // that the block we decided on is still the latest one.
+      const after = (await latestBlock(client)).rows[0];
+      // Defense in depth: exactly our own history row may have been added.
+      if (!after || after.history_id !== before.history_id || (await historyCount(client)) !== rowsBefore + 1) {
+        await client.query("ROLLBACK");
+        return { kind: "skipped" };
+      }
+      await client.query("COMMIT");
+      return { kind: "unblocked", intent };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      // A concurrent call may have moved it already: skip, stay idempotent.
+      if (isConstraintViolation(error)) return { kind: "skipped" };
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async createOrder(input: CreateWorkOrderInput): Promise<WorkOrderRecord> {
+    return this.insertOrder(input, []);
+  }
+
+  /** `priorIntents`: earlier (clarified-away) versions saved before the final one, same transaction. */
+  private async insertOrder(
+    input: CreateWorkOrderInput,
+    priorIntents: IntentBriefDocument[]
+  ): Promise<WorkOrderRecord> {
     assertNonEmpty(input.objective, "objective");
 
     const requirementKeys = new Set<string>();
@@ -321,6 +566,13 @@ export class WorkOrderService {
       if (this.intentService && organizationId) {
         // Same transaction: order and IntentBrief commit or roll back together.
         try {
+          for (const prior of priorIntents) {
+            await this.intentService.saveIntentBrief(
+              organizationId,
+              { orderId, document: prior },
+              client
+            );
+          }
           intentBrief = await this.intentService.saveIntentBrief(
             organizationId,
             { orderId, document: input.intent },
@@ -440,8 +692,7 @@ export class WorkOrderService {
       if (block) {
         // Same transaction as creation: the task is never observable as PLANNED.
         // The creation trigger requires PLANNED, so it is moved to BLOCKED here.
-        // Unblocking (BLOCKED -> READY, already legal) requires a newer
-        // IntentBrief version with clarification resolved; not implemented yet.
+        // Unblocking is explicit: reevaluateBlockedTasks (PLT-040 PR 5).
         const context: TransitionContext = {
           actorType: "SYSTEM",
           cause: "implementation blocked: material ambiguity in IntentBrief",
