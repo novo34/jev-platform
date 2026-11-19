@@ -32,6 +32,11 @@ async function countOrders(objective: string): Promise<number> {
   return r.rows[0].n as number;
 }
 
+async function countBriefs(goal: string): Promise<number> {
+  const r = await pool.query("SELECT count(*)::int AS n FROM intent_briefs WHERE document->>'goal' = $1", [goal]);
+  return r.rows[0].n as number;
+}
+
 const uniq = () => `Intent order ${randomUUID()}`;
 
 beforeAll(async () => {
@@ -84,7 +89,7 @@ describe("createOrder requires an IntentBrief (PLT-040 PR 3)", () => {
     expect(stored?.id).toBe(order.intent?.id);
   });
 
-  it("leaves no orphan order when saving the brief fails", async () => {
+  it("rolls back order and brief when the saver throws after a real insert", async () => {
     class Failing extends IntentAcceptanceService {
       override async saveIntentBrief(...args: Parameters<IntentAcceptanceService["saveIntentBrief"]>): Promise<IntentBriefRecord> {
         await super.saveIntentBrief(...args); // really inserted inside the transaction
@@ -96,35 +101,94 @@ describe("createOrder requires an IntentBrief (PLT-040 PR 3)", () => {
     const goal = `orphan-check-${randomUUID()}`;
     await expect(failing.createOrder({ projectId, objective, intent: intentDoc({ goal }) })).rejects.toThrow("boom after insert");
     expect(await countOrders(objective)).toBe(0);
-    const briefs = await pool.query("SELECT count(*)::int AS n FROM intent_briefs WHERE document->>'goal' = $1", [goal]);
-    expect(briefs.rows[0].n).toBe(0);
-    // A database-level failure (CHECK) is also rolled back with the order.
-    const objective2 = uniq();
-    const spy = new IntentAcceptanceService(pool);
-    spy.saveIntentBrief = async () => {
-      await pool.query("SELECT 1");
-      throw new WorkOrderError("INVALID_INTENT", "simulated");
-    };
-    const svc = new WorkOrderService(pool, undefined, { intentService: spy });
-    await expect(svc.createOrder({ projectId, objective: objective2, intent: intentDoc() })).rejects.toMatchObject({ code: "INVALID_INTENT" });
-    expect(await countOrders(objective2)).toBe(0);
+    expect(await countBriefs(goal)).toBe(0);
   });
 
-  it("rolls back the brief too when the order fails after the brief (requirements)", async () => {
+  // requirements UNIQUE (project_id, requirement_key) is project-wide, so a key
+  // used by another order passes the in-memory validation and fails in PostgreSQL
+  // (23505) on the second INSERT, after the order row and before the brief.
+  it("rolls back order and requirements when a requirement INSERT fails in PostgreSQL (unique key)", async () => {
+    const taken = `R-${randomUUID()}`;
+    await service.createOrder({
+      projectId, objective: uniq(), intent: intentDoc(),
+      requirements: [{ key: taken, title: "t", description: "d" }]
+    });
     const objective = uniq();
     const goal = `orphan-check-${randomUUID()}`;
-    await expect(
-      service.createOrder({
+    const fresh = `R-${randomUUID()}`;
+    const error = await service
+      .createOrder({
         projectId, objective, intent: intentDoc({ goal }),
         requirements: [
-          { key: "R1", title: "t", description: "d" },
-          { key: "R1", title: "t", description: "d" }
+          { key: fresh, title: "t", description: "d" },
+          { key: taken, title: "t", description: "d" }
         ]
       })
-    ).rejects.toMatchObject({ code: "INVALID_ORDER" });
+      .catch((e) => e);
+    expect(error.code).toBe("23505");
     expect(await countOrders(objective)).toBe(0);
-    const briefs = await pool.query("SELECT count(*)::int AS n FROM intent_briefs WHERE document->>'goal' = $1", [goal]);
-    expect(briefs.rows[0].n).toBe(0);
+    expect(await countBriefs(goal)).toBe(0);
+    const reqs = await pool.query("SELECT count(*)::int AS n FROM requirements WHERE requirement_key = $1", [fresh]);
+    expect(reqs.rows[0].n).toBe(0);
+  });
+
+  // Rewrites one parameter of the real INSERT INTO intent_briefs sent through the
+  // transaction client, so PostgreSQL itself rejects the row.
+  const tamperingService = (index: number, value: unknown) =>
+    new (class extends IntentAcceptanceService {
+      override async saveIntentBrief(...args: Parameters<IntentAcceptanceService["saveIntentBrief"]>): Promise<IntentBriefRecord> {
+        const [organization, input, executor] = args;
+        const wrapped = {
+          query: (text: any, params?: any[]) => {
+            if (typeof text === "string" && text.includes("INSERT INTO intent_briefs") && params) {
+              params = params.slice();
+              params[index] = value;
+            }
+            return (executor as any).query(text, params);
+          }
+        };
+        return super.saveIntentBrief(organization, input, wrapped as any);
+      }
+    })(pool);
+
+  it("rolls back and stays usable when PostgreSQL rejects the brief (CHECK 23514 via executor)", async () => {
+    // change_radius column differs from the document: intent_briefs_columns_match_document_check
+    const small = createDatabasePool({ max: 2 });
+    try {
+      const svc = new WorkOrderService(small, undefined, { intentService: tamperingService(4, "ARCHITECTURAL") });
+      const good = new WorkOrderService(small, undefined, { intentService: new IntentAcceptanceService(small) });
+      // More failures than pool connections: a leaked client would hang here.
+      for (let i = 0; i < 6; i++) {
+        const objective = uniq();
+        const goal = `check-fail-${randomUUID()}`;
+        await expect(svc.createOrder({ projectId, objective, intent: intentDoc({ goal }) })).rejects.toMatchObject({ code: "INVALID_INTENT" });
+        expect(await countOrders(objective)).toBe(0);
+        expect(await countBriefs(goal)).toBe(0);
+        const order = await good.createOrder({ projectId, objective: uniq(), intent: intentDoc() });
+        expect(order.intent?.brief.orderId).toBe(order.id);
+      }
+      expect(small.idleCount).toBe(small.totalCount);
+      expect(small.waitingCount).toBe(0);
+    } finally {
+      await small.end();
+    }
+  });
+
+  it("rolls back and stays usable when PostgreSQL rejects the brief (FK 23503 via executor)", async () => {
+    const small = createDatabasePool({ max: 2 });
+    try {
+      const svc = new WorkOrderService(small, undefined, { intentService: tamperingService(0, randomUUID()) });
+      const good = new WorkOrderService(small, undefined, { intentService: new IntentAcceptanceService(small) });
+      for (let i = 0; i < 6; i++) {
+        const objective = uniq();
+        await expect(svc.createOrder({ projectId, objective, intent: intentDoc() })).rejects.toMatchObject({ code: "INVALID_INTENT" });
+        expect(await countOrders(objective)).toBe(0);
+        await expect(good.createOrder({ projectId, objective: uniq(), intent: intentDoc() })).resolves.toBeTruthy();
+      }
+      expect(small.waitingCount).toBe(0);
+    } finally {
+      await small.end();
+    }
   });
 
   it("is unchanged without an IntentAcceptanceService", async () => {
