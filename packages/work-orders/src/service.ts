@@ -511,7 +511,7 @@ export class WorkOrderService {
         `SELECT from_status, to_status, actor_type, actor_id, cause, evidence, created_at
            FROM task_state_history
           WHERE task_id = $1
-          ORDER BY created_at, id`,
+          ORDER BY created_at, (from_status IS NOT NULL), id`,
         [taskId]
       )
     ]);
