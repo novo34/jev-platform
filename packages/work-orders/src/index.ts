@@ -1,5 +1,11 @@
 export * from "./types.js";
-export { WorkOrderService, type WorkOrderServiceOptions } from "./service.js";
+export {
+  WorkOrderService,
+  DEFAULT_INTENT_CLARIFY_ROUNDS,
+  MAX_INTENT_CLARIFY_ROUNDS,
+  type ReevaluateBlockedTasksResult,
+  type WorkOrderServiceOptions
+} from "./service.js";
 export { IntentAcceptanceService } from "./intent-service.js";
 export {
   DEFAULT_AMBIGUITY_BLOCK_THRESHOLD,
@@ -15,6 +21,8 @@ export {
   IntentBriefGenerator,
   INTENT_PROMPT_VERSION,
   buildIntentSegments,
+  buildClarifySegments,
+  type ClarifyIntentInput,
   parseIntentModelTargets,
   type GenerateIntentInput,
   type GeneratedIntent,
