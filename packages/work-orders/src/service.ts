@@ -4,6 +4,7 @@ import {
   ProjectRegistryService
 } from "@jev/projects";
 import type { IntentAcceptanceService } from "./intent-service.js";
+import type { IntentBriefGenerator } from "./intent-generator.js";
 import {
   DEFAULT_AMBIGUITY_BLOCK_THRESHOLD,
   isImplementationBlocked,
@@ -112,6 +113,8 @@ export interface WorkOrderServiceOptions {
    * materially ambiguous (PLT-040 PR 2). Without it behaviour is unchanged.
    */
   intentService?: IntentAcceptanceService;
+  /** Used by createOrderWithGeneratedIntent (PLT-040 PR 4). */
+  intentGenerator?: IntentBriefGenerator;
   /** Ambiguity threshold in [0,1]; default env JEV_AMBIGUITY_BLOCK_THRESHOLD or 0.5. */
   ambiguityThreshold?: number;
 }
@@ -133,6 +136,7 @@ function resolveAmbiguityThreshold(explicit?: number): number {
 export class WorkOrderService {
   private readonly projects: ProjectRegistryService;
   private readonly intentService?: IntentAcceptanceService;
+  private readonly intentGenerator?: IntentBriefGenerator;
   private readonly ambiguityThreshold: number;
 
   constructor(
@@ -142,6 +146,7 @@ export class WorkOrderService {
   ) {
     this.projects = projects ?? new ProjectRegistryService(pool);
     this.intentService = options.intentService;
+    this.intentGenerator = options.intentGenerator;
     this.ambiguityThreshold = resolveAmbiguityThreshold(options.ambiguityThreshold);
   }
 
@@ -181,6 +186,49 @@ export class WorkOrderService {
       clarificationRequired: intent.clarificationRequired,
       threshold: this.ambiguityThreshold
     };
+  }
+
+  /**
+   * PLT-040 PR 4: generates the IntentBrief from the objective with the injected
+   * generator, then calls createOrder with it. If generation fails (or the
+   * gateway blocks/fails) the error propagates and nothing is created.
+   * `gatewayTaskId` is the existing task the gateway bills the call to.
+   */
+  async createOrderWithGeneratedIntent(
+    input: Omit<CreateWorkOrderInput, "intent">,
+    gatewayTaskId: string
+  ): Promise<WorkOrderRecord> {
+    // Both are needed BEFORE any paid model call: without intentService the
+    // generated brief would be silently dropped by createOrder.
+    if (!this.intentGenerator || !this.intentService) {
+      throw new WorkOrderError(
+        "INVALID_ORDER",
+        "createOrderWithGeneratedIntent requires an intentGenerator and an intentService"
+      );
+    }
+    assertNonEmpty(input.objective, "objective");
+    const project = await this.pool.query(
+      "SELECT organization_id, name FROM projects WHERE id = $1",
+      [input.projectId]
+    );
+    if (!project.rows.length) {
+      throw new WorkOrderError("INVALID_ORDER", "project not found");
+    }
+    const generated = await this.intentGenerator.generate({
+      objective: input.objective,
+      organizationId: String(project.rows[0].organization_id).toLowerCase(),
+      projectId: input.projectId,
+      taskId: gatewayTaskId,
+      projectName: String(project.rows[0].name),
+      knownRequirements: (input.requirements ?? []).map(
+        (r) => `${r.key}: ${r.title} - ${r.description}`
+      ),
+      constraints: (input.constraints ?? []).map((c) =>
+        typeof c === "string" ? c : JSON.stringify(c)
+      ),
+      acceptanceCriteria: input.acceptanceCriteria ?? []
+    });
+    return this.createOrder({ ...input, intent: generated.document });
   }
 
   async createOrder(input: CreateWorkOrderInput): Promise<WorkOrderRecord> {

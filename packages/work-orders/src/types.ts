@@ -239,3 +239,16 @@ export class IntentAcceptanceError extends Error {
     this.name = "IntentAcceptanceError";
   }
 }
+
+export class IntentGenerationError extends Error {
+  constructor(
+    public readonly code:
+      | "INTENT_GENERATION_FAILED"
+      | "INTENT_MODEL_NOT_CONFIGURED",
+    message: string = code,
+    public readonly details: string[] = []
+  ) {
+    super(message);
+    this.name = "IntentGenerationError";
+  }
+}

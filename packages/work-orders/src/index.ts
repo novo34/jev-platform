@@ -11,3 +11,13 @@ export {
   ACCEPTANCE_CONTRACT_SCHEMA,
   INTENT_BRIEF_SCHEMA
 } from "./intent-schemas.js";
+export {
+  IntentBriefGenerator,
+  INTENT_PROMPT_VERSION,
+  buildIntentSegments,
+  parseIntentModelTargets,
+  type GenerateIntentInput,
+  type GeneratedIntent,
+  type IntentBriefGeneratorOptions,
+  type IntentModelGateway
+} from "./intent-generator.js";
