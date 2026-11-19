@@ -31,6 +31,7 @@ The default local connection string is shown in `.env.example`.
 - applied migration checksums are stored in `schema_migrations`;
 - a checksum mismatch fails rather than silently rewriting history;
 - every migration is executed transactionally;
+- `migrate` holds a session-level PostgreSQL advisory lock (`pg_advisory_lock`, no special privileges) on a dedicated connection for the whole run, including the `schema_migrations` creation and read, so concurrent migrators (parallel test files, several deploys) are serialized; the lock is released in `finally` and the connection is destroyed if the unlock fails;
 - CI runs against a real PostgreSQL service.
 
 ## Canonical entities introduced by PLT-003
