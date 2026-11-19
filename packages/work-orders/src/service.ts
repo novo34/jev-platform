@@ -198,10 +198,12 @@ export class WorkOrderService {
     input: Omit<CreateWorkOrderInput, "intent">,
     gatewayTaskId: string
   ): Promise<WorkOrderRecord> {
-    if (!this.intentGenerator) {
+    // Both are needed BEFORE any paid model call: without intentService the
+    // generated brief would be silently dropped by createOrder.
+    if (!this.intentGenerator || !this.intentService) {
       throw new WorkOrderError(
         "INVALID_ORDER",
-        "createOrderWithGeneratedIntent requires an intentGenerator"
+        "createOrderWithGeneratedIntent requires an intentGenerator and an intentService"
       );
     }
     assertNonEmpty(input.objective, "objective");
@@ -219,8 +221,12 @@ export class WorkOrderService {
       taskId: gatewayTaskId,
       projectName: String(project.rows[0].name),
       knownRequirements: (input.requirements ?? []).map(
-        (r) => `${r.key}: ${r.title}`
-      )
+        (r) => `${r.key}: ${r.title} - ${r.description}`
+      ),
+      constraints: (input.constraints ?? []).map((c) =>
+        typeof c === "string" ? c : JSON.stringify(c)
+      ),
+      acceptanceCriteria: input.acceptanceCriteria ?? []
     });
     return this.createOrder({ ...input, intent: generated.document });
   }

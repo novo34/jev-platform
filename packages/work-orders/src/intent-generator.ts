@@ -39,7 +39,12 @@ export interface GenerateIntentInput {
   taskId: string;
   orderId?: string;
   projectName?: string;
+  /** Order requirements, one text each (key, title and description). Volatile: sent in the input segment. */
   knownRequirements?: string[];
+  /** Order constraints as text. Volatile: sent in the input segment. */
+  constraints?: string[];
+  /** Order acceptance criteria. Volatile: sent in the input segment. */
+  acceptanceCriteria?: string[];
 }
 
 export interface GeneratedIntent {
@@ -104,7 +109,7 @@ const RULES_TEXT = [
 
 /** Deterministic segments: stable first (system, rules, project context), volatile input last. */
 export function buildIntentSegments(
-  input: Pick<GenerateIntentInput, "objective" | "projectName" | "knownRequirements">,
+  input: Pick<GenerateIntentInput, "objective" | "projectName" | "knownRequirements" | "constraints" | "acceptanceCriteria">,
   retry?: { previousOutput: string; validationError: string }
 ): PromptSegment[] {
   const segments: PromptSegment[] = [
@@ -113,14 +118,19 @@ export function buildIntentSegments(
   ];
   const contextLines: string[] = [];
   if (input.projectName?.trim()) contextLines.push(`Project name: ${input.projectName.trim()}`);
-  const requirements = (input.knownRequirements ?? []).map((r) => r.trim()).filter(Boolean);
-  if (requirements.length) {
-    contextLines.push("Known requirements:", ...requirements.map((r) => `- ${r}`));
-  }
   if (contextLines.length) {
     segments.push({ kind: "project_context", id: "intent-project", content: contextLines.join("\n") });
   }
+  // Order-specific texts are volatile, so they go in the input segment (after the stable prefix).
+  const clean = (items?: string[]) => (items ?? []).map((r) => r.trim()).filter(Boolean);
   const lines = ["Work order request:", input.objective.trim()];
+  for (const [title, items] of [
+    ["Requirements:", clean(input.knownRequirements)],
+    ["Constraints:", clean(input.constraints)],
+    ["Acceptance criteria:", clean(input.acceptanceCriteria)]
+  ] as const) {
+    if (items.length) lines.push("", title, ...items.map((r) => `- ${r}`));
+  }
   if (retry) {
     lines.push(
       "",

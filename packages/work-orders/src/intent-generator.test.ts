@@ -165,6 +165,38 @@ describe("createOrderWithGeneratedIntent", () => {
   });
 });
 
+describe("generated intent input and prerequisites", () => {
+  it("without intentService fails before calling the model and creates nothing", async () => {
+    const gateway = fakeGateway([JSON.stringify(doc())]);
+    const generator = new IntentBriefGenerator({ gateway, targets: TARGETS });
+    const svc = new WorkOrderService(pool, undefined, { intentGenerator: generator });
+    const objective = uniq();
+    await expect(svc.createOrderWithGeneratedIntent({ projectId, objective }, taskId))
+      .rejects.toMatchObject({ code: "INVALID_ORDER" });
+    expect(gateway.requests).toHaveLength(0);
+    expect(await countOrders(objective)).toBe(0);
+  });
+
+  it("sends requirement descriptions, constraints and criteria to the model; prefix stays stable", async () => {
+    const tenant = deriveTenantNamespace("secret", "org", "proj");
+    const { service, gateway } = setup([JSON.stringify(doc()), JSON.stringify(doc())]);
+    await service.createOrderWithGeneratedIntent({
+      projectId, objective: uniq(),
+      requirements: [{ key: "R1", title: "Hero", description: "DESC-MARKER-123" }],
+      constraints: ["CONSTRAINT-MARKER-456"],
+      acceptanceCriteria: ["CRITERIA-MARKER-789"]
+    }, taskId);
+    await service.createOrderWithGeneratedIntent({ projectId, objective: uniq() }, taskId);
+    const first = buildPrompt(gateway.requests[0].segments!, undefined, tenant);
+    const second = buildPrompt(gateway.requests[1].segments!, undefined, tenant);
+    for (const marker of ["DESC-MARKER-123", "CONSTRAINT-MARKER-456", "CRITERIA-MARKER-789"]) {
+      expect(first.text).toContain(marker);
+    }
+    expect(first.prefix_project_sha256).toBe(second.prefix_project_sha256);
+    expect(first.text).not.toBe(second.text);
+  });
+});
+
 describe("prompt and configuration", () => {
   const tenant = deriveTenantNamespace("secret", "org", "proj");
   const input = { objective: "Do X", projectName: "P", knownRequirements: ["R1: a"] };
